@@ -12,6 +12,18 @@ export class AppError extends Error {
   }
 }
 
+/**
+ * Async handler wrapper - catches errors from async route handlers
+ * and passes them to the error handler middleware
+ */
+export function asyncHandler(
+  fn: (req: Request, res: Response, next: NextFunction) => Promise<any>
+) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}
+
 export function errorHandler(
   err: Error | AppError | ZodError,
   req: Request,

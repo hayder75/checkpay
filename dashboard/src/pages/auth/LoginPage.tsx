@@ -12,6 +12,8 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [phone, setPhone] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
   // Check if already logged in - persist session
@@ -22,9 +24,14 @@ export default function LoginPage() {
         try {
           // Check if token is still valid by trying to get user info
           const response = await authAPI.getMe();
-          // Token is valid, user is logged in - redirect to dashboard
+          // Token is valid, user is logged in - redirect based on role
           auth.setUser(response.data.data);
-          navigate('/dashboard', { replace: true });
+          const userRole = response.data.data.role;
+          if (userRole === 'ADMIN' || userRole === 'SUPER_ADMIN') {
+            navigate('/admin/dashboard', { replace: true });
+          } else {
+            navigate('/dashboard', { replace: true });
+          }
         } catch (error: any) {
           // Token invalid or expired, or CORS error - clear it
           console.error('Auth check failed:', error);
@@ -38,53 +45,90 @@ export default function LoginPage() {
     checkAuth();
   }, [navigate]);
 
-  const handlePhoneLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!phone.trim()) {
+    if (!phone.trim() && !username.trim()) {
       toast({
         title: 'Error',
-        description: 'Please enter your phone number',
+        description: 'Please enter your phone number or username',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!password.trim()) {
+      toast({
+        title: 'Error',
+        description: 'Please enter your password',
         variant: 'destructive',
       });
       return;
     }
 
     setLoading(true);
-
     try {
-      // For login, we use register endpoint which handles existing users
-      const response = await authAPI.register({ phone });
+      // Try password login first
+      const response = await authAPI.login({
+        phone: phone.trim() || undefined,
+        username: username.trim() || undefined,
+        password: password.trim(),
+      });
+
+      const { token, user } = response.data.data;
+      auth.setToken(token);
+      auth.setUser(user);
       
-      // Log OTP to frontend console for testing
-      if (response.data.data.debug?.otp) {
-        console.log(`\n🔐 ==========================================`);
-        console.log(`📱 OTP Code: ${response.data.data.debug.otp}`);
-        console.log(`⏰ Use this code to verify your account`);
-        console.log(`🔐 ==========================================\n`);
-      }
-      
-      // Check if account exists or new OTP sent
-      if (response.data.data.exists || response.data.data.message) {
-        toast({
-          title: 'OTP Sent',
-          description: response.data.message || 'OTP sent to your phone. Check the browser console (F12).',
-        });
-        navigate('/auth/verify-otp', { state: { phone } });
+      toast({
+        title: 'Success',
+        description: 'Logged in successfully!',
+      });
+
+      // Redirect based on role
+      if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
+        navigate('/admin/dashboard');
+      } else {
+        navigate('/dashboard');
       }
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || error.message || 'Failed to send OTP',
-        variant: 'destructive',
-      });
+      // If login fails, check if user doesn't have password
+      if (error.response?.data?.error?.includes('Please verify your account with OTP')) {
+        // User doesn't have password - send OTP
+        try {
+          const registerResponse = await authAPI.register({ 
+            phone: phone.trim() || undefined, 
+            username: username.trim() || undefined 
+          });
+          
+          if (registerResponse.data.data.debug?.otp) {
+            console.log(`\n🔐 ==========================================`);
+            console.log(`📱 OTP Code: ${registerResponse.data.data.debug.otp}`);
+            console.log(`⏰ Use this code to verify your account`);
+            console.log(`🔐 ==========================================\n`);
+          }
+          
+          toast({
+            title: 'Password Not Set',
+            description: 'Please verify with OTP to set your password. Check console (F12) for OTP.',
+          });
+          navigate('/auth/verify-otp', { state: { phone: phone.trim() || undefined } });
+        } catch (regError: any) {
+          toast({
+            title: 'Error',
+            description: error.response?.data?.error || 'Invalid credentials or account not found',
+            variant: 'destructive',
+          });
+        }
+      } else {
+        toast({
+          title: 'Error',
+          description: error.response?.data?.error || 'Invalid credentials',
+          variant: 'destructive',
+        });
+      }
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleGoogleLogin = () => {
-    authAPI.googleLogin();
   };
 
   return (
@@ -100,43 +144,17 @@ export default function LoginPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Button
-            onClick={handleGoogleLogin}
-            variant="outline"
-            className="w-full"
-            disabled={loading}
-          >
-            <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
-              <path
-                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                fill="#4285F4"
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="username">Username</Label>
+              <Input
+                id="username"
+                type="text"
+                placeholder="admin"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
               />
-              <path
-                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                fill="#34A853"
-              />
-              <path
-                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                fill="#FBBC05"
-              />
-              <path
-                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                fill="#EA4335"
-              />
-            </svg>
-            Continue with Google
-          </Button>
-
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" />
             </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
-            </div>
-          </div>
-
-          <form onSubmit={handlePhoneLogin} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="phone">Phone Number</Label>
               <Input
@@ -145,15 +163,28 @@ export default function LoginPage() {
                 placeholder="+254712345678"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="Enter your password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 required
               />
             </div>
+            <p className="text-xs text-muted-foreground">
+              Enter either username or phone number, and your password. If you don't have a password, you'll be redirected to set one.
+            </p>
             <Button
               type="submit"
               className="w-full bg-[#F37100] hover:bg-[#F37100]/90"
-              disabled={loading}
+              disabled={loading || (!username && !phone) || !password}
             >
-              {loading ? 'Sending OTP...' : 'Send OTP'}
+              {loading ? 'Logging in...' : 'Login'}
             </Button>
           </form>
 

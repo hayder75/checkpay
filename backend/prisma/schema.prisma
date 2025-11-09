@@ -15,56 +15,79 @@ enum UserPlan {
   PREMIUM
 }
 
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
 model User {
   id        String   @id @default(cuid())
-  email     String?  @unique
+  username  String?  @unique // Username for login (replaces email for regular users)
+  email     String?  @unique // Only for Google OAuth users
   phone     String?  @unique
   googleId  String?  @unique
+  password  String? // Hashed password (bcrypt)
   apiKey    String   @unique @default(cuid()) // App API Key (for mobile app)
   devApiKey String   @unique @default(cuid()) // Developer API Key (for verification)
   plan      UserPlan @default(FREE)
+  role      UserRole @default(USER) // USER, ADMIN, SUPER_ADMIN
+  country   String? // Country code (e.g., "ET", "KE", "NG")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  patterns     Pattern[]
-  transactions Transaction[]
-  auditLogs    AuditLog[]
-  usageStats   UsageStats?
+  patterns             Pattern[]
+  transactions         Transaction[]
+  auditLogs            AuditLog[]
+  usageStats           UsageStats?
+  simCards             SimCard[]
+  patternSubscriptions UserPatternSubscription[]
 
   @@index([apiKey])
   @@index([devApiKey])
+  @@index([username])
   @@index([email])
   @@index([phone])
+  @@index([country])
+  @@index([role])
 }
 
 model Pattern {
-  id           String   @id @default(cuid())
-  userId       String
-  name         String
-  regex        String
-  extractFields Json   // { amount: 1, sender: 2, txnId: 3, bank: 4 }
-  bank         String?
-  currency     String?
-  description  String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String    @id @default(cuid())
+  userId        String
+  name          String
+  regex         String
+  extractFields Json // { amount: 1, sender: 2, txnId: 3, bank: 4 }
+  bank          String?
+  currency      String?
+  description   String?
+  // Pattern detection for missing templates
+  isFlagged     Boolean   @default(false) // Flagged for admin review (missing template)
+  flaggedAt     DateTime? // When pattern was flagged
+  usageCount    Int       @default(1) // How many users have similar pattern (for detection)
+  adminNotes    String? // Admin review notes
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  transactions Transaction[]
+  user                 User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions         Transaction[]
+  templateSubscription UserPatternSubscription? // Link if added from template (one-to-one)
 
   @@index([userId])
+  @@index([isFlagged])
+  @@index([bank, currency]) // For grouping similar patterns
 }
 
 model Transaction {
-  id        String   @id @default(cuid())
-  userId    String
-  txnId     String
-  amount    Float
-  sender    String   // masked phone number
-  bank      String?
-  patternId String?
+  id         String   @id @default(cuid())
+  userId     String
+  txnId      String
+  amount     Float
+  sender     String // masked phone number
+  bank       String?
+  patternId  String?
   receivedAt DateTime
-  createdAt DateTime @default(now())
+  createdAt  DateTime @default(now())
 
   user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   pattern Pattern? @relation(fields: [patternId], references: [id], onDelete: SetNull)
@@ -90,10 +113,10 @@ model OTP {
 model AuditLog {
   id        String   @id @default(cuid())
   userId    String?
-  action    String   // e.g., "pattern_created", "transaction_ingested", "verification_requested"
+  action    String // e.g., "pattern_created", "transaction_ingested", "verification_requested"
   endpoint  String
   ipAddress String?
-  metadata  Json?    // Additional context
+  metadata  Json? // Additional context
   createdAt DateTime @default(now())
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -103,18 +126,96 @@ model AuditLog {
 }
 
 model UsageStats {
-  id                String   @id @default(cuid())
-  userId            String   @unique
-  appRequestsToday  Int      @default(0) // Ingest requests from mobile app
-  appRequestsMonth  Int      @default(0)
-  devRequestsToday  Int      @default(0) // Verification requests from developers
-  devRequestsMonth  Int      @default(0)
-  lastResetDate     DateTime @default(now())
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  appRequestsToday Int      @default(0) // Ingest requests from mobile app
+  appRequestsMonth Int      @default(0)
+  devRequestsToday Int      @default(0) // Verification requests from developers
+  devRequestsMonth Int      @default(0)
+  lastResetDate    DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }
 
+model SimCard {
+  id          String   @id @default(cuid())
+  userId      String
+  iccid       String // SIM serial number (ICCID)
+  phoneNumber String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([iccid]) // Prevent same SIM being registered twice
+  @@index([userId])
+  @@index([iccid])
+}
+
+model Country {
+  id            String   @id @default(cuid())
+  code          String   @unique // ISO country code (e.g., "ET", "KE", "NG")
+  name          String // Full country name
+  banks         String[] // Array of bank/service names
+  currencies    String[] // Array of currency codes
+  commonPhrases String[] // Common SMS phrases for this country
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  patterns CountryPattern[] // Patterns contributed to this country
+
+  @@index([code])
+  @@index([isActive])
+}
+
+model CountryPattern {
+  id            String   @id @default(cuid())
+  countryId     String
+  patternId     String? // Reference to user's pattern (optional, can be standalone)
+  name          String
+  regex         String
+  extractFields Json
+  bank          String?
+  currency      String?
+  // Template fields
+  description   String? // User-friendly description (e.g., "Receive from CBE to Telebirr")
+  requiredPlan  UserPlan @default(FREE) // FREE or PREMIUM
+  isTemplate    Boolean  @default(false) // true for admin-created templates
+  smsExample    String? // Example SMS text for reference
+  usageCount    Int      @default(0) // How many times this pattern was used
+  isApproved    Boolean  @default(true) // Admin can approve/reject
+  contributedBy String? // User ID who contributed (optional)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  country       Country                   @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  subscriptions UserPatternSubscription[] // Users who added this template
+
+  @@index([countryId])
+  @@index([isApproved])
+  @@index([isTemplate])
+  @@index([requiredPlan])
+  @@index([usageCount])
+}
+
+model UserPatternSubscription {
+  id               String   @id @default(cuid())
+  userId           String
+  countryPatternId String
+  addedAt          DateTime @default(now())
+
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  countryPattern CountryPattern @relation(fields: [countryPatternId], references: [id], onDelete: Cascade)
+  pattern        Pattern?       @relation(fields: [patternId], references: [id], onDelete: SetNull)
+  patternId      String?        @unique // Reference to user's Pattern created from template
+
+  @@unique([userId, countryPatternId])
+  @@index([userId])
+  @@index([countryPatternId])
+}

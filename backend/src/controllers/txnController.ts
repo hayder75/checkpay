@@ -12,6 +12,7 @@ const ingestSchema = z.object({
   sender: z.string(),
   bank: z.string().optional(),
   pattern: z.string().optional(),
+  iccid: z.string().optional(), // SIM card ICCID from mobile app
 });
 
 /**
@@ -23,6 +24,33 @@ export async function ingestTransaction(req: AuthRequest, res: Response) {
   }
 
   const data = ingestSchema.parse(req.body);
+
+  // Check SIM card registration if ICCID provided
+  if (data.iccid) {
+    const simCard = await prisma.simCard.findFirst({
+      where: {
+        iccid: data.iccid,
+        userId: req.user.id,
+        isActive: true,
+      },
+    });
+
+    if (!simCard) {
+      throw new AppError(403, 'This SIM card is not registered. Please use the SIM card you registered with, or upgrade to Premium to add more SIMs.');
+    }
+  }
+
+  // Check usage limits
+  const usageStats = await getUsageStats(req.user.id);
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { plan: true },
+  });
+
+  // Free plan: 100 transactions/month
+  if (user?.plan === 'FREE' && usageStats.appRequestsMonth >= 100) {
+    throw new AppError(403, 'Free plan limit reached (100/100 transactions). Upgrade to Premium for unlimited transactions or wait until next month.');
+  }
 
   // Check if transaction already exists
   const existing = await prisma.transaction.findUnique({
@@ -36,6 +64,7 @@ export async function ingestTransaction(req: AuthRequest, res: Response) {
 
   if (existing) {
     // Return success but don't create duplicate
+    console.log(`[INGEST] Duplicate transaction detected: userId=${req.user.id}, txnId=${data.txnId}`);
     return res.json({
       success: true,
       data: existing,
@@ -55,25 +84,51 @@ export async function ingestTransaction(req: AuthRequest, res: Response) {
   }
 
   // Create transaction
-  const transaction = await prisma.transaction.create({
-    data: {
-      userId: req.user.id,
-      txnId: data.txnId,
-      amount: data.amount,
-      sender: data.sender, // Already masked by mobile app
-      bank: data.bank,
-      patternId: pattern?.id,
-      receivedAt: new Date(),
-    },
-  });
+  try {
+    const transaction = await prisma.transaction.create({
+      data: {
+        userId: req.user.id,
+        txnId: data.txnId,
+        amount: data.amount,
+        sender: data.sender, // Already masked by mobile app
+        bank: data.bank,
+        patternId: pattern?.id,
+        receivedAt: new Date(),
+      },
+    });
 
-  // Track usage for app requests (ingest)
-  await trackUsage(req.user.id, 'app');
+    console.log(`[INGEST] Transaction created: id=${transaction.id}, userId=${req.user.id}, txnId=${data.txnId}, amount=${data.amount}`);
 
-  res.status(201).json({
-    success: true,
-    data: transaction,
-  });
+    // Track usage for app requests (ingest)
+    await trackUsage(req.user.id, 'app');
+
+    res.status(201).json({
+      success: true,
+      data: transaction,
+    });
+  } catch (error: any) {
+    console.error('[INGEST] Error creating transaction:', error);
+    // If it's a unique constraint violation, it means duplicate was created between check and insert
+    if (error.code === 'P2002') {
+      // Try to find the existing transaction
+      const existingTxn = await prisma.transaction.findUnique({
+        where: {
+          userId_txnId: {
+            userId: req.user.id,
+            txnId: data.txnId,
+          },
+        },
+      });
+      if (existingTxn) {
+        return res.json({
+          success: true,
+          data: existingTxn,
+          message: 'Transaction already exists',
+        });
+      }
+    }
+    throw new AppError(500, 'Failed to create transaction');
+  }
 }
 
 /**

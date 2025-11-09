@@ -1,51 +1,35 @@
 import { Router } from 'express';
-import passport from 'passport';
-import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import {
   register,
+  login,
   verifyOTP,
   resendOTP,
-  googleCallback,
   getMe,
   regenerateApiKey,
+  getSimCards,
+  addSimCard,
+  removeSimCard,
+  checkSimCard,
 } from '../controllers/authController';
 import { authenticate } from '../middleware/auth';
 import { generalRateLimiter } from '../middleware/rateLimit';
+import { asyncHandler } from '../middleware/errorHandler';
 
 const router = Router();
 
-// Configure Google OAuth strategy
-passport.use(
-  new GoogleStrategy(
-    {
-      clientID: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-      callbackURL: process.env.GOOGLE_CALLBACK_URL!,
-    },
-    async (accessToken, refreshToken, profile, done) => {
-      return done(null, profile);
-    }
-  )
-);
+// Auth routes - wrapped with asyncHandler to catch errors
+router.post('/register', generalRateLimiter, asyncHandler(register));
+router.post('/login', generalRateLimiter, asyncHandler(login));
+router.post('/verify-otp', generalRateLimiter, asyncHandler(verifyOTP));
+router.post('/resend-otp', generalRateLimiter, asyncHandler(resendOTP));
+router.get('/me', authenticate as any, asyncHandler(getMe));
+router.post('/regenerate-key', authenticate as any, asyncHandler(regenerateApiKey));
 
-// Auth routes
-router.post('/register', generalRateLimiter, register as any);
-router.post('/verify-otp', generalRateLimiter, verifyOTP as any);
-router.post('/resend-otp', generalRateLimiter, resendOTP as any);
-router.get('/me', authenticate as any, getMe as any);
-router.post('/regenerate-key', authenticate as any, regenerateApiKey as any);
-
-// Google OAuth routes
-router.get(
-  '/google',
-  passport.authenticate('google', { scope: ['profile', 'email'] })
-);
-
-router.get(
-  '/google/callback',
-  passport.authenticate('google', { session: false }),
-  googleCallback as any
-);
+// SIM card management routes
+router.get('/sims', authenticate as any, asyncHandler(getSimCards));
+router.post('/sims', authenticate as any, asyncHandler(addSimCard));
+router.delete('/sims', authenticate as any, asyncHandler(removeSimCard));
+router.get('/sims/check', authenticate as any, asyncHandler(checkSimCard));
 
 export default router;
 

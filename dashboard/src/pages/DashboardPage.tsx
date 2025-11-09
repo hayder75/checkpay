@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
 import { dashboardAPI, authAPI } from '@/lib';
 import { useToast } from '@/components/ui/use-toast';
-import { TrendingUp, FileText, History, Zap } from 'lucide-react';
+import { TrendingUp, FileText, History, Zap, AlertCircle } from 'lucide-react';
 
 export default function DashboardPage() {
   const { toast } = useToast();
@@ -54,6 +54,54 @@ export default function DashboardPage() {
           <p className="text-muted-foreground">Welcome back! Here's your overview.</p>
         </div>
 
+        {/* Limit Warning Banner */}
+        {user?.plan === 'FREE' && stats?.usageStats && (
+          (() => {
+            const appRequestsMonth = stats.usageStats.appRequestsMonth || 0;
+            const limit = 100;
+            const percentage = (appRequestsMonth / limit) * 100;
+            const isLimitReached = appRequestsMonth >= limit;
+            const isNearLimit = percentage >= 80;
+
+            if (isLimitReached || isNearLimit) {
+              return (
+                <Card className={isLimitReached ? 'border-red-500 bg-red-50 dark:bg-red-900/20' : 'border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20'}>
+                  <CardContent className="pt-6">
+                    <div className="flex items-start gap-4">
+                      <AlertCircle className={`h-5 w-5 mt-0.5 ${isLimitReached ? 'text-red-600 dark:text-red-400' : 'text-yellow-600 dark:text-yellow-400'}`} />
+                      <div className="flex-1">
+                        <h3 className={`font-semibold mb-1 ${isLimitReached ? 'text-red-900 dark:text-red-100' : 'text-yellow-900 dark:text-yellow-100'}`}>
+                          {isLimitReached 
+                            ? 'Free Plan Limit Reached' 
+                            : 'Approaching Free Plan Limit'}
+                        </h3>
+                        <p className={`text-sm mb-3 ${isLimitReached ? 'text-red-800 dark:text-red-200' : 'text-yellow-800 dark:text-yellow-200'}`}>
+                          {isLimitReached 
+                            ? `You've used all ${limit} free transactions this month. Upgrade to Premium for unlimited transactions, or wait until next month when your limit resets.`
+                            : `You've used ${appRequestsMonth} of ${limit} free transactions this month (${Math.round(percentage)}%). Upgrade to Premium for unlimited transactions.`}
+                        </p>
+                        <div className="flex gap-2">
+                          <Link to="/dashboard/premium">
+                            <Button className="bg-[#F37100] hover:bg-[#F37100]/90">
+                              Upgrade to Premium
+                            </Button>
+                          </Link>
+                          {!isLimitReached && (
+                            <div className="flex items-center text-sm text-yellow-800 dark:text-yellow-200">
+                              {limit - appRequestsMonth} remaining
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            }
+            return null;
+          })()
+        )}
+
         {/* Stats Cards */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <Card>
@@ -82,14 +130,16 @@ export default function DashboardPage() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Rate Limit</CardTitle>
+              <CardTitle className="text-sm font-medium">Monthly Usage</CardTitle>
               <Zap className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {stats?.rateLimit?.remaining || 0} / {stats?.rateLimit?.max || 100}
+                {stats?.usageStats?.appRequestsMonth || 0} / {user?.plan === 'PREMIUM' ? '∞' : '100'}
               </div>
-              <p className="text-xs text-muted-foreground">Remaining requests</p>
+              <p className="text-xs text-muted-foreground">
+                {user?.plan === 'PREMIUM' ? 'Unlimited' : 'Transactions this month'}
+              </p>
             </CardContent>
           </Card>
 

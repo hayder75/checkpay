@@ -11,12 +11,23 @@ import DashboardPage from '@/pages/DashboardPage';
 import PatternBuilderPage from '@/pages/patterns/PatternBuilderPage';
 import PatternLibraryPage from '@/pages/patterns/PatternLibraryPage';
 import PatternEditPage from '@/pages/patterns/PatternEditPage';
+import PatternMarketplacePage from '@/pages/patterns/PatternMarketplacePage';
 import TransactionHistoryPage from '@/pages/TransactionHistoryPage';
 import PremiumPage from '@/pages/PremiumPage';
 import SettingsPage from '@/pages/SettingsPage';
 import MobileAppPage from '@/pages/MobileAppPage';
 import AnalyticsPage from '@/pages/AnalyticsPage';
 import ApiDocsPage from '@/pages/ApiDocsPage';
+import AdminDashboardPage from '@/pages/admin/AdminDashboardPage';
+import UserManagementPage from '@/pages/admin/UserManagementPage';
+import AdminAnalyticsPage from '@/pages/admin/AnalyticsPage';
+import PatternManagementPage from '@/pages/admin/PatternManagementPage';
+import TransactionMonitoringPage from '@/pages/admin/TransactionMonitoringPage';
+import CountryManagementPage from '@/pages/admin/CountryManagementPage';
+import TemplateManagementPage from '@/pages/admin/TemplateManagementPage';
+import MissingTemplatesPage from '@/pages/admin/MissingTemplatesPage';
+import AuditLogsPage from '@/pages/admin/AuditLogsPage';
+import SystemHealthPage from '@/pages/admin/SystemHealthPage';
 
 function App() {
   return (
@@ -58,6 +69,14 @@ function App() {
           element={
             <ProtectedRoute>
               <PatternEditPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard/patterns/marketplace"
+          element={
+            <ProtectedRoute>
+              <PatternMarketplacePage />
             </ProtectedRoute>
           }
         />
@@ -106,6 +125,88 @@ function App() {
           element={
             <ProtectedRoute>
               <ApiDocsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Admin routes */}
+        <Route
+          path="/admin/dashboard"
+          element={
+            <ProtectedRoute>
+              <AdminDashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/users"
+          element={
+            <ProtectedRoute>
+              <UserManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/analytics"
+          element={
+            <ProtectedRoute>
+              <AdminAnalyticsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/patterns"
+          element={
+            <ProtectedRoute>
+              <PatternManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/transactions"
+          element={
+            <ProtectedRoute>
+              <TransactionMonitoringPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/countries"
+          element={
+            <ProtectedRoute>
+              <CountryManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/countries/:countryCode/templates"
+          element={
+            <ProtectedRoute>
+              <TemplateManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/missing-templates"
+          element={
+            <ProtectedRoute>
+              <MissingTemplatesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/audit-logs"
+          element={
+            <ProtectedRoute>
+              <AuditLogsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/system-health"
+          element={
+            <ProtectedRoute>
+              <SystemHealthPage />
             </ProtectedRoute>
           }
         />

@@ -14,18 +14,21 @@ export default function VerifyOTPPage() {
   const location = useLocation();
   const { toast } = useToast();
   const [phone] = useState((location.state as any)?.phone || '');
+  const [email] = useState((location.state as any)?.email || '');
   const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [countdown, setCountdown] = useState(0);
 
   useEffect(() => {
-    if (!phone) {
+    if (!phone && !email) {
       navigate('/auth/register');
     }
     // Start 60 second countdown when page loads
     setCountdown(60);
-  }, [phone, navigate]);
+  }, [phone, email, navigate]);
 
   // Countdown timer
   useEffect(() => {
@@ -37,18 +40,68 @@ export default function VerifyOTPPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Check if password is required (for new users)
+    const needsPassword = !password && !confirmPassword;
+    if (needsPassword) {
+      // Try to verify without password first to check if user is new
+      // But we'll require password for new users
+    }
+
+    // Validate password if provided
+    if (password && password.length < 6) {
+      toast({
+        title: 'Error',
+        description: 'Password must be at least 6 characters',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (password && password !== confirmPassword) {
+      toast({
+        title: 'Error',
+        description: 'Passwords do not match',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setLoading(true);
 
     try {
-      const response = await authAPI.verifyOTP({ phone, code });
-      const { token, user } = response.data.data;
+      const response = await authAPI.verifyOTP({ 
+        phone: phone || undefined,
+        email: email || undefined,
+        code,
+        password: password || undefined,
+      });
+      
+      const { token, user, isNewUser } = response.data.data;
+      
+      if (isNewUser && !password) {
+        // New user must set password
+        toast({
+          title: 'Password Required',
+          description: 'Please set a password for your new account',
+          variant: 'destructive',
+        });
+        setLoading(false);
+        return;
+      }
+
       auth.setToken(token);
       auth.setUser(user);
       toast({
         title: 'Success',
-        description: 'Account verified successfully!',
+        description: isNewUser ? 'Account created successfully!' : 'Account verified successfully!',
       });
-      navigate('/dashboard');
+      // Redirect based on role
+      if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
+        navigate('/admin/dashboard');
+      } else {
+        navigate('/dashboard');
+      }
     } catch (error: any) {
       toast({
         title: 'Error',
@@ -63,7 +116,10 @@ export default function VerifyOTPPage() {
   const handleResendOTP = async () => {
     setResending(true);
     try {
-      const response = await authAPI.resendOTP({ phone });
+      const response = await authAPI.resendOTP({ 
+        phone: phone || undefined,
+        email: email || undefined,
+      });
       
       // Log OTP to frontend console for testing
       if (response.data.debug?.otp) {
@@ -98,7 +154,7 @@ export default function VerifyOTPPage() {
         <CardHeader className="space-y-1">
           <CardTitle className="text-2xl font-bold text-center">Verify OTP</CardTitle>
           <CardDescription className="text-center">
-            Enter the 6-digit code sent to {phone}
+            Enter the 6-digit code sent to {phone ? `+${phone.slice(-4).padStart(phone.length - 4, '*')}` : email || 'your device'}
           </CardDescription>
           <CardDescription className="text-center text-xs text-muted-foreground">
             Check the browser console (F12) for the OTP code
@@ -119,6 +175,30 @@ export default function VerifyOTPPage() {
                 className="text-center text-2xl tracking-widest"
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">Password (Required for new accounts)</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="Enter password (min 6 characters)"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                minLength={6}
+              />
+            </div>
+            {password && (
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword">Confirm Password</Label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  placeholder="Confirm password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  minLength={6}
+                />
+              </div>
+            )}
             <Button
               type="submit"
               className="w-full bg-[#F37100] hover:bg-[#F37100]/90"

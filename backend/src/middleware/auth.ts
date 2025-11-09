@@ -117,3 +117,31 @@ export async function authenticateApiKey(
   }
 }
 
+/**
+ * Require admin role
+ */
+export async function requireAdmin(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    if (!req.user) {
+      throw new AppError(401, 'Authentication required');
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { role: true },
+    });
+
+    if (!user || (user.role !== 'ADMIN' && user.role !== 'SUPER_ADMIN')) {
+      throw new AppError(403, 'Admin access required');
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+

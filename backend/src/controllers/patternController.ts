@@ -32,8 +32,25 @@ export async function createPattern(req: AuthRequest, res: Response) {
 
   const { smsText, name, description } = createPatternSchema.parse(req.body);
 
-  // Generate pattern using AI
-  const generatedPattern = generatePatternFromSMS(smsText, name);
+  // Get user's country and plan
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { country: true, plan: true },
+  });
+
+  // Check pattern limit for FREE users (4 total patterns max)
+  if (user?.plan === 'FREE') {
+    const patternCount = await prisma.pattern.count({
+      where: { userId: req.user.id },
+    });
+
+    if (patternCount >= 4) {
+      throw new AppError(403, 'You have reached the free plan limit (4 patterns). Upgrade to Premium for unlimited patterns!');
+    }
+  }
+
+  // Generate pattern using AI (with country code if available)
+  const generatedPattern = generatePatternFromSMS(smsText, name, user?.country || null);
 
   // Validate pattern
   const validation = validatePattern(generatedPattern);
@@ -64,6 +81,49 @@ export async function createPattern(req: AuthRequest, res: Response) {
       currency: generatedPattern.currency,
       description,
     },
+  });
+
+  // Trigger missing template analysis in background (non-blocking)
+  // This will check if similar patterns exist and flag if missing from templates
+  setImmediate(async () => {
+    try {
+      // Check if similar patterns exist (same bank + currency)
+      const similarPatterns = await prisma.pattern.findMany({
+        where: {
+          bank: generatedPattern.bank,
+          currency: generatedPattern.currency,
+          ...({ isFlagged: false } as any), // Type assertion for Prisma client
+        },
+        select: { userId: true },
+      });
+
+      // If 3+ unique users have similar pattern, check if template exists
+      const uniqueUsers = new Set(similarPatterns.map(p => p.userId));
+      if (uniqueUsers.size >= 3) {
+        const existingTemplate = await prisma.countryPattern.findFirst({
+          where: {
+            ...({ isTemplate: true } as any), // Type assertion for Prisma client
+            bank: generatedPattern.bank,
+            currency: generatedPattern.currency,
+          },
+        });
+
+        // If no template exists, flag this pattern
+        if (!existingTemplate) {
+          await prisma.pattern.update({
+            where: { id: pattern.id },
+            data: {
+              isFlagged: true,
+              flaggedAt: new Date(),
+              usageCount: uniqueUsers.size,
+            } as any, // Type assertion for Prisma client
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error in pattern analysis:', error);
+      // Don't fail the request if analysis fails
+    }
   });
 
   res.status(201).json({
@@ -202,7 +262,13 @@ export async function validatePatternEndpoint(req: AuthRequest, res: Response) {
     name: z.string().min(3).max(100),
   }).parse(req.body);
 
-  const generatedPattern = generatePatternFromSMS(smsText, name);
+  // Get user's country for country-specific templates
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { country: true },
+  });
+
+  const generatedPattern = generatePatternFromSMS(smsText, name, user?.country || null);
   const validation = validatePattern(generatedPattern);
   
   // Extract actual values to show in preview

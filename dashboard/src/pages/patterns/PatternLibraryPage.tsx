@@ -3,23 +3,36 @@ import { Link } from 'react-router-dom';
 import DashboardLayout from '@/components/layouts/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { patternsAPI } from '@/lib';
+import { patternsAPI, templatesAPI, authAPI } from '@/lib';
 import { useToast } from '@/components/ui/use-toast';
-import { Plus, Trash2, Edit } from 'lucide-react';
+import { Plus, Trash2, Edit, Store } from 'lucide-react';
 
 export default function PatternLibraryPage() {
   const { toast } = useToast();
   const [patterns, setPatterns] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [userPlan, setUserPlan] = useState<'FREE' | 'PREMIUM'>('FREE');
+  const [patternCount, setPatternCount] = useState(0);
 
   useEffect(() => {
     loadPatterns();
+    loadUserInfo();
   }, []);
+
+  const loadUserInfo = async () => {
+    try {
+      const response = await authAPI.getMe();
+      setUserPlan(response.data.data.plan);
+    } catch (error) {
+      // Ignore error
+    }
+  };
 
   const loadPatterns = async () => {
     try {
       const response = await patternsAPI.getAll();
       setPatterns(response.data.data);
+      setPatternCount(response.data.data.length);
     } catch (error: any) {
       toast({
         title: 'Error',
@@ -60,6 +73,9 @@ export default function PatternLibraryPage() {
     );
   }
 
+  const maxPatterns = userPlan === 'PREMIUM' ? null : 4;
+  const canCreateMore = userPlan === 'PREMIUM' || patternCount < 4;
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -67,13 +83,40 @@ export default function PatternLibraryPage() {
           <div>
             <h1 className="text-3xl font-bold">Pattern Library</h1>
             <p className="text-muted-foreground">Manage your SMS parsing patterns</p>
+            {maxPatterns !== null && (
+              <div className="mt-2">
+                <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                  patternCount >= maxPatterns 
+                    ? 'bg-destructive text-destructive-foreground' 
+                    : 'bg-secondary text-secondary-foreground'
+                }`}>
+                  Patterns: {patternCount}/{maxPatterns} {userPlan === 'FREE' && '(FREE)'}
+                </span>
+                {patternCount >= maxPatterns && (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    You've reached the free limit. <Link to="/dashboard/premium" className="text-[#F37100] hover:underline">Upgrade to Premium</Link> for unlimited patterns!
+                  </p>
+                )}
+              </div>
+            )}
           </div>
-          <Link to="/dashboard/patterns/new">
-            <Button className="bg-[#F37100] hover:bg-[#F37100]/90">
-              <Plus className="mr-2 h-4 w-4" />
-              Create Pattern
-            </Button>
-          </Link>
+          <div className="flex gap-2">
+            <Link to="/dashboard/patterns/marketplace">
+              <Button variant="outline">
+                <Store className="mr-2 h-4 w-4" />
+                Browse Templates
+              </Button>
+            </Link>
+            <Link to="/dashboard/patterns/new">
+              <Button 
+                className="bg-[#F37100] hover:bg-[#F37100]/90"
+                disabled={!canCreateMore}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Create Pattern
+              </Button>
+            </Link>
+          </div>
         </div>
 
         {patterns.length === 0 ? (

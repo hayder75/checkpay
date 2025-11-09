@@ -40,19 +40,30 @@ api.interceptors.response.use(
   }
 );
 
+// Countries API
+export const countriesAPI = {
+  getAll: () => api.get('/countries'),
+};
+
 // Auth API
 export const authAPI = {
-  register: (data: { email?: string; phone?: string }) =>
+  register: (data: { username?: string; phone?: string; country?: string }) =>
     api.post('/auth/register', data),
-  verifyOTP: (data: { phone: string; code: string }) =>
+  login: (data: { username?: string; phone?: string; password: string }) =>
+    api.post('/auth/login', data),
+  verifyOTP: (data: { phone?: string; email?: string; code: string; password?: string; iccid?: string; country?: string }) =>
     api.post('/auth/verify-otp', data),
-  resendOTP: (data: { phone: string }) =>
+  resendOTP: (data: { phone?: string; email?: string }) =>
     api.post('/auth/resend-otp', data),
   getMe: () => api.get('/auth/me'),
   regenerateKey: () => api.post('/auth/regenerate-key'),
-  googleLogin: () => {
-    window.location.href = `${API_BASE_URL}/auth/google`;
-  },
+  getSimCards: () => api.get('/auth/sims'),
+  addSimCard: (data: { iccid: string; phoneNumber: string }) =>
+    api.post('/auth/sims', data),
+  removeSimCard: (id: string) =>
+    api.delete('/auth/sims', { data: { id } }),
+  checkSimCard: (iccid: string) =>
+    api.get(`/auth/sims/check?iccid=${iccid}`),
 };
 
 // Patterns API
@@ -65,6 +76,13 @@ export const patternsAPI = {
   delete: (id: string) => api.delete(`/patterns/${id}`),
   validate: (data: { smsText: string; name: string }) =>
     api.post('/patterns/validate', data),
+};
+
+// Templates API
+export const templatesAPI = {
+  getAvailable: () => api.get('/templates/available'),
+  add: (templateId: string) => api.post(`/templates/${templateId}/add`),
+  remove: (templateId: string) => api.delete(`/templates/${templateId}/remove`),
 };
 
 // Dashboard API
@@ -87,6 +105,57 @@ export const verifyAPI = {
       params: { key: apiKey, txn: txnId },
       headers: { 'X-API-Key': apiKey },
     }),
+};
+
+// Admin API
+export const adminAPI = {
+  // Users
+  getUsers: (params?: { page?: number; limit?: number; plan?: string; role?: string; country?: string; search?: string }) =>
+    api.get('/admin/users', { params }),
+  getUser: (id: string) => api.get(`/admin/users/${id}`),
+  updateUser: (id: string, data: { plan?: string; role?: string; country?: string }) =>
+    api.patch(`/admin/users/${id}`, data),
+  
+  // Analytics
+  getAnalytics: () => api.get('/admin/analytics'),
+  
+  // Patterns
+  getPatterns: (params?: { page?: number; limit?: number; userId?: string; bank?: string; currency?: string; search?: string }) =>
+    api.get('/admin/patterns', { params }),
+  
+  // Transactions
+  getTransactions: (params?: { page?: number; limit?: number; userId?: string; bank?: string; txnId?: string; fromDate?: string; toDate?: string }) =>
+    api.get('/admin/transactions', { params }),
+  
+  // Countries
+  getCountries: () => api.get('/admin/countries'),
+  getCountry: (code: string) => api.get(`/admin/countries/${code}`),
+  updateCountry: (code: string, data: { name?: string; banks?: string[]; currencies?: string[]; commonPhrases?: string[]; isActive?: boolean }) =>
+    api.patch(`/admin/countries/${code}`, data),
+  
+  // Templates
+  createTemplate: (countryCode: string, data: { smsText: string; name: string; description: string; requiredPlan?: 'FREE' | 'PREMIUM' }) =>
+    api.post(`/admin/countries/${countryCode}/templates`, data),
+  getTemplates: (countryCode: string, params?: { plan?: 'FREE' | 'PREMIUM' }) =>
+    api.get(`/admin/countries/${countryCode}/templates`, { params }),
+  updateTemplate: (templateId: string, data: { name?: string; description?: string; requiredPlan?: 'FREE' | 'PREMIUM'; regex?: string; extractFields?: any; bank?: string; currency?: string }) =>
+    api.put(`/admin/templates/${templateId}`, data),
+  deleteTemplate: (templateId: string) =>
+    api.delete(`/admin/templates/${templateId}`),
+  
+  // Missing Templates
+  getMissingTemplates: () => api.get('/admin/missing-templates'),
+  addMissingTemplate: (patternId: string, data: { countryCode: string; name: string; description: string; requiredPlan?: 'FREE' | 'PREMIUM' }) =>
+    api.post(`/admin/missing-templates/${patternId}/add`, data),
+  dismissMissingTemplate: (patternId: string, data?: { reason?: string }) =>
+    api.post(`/admin/missing-templates/${patternId}/dismiss`, data),
+  
+  // Audit Logs
+  getAuditLogs: (params?: { page?: number; limit?: number; userId?: string; action?: string; fromDate?: string; toDate?: string }) =>
+    api.get('/admin/audit-logs', { params }),
+  
+  // System Health
+  getSystemHealth: () => api.get('/admin/system-health'),
 };
 
 export default api;

@@ -12,6 +12,9 @@ import verifyRoutes from './routes/verify';
 import premiumRoutes from './routes/premium';
 import dashboardRoutes from './routes/dashboard';
 import configRoutes from './routes/config';
+import adminRoutes from './routes/admin';
+import countriesRoutes from './routes/countries';
+import templateRoutes from './routes/templates';
 
 // Load environment variables
 dotenv.config();
@@ -79,11 +82,14 @@ app.get('/health', (req: Request, res: Response) => {
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/patterns', patternRoutes);
+app.use('/api/templates', templateRoutes);
 app.use('/api/ingest', ingestRoutes);
 app.use('/api/verify', verifyRoutes);
 app.use('/api/premium', premiumRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/config', configRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/countries', countriesRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -93,11 +99,13 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // Error handler (must be last)
 app.use(errorHandler);
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 CheckPay API server running on port ${PORT}`);
+// Start server - listen on all interfaces (0.0.0.0) to allow network access
+const port = typeof PORT === 'string' ? parseInt(PORT, 10) : PORT;
+app.listen(port, '0.0.0.0', () => {
+  console.log(`🚀 CheckPay API server running on port ${port}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+  console.log(`🔗 Health check: http://localhost:${port}/health`);
+  console.log(`🌐 Network access: http://0.0.0.0:${port}/health`);
 });
 
 export default app;

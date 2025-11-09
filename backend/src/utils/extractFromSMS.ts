@@ -16,24 +16,25 @@ interface ExtractedData {
  */
 function extractTxnId(text: string): string | null {
   const patterns = [
-    /transaction\s+number\s+([A-Z0-9]+)/i,
-    /by\s+transaction\s+number\s+([A-Z0-9]+)/i,
-    /transaction\s+id\s*[: ]+([A-Z0-9]+)/i,
-    /txn\s*[: ]+([A-Z0-9]+)/i,
-    /ref\s*[: ]+([A-Z0-9]+)/i,
-    /reference\s*[: ]+([A-Z0-9]+)/i,
-    /id\s*[: ]+([A-Z0-9]+)/i,
-    /transaction\s+no\s*[: ]+([A-Z0-9]+)/i,
+    /transaction\s+number\s+is\s+([A-Z0-9]{6,})/i, // "transaction number is CK660DRZ8I"
+    /transaction\s+number\s+([A-Z0-9]{6,})/i, // "transaction number CK660DRZ8I"
+    /by\s+transaction\s+number\s+([A-Z0-9]{6,})/i,
+    /transaction\s+id\s*[: ]+\s*([A-Z0-9]{6,})/i,
+    /txn\s*[: ]+\s*([A-Z0-9]{6,})/i,
+    /ref\s*[: ]+\s*([A-Z0-9]{6,})/i,
+    /reference\s*[: ]+\s*([A-Z0-9]{6,})/i,
+    /id\s*[: ]+\s*([A-Z0-9]{6,})/i,
+    /transaction\s+no\s*[: ]+\s*([A-Z0-9]{6,})/i,
   ];
 
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    if (match && match[1]) {
+    if (match && match[1] && match[1].length >= 6) {
       return match[1].trim();
     }
   }
 
-  // Fallback: look for alphanumeric codes
+  // Fallback: look for alphanumeric codes (6+ chars)
   const fallback = text.match(/\b([A-Z0-9]{6,})\b/);
   if (fallback && !fallback[1].match(/^\d{10,}$/) && !fallback[1].match(/^\d{4}-\d{2}-\d{2}/)) {
     return fallback[1];
@@ -44,16 +45,28 @@ function extractTxnId(text: string): string | null {
 
 /**
  * Extract amount from SMS
+ * Handles comma-separated numbers like 1,000.00
  */
 function extractAmount(text: string, currency: string | null): number | null {
+  // Pattern for comma-separated numbers: 1,000.00 or 1,000,000.50
+  const commaNumberPattern = '\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?';
+  
   const patterns = [
+    // Currency before amount with commas: ETB 1,000.00
+    currency ? new RegExp(`${currency}\\s*(${commaNumberPattern})`, 'i') : null,
+    // Amount before currency with commas: 1,000.00 ETB
+    currency ? new RegExp(`(${commaNumberPattern})\\s*${currency}`, 'i') : null,
+    // Generic patterns with commas
+    new RegExp(`received\\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\\s*(${commaNumberPattern})`, 'i'),
+    new RegExp(`credited\\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\\s*(${commaNumberPattern})`, 'i'),
+    new RegExp(`transferred\\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\\s*(${commaNumberPattern})`, 'i'),
+    new RegExp(`deposited\\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\\s*(${commaNumberPattern})`, 'i'),
+    new RegExp(`amount\\s*[: ]+\\s*(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\\s*(${commaNumberPattern})`, 'i'),
+    // Fallback: simple numbers without commas (for backward compatibility)
     currency ? new RegExp(`${currency}\\s*(\\d+(?:\\.\\d+)?)`, 'i') : null,
     currency ? new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${currency}`, 'i') : null,
     /received\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\s*(\d+(?:\.\d+)?)/i,
     /credited\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\s*(\d+(?:\.\d+)?)/i,
-    /transferred\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\s*(\d+(?:\.\d+)?)/i,
-    /deposited\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\s*(\d+(?:\.\d+)?)/i,
-    /amount\s*[: ]+\s*(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\s*(\d+(?:\.\d+)?)/i,
   ].filter(Boolean) as RegExp[];
 
   for (const pattern of patterns) {
@@ -61,7 +74,9 @@ function extractAmount(text: string, currency: string | null): number | null {
     if (match && match[1]) {
       const beforeMatch = text.substring(0, match.index || 0);
       if (!beforeMatch.match(/balance\s+is/i)) {
-        return parseFloat(match[1]);
+        // Remove commas before parsing: "1,000.00" -> "1000.00"
+        const amountStr = match[1].replace(/,/g, '');
+        return parseFloat(amountStr);
       }
     }
   }

@@ -1,7 +1,10 @@
 /**
  * AI-powered pattern generation from SMS
  * Uses keyword-based extraction to handle variations in wording
+ * Can use country-specific templates for better accuracy
  */
+
+import { getCountryTemplate } from './countryTemplates';
 
 interface PatternExtraction {
   amount: number | null;
@@ -73,21 +76,23 @@ function detectBank(text: string): string | null {
  */
 function findTransactionId(text: string): { value: string; position: number } | null {
   // Multiple variations of transaction ID keywords
+  // Handle "transaction number is X" pattern specifically
   const txnIdPatterns = [
-    /transaction\s+number\s+([A-Z0-9]+)/i,
-    /transaction\s+id\s*[: ]+([A-Z0-9]+)/i,
-    /txn\s*[: ]+([A-Z0-9]+)/i,
-    /ref\s*[: ]+([A-Z0-9]+)/i,
-    /reference\s*[: ]+([A-Z0-9]+)/i,
-    /id\s*[: ]+([A-Z0-9]+)/i,
-    /transaction\s+no\s*[: ]+([A-Z0-9]+)/i,
-    /txn\s+no\s*[: ]+([A-Z0-9]+)/i,
-    /by\s+transaction\s+number\s+([A-Z0-9]+)/i,
+    /transaction\s+number\s+is\s+([A-Z0-9]{6,})/i, // "transaction number is CK660DRZ8I"
+    /transaction\s+number\s+([A-Z0-9]{6,})/i, // "transaction number CK660DRZ8I"
+    /transaction\s+id\s*[: ]+\s*([A-Z0-9]{6,})/i,
+    /txn\s*[: ]+\s*([A-Z0-9]{6,})/i,
+    /ref\s*[: ]+\s*([A-Z0-9]{6,})/i,
+    /reference\s*[: ]+\s*([A-Z0-9]{6,})/i,
+    /id\s*[: ]+\s*([A-Z0-9]{6,})/i,
+    /transaction\s+no\s*[: ]+\s*([A-Z0-9]{6,})/i,
+    /txn\s+no\s*[: ]+\s*([A-Z0-9]{6,})/i,
+    /by\s+transaction\s+number\s+([A-Z0-9]{6,})/i,
   ];
 
   for (const pattern of txnIdPatterns) {
     const match = text.match(pattern);
-    if (match && match[1]) {
+    if (match && match[1] && match[1].length >= 6) {
       return { value: match[1], position: match.index || 0 };
     }
   }
@@ -107,22 +112,32 @@ function findTransactionId(text: string): { value: string; position: number } | 
 
 /**
  * Find amount using multiple patterns
+ * Handles comma-separated numbers like 1,000.00
  */
 function findAmount(text: string, currency: string | null): { value: string; position: number } | null {
+  // Pattern for comma-separated numbers: 1,000.00 or 1,000,000.50
+  // Matches: \d{1,3}(?:,\d{3})*(?:\.\d+)?
+  const commaNumberPattern = '\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?';
+  
   // Patterns for amount detection
   const amountPatterns = [
-    // Currency before amount: ETB 200.00, KES 500
+    // Currency before amount: ETB 1,000.00, ETB 200.00, KES 500
+    currency ? new RegExp(`${currency}\\s*(${commaNumberPattern})`, 'i') : null,
+    // Amount before currency: 1,000.00 ETB, 200.00 ETB, 500 KES
+    currency ? new RegExp(`(${commaNumberPattern})\\s*${currency}`, 'i') : null,
+    // Generic amount patterns near keywords (with commas)
+    new RegExp(`received\\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\\s*(${commaNumberPattern})`, 'i'),
+    new RegExp(`credited\\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\\s*(${commaNumberPattern})`, 'i'),
+    new RegExp(`transferred\\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\\s*(${commaNumberPattern})`, 'i'),
+    new RegExp(`deposited\\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\\s*(${commaNumberPattern})`, 'i'),
+    new RegExp(`amount\\s*[: ]+\\s*(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\\s*(${commaNumberPattern})`, 'i'),
+    // Generic: any number that looks like money (with commas)
+    new RegExp(`(${commaNumberPattern})\\s*(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR|Birr|Shilling|Naira|Cedi)`, 'i'),
+    // Fallback: simple numbers without commas (for backward compatibility)
     currency ? new RegExp(`${currency}\\s*(\\d+(?:\\.\\d+)?)`, 'i') : null,
-    // Amount before currency: 200.00 ETB, 500 KES
     currency ? new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${currency}`, 'i') : null,
-    // Generic amount patterns near keywords
     /received\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\s*(\d+(?:\.\d+)?)/i,
     /credited\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\s*(\d+(?:\.\d+)?)/i,
-    /transferred\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\s*(\d+(?:\.\d+)?)/i,
-    /deposited\s+(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\s*(\d+(?:\.\d+)?)/i,
-    /amount\s*[: ]+\s*(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR)?\s*(\d+(?:\.\d+)?)/i,
-    // Generic: any number that looks like money
-    /(\d+(?:\.\d{2})?)\s*(?:ETB|KES|NGN|GHS|UGX|TZS|RWF|ZAR|Birr|Shilling|Naira|Cedi)/i,
   ].filter(Boolean) as RegExp[];
 
   for (const pattern of amountPatterns) {
@@ -166,10 +181,31 @@ function findSender(text: string): { value: string; position: number } | null {
 
 /**
  * Generates a flexible regex pattern from SMS text using keyword-based extraction
+ * @param smsText - The SMS text to analyze
+ * @param patternName - Name for the pattern
+ * @param countryCode - Optional country code to use country-specific templates
  */
-export function generatePatternFromSMS(smsText: string, patternName: string): GeneratedPattern {
-  const currency = detectCurrency(smsText);
-  const bank = detectBank(smsText);
+export function generatePatternFromSMS(
+  smsText: string,
+  patternName: string,
+  countryCode?: string | null
+): GeneratedPattern {
+  // Get country template if country code provided
+  const countryTemplate = countryCode ? getCountryTemplate(countryCode) : null;
+  
+  // Use country-specific currency detection if template available
+  const currency = countryTemplate
+    ? countryTemplate.currencies.find(c => 
+        smsText.toUpperCase().includes(c.toUpperCase())
+      ) || detectCurrency(smsText)
+    : detectCurrency(smsText);
+  
+  // Use country-specific bank detection if template available
+  const bank = countryTemplate
+    ? countryTemplate.banks.find(b => 
+        smsText.toUpperCase().includes(b.toUpperCase())
+      ) || detectBank(smsText)
+    : detectBank(smsText);
 
   // Find all fields using keyword-based detection
   const txnIdMatch = findTransactionId(smsText);
@@ -192,45 +228,67 @@ export function generatePatternFromSMS(smsText: string, patternName: string): Ge
   // Build a simpler, more flexible regex
   // Instead of trying to match the entire message, we'll create patterns for key fields
 
-  // Build transaction ID pattern
+  // Build transaction ID pattern (use country template if available)
   if (txnIdMatch) {
-    const txnIdKeywords = [
-      'transaction\\s+number',
-      'by\\s+transaction\\s+number',
-      'transaction\\s+id',
-      'txn',
-      'ref',
-      'reference',
-      'id',
-    ].join('|');
-    regexParts.push(`(?:${txnIdKeywords})\\s*[: ]?\\s*([A-Z0-9]+)`);
+    const txnIdKeywords = countryTemplate && countryTemplate.txnIdPatterns.length > 0
+      ? countryTemplate.txnIdPatterns.join('|')
+      : [
+          'transaction\\s+number',
+          'by\\s+transaction\\s+number',
+          'transaction\\s+id',
+          'txn',
+          'ref',
+          'reference',
+          'id',
+        ].join('|');
+    // Require transaction ID to be at least 6 characters (avoids matching "is", "the", etc.)
+    // Also handle "transaction number is" or "transaction number:" patterns
+    regexParts.push(`(?:${txnIdKeywords})\\s*(?:is|[: ])?\\s*([A-Z0-9]{6,})`);
     extractFields.txnId = groupIndex++;
   }
 
-  // Build amount pattern
+  // Build amount pattern (use country template if available)
+  // Pattern for comma-separated numbers: \d{1,3}(?:,\d{3})*(?:\.\d+)?
+  const commaNumberPattern = '\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?';
+  
   if (amountMatch) {
-    const amountKeywords = ['received', 'credited', 'transferred', 'deposited'].join('|');
+    const amountKeywords = countryTemplate && countryTemplate.amountPatterns.length > 0
+      ? countryTemplate.amountPatterns.join('|')
+      : ['received', 'credited', 'transferred', 'deposited'].join('|');
+    
+    const currencyList = countryTemplate && countryTemplate.currencies.length > 0
+      ? countryTemplate.currencies.join('|')
+      : currency || 'ETB|KES|NGN|GHS';
+    
     if (currency) {
-      regexParts.push(`(?:${amountKeywords})\\s*(?:${currency})?\\s*(\\d+(?:\\.\\d+)?)`);
+      // Use comma-aware pattern: handles 1,000.00 and 1000.00
+      regexParts.push(`(?:${amountKeywords})\\s*(?:${currency})?\\s*(${commaNumberPattern})`);
     } else {
-      regexParts.push(`(?:${amountKeywords})\\s*(?:ETB|KES|NGN|GHS)?\\s*(\\d+(?:\\.\\d+)?)`);
+      regexParts.push(`(?:${amountKeywords})\\s*(?:${currencyList})?\\s*(${commaNumberPattern})`);
     }
     extractFields.amount = groupIndex++;
   } else if (currency) {
-    // Fallback: match currency amount
-    regexParts.push(`${currency}\\s*(\\d+(?:\\.\\d+)?)`);
+    // Fallback: match currency amount (with comma support)
+    regexParts.push(`${currency}\\s*(${commaNumberPattern})`);
     extractFields.amount = groupIndex++;
   }
 
-  // Build sender pattern
+  // Build sender pattern (use country template if available)
   if (senderMatch) {
-    const senderKeywords = ['from', 'by', 'sent\\s+by'].join('|');
+    const senderKeywords = countryTemplate && countryTemplate.senderPatterns.length > 0
+      ? countryTemplate.senderPatterns.join('|')
+      : ['from', 'by', 'sent\\s+by'].join('|');
     regexParts.push(`(?:${senderKeywords})\\s+([^\\n\\.]+?)(?=\\s+to|\\s+on|\\.|$)`);
     extractFields.sender = groupIndex++;
   }
 
   // Combine parts with flexible matching
+  // Use more flexible matching: allow parts in any order with generous spacing
   if (regexParts.length > 0) {
+    // Make the regex truly order-independent by using lookahead or making parts optional
+    // For now, use very generous .*? between parts (allows any order)
+    // The .*? is non-greedy, so it will match the shortest possible string
+    // This allows fields to appear in any order
     regex = regexParts.join('.*?');
   } else {
     // Ultimate fallback: simple pattern
@@ -267,9 +325,12 @@ export function generatePatternFromSMS(smsText: string, patternName: string): Ge
     if (!extractFields.txnId) extractFields.txnId = 2;
   }
 
+  // Don't add (?i) prefix - JavaScript RegExp uses 'i' flag in constructor instead
+  // The (?i) syntax is for PCRE (Perl Compatible Regular Expressions), not JavaScript
+  // We'll use the 'i' flag when creating RegExp objects
   return {
     name: patternName,
-    regex: `(?i)${regex}`,
+    regex: regex, // No (?i) prefix - use 'i' flag in RegExp constructor
     extractFields,
     bank,
     currency,
