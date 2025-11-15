@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
 import { errorHandler, AppError } from './middleware/errorHandler';
+import { requestLogger } from './middleware/requestLogger';
 
 // Import routes
 import authRoutes from './routes/auth';
@@ -15,6 +16,7 @@ import configRoutes from './routes/config';
 import adminRoutes from './routes/admin';
 import countriesRoutes from './routes/countries';
 import templateRoutes from './routes/templates';
+import testRoutes from './routes/test';
 
 // Load environment variables
 dotenv.config();
@@ -45,7 +47,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'Accept', 'Origin', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'Accept', 'Origin', 'X-Requested-With', 'ngrok-skip-browser-warning'],
   exposedHeaders: ['Content-Type', 'Authorization'],
   optionsSuccessStatus: 200,
   preflightContinue: false,
@@ -64,11 +66,8 @@ app.use(helmet({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Request logging (simple version)
-app.use((req: Request, res: Response, next: NextFunction) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-  next();
-});
+// Enhanced request/response logging with AI-friendly format
+app.use(requestLogger);
 
 // Health check endpoint
 app.get('/health', (req: Request, res: Response) => {
@@ -90,6 +89,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/config', configRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/countries', countriesRoutes);
+app.use('/api/test', testRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response, next: NextFunction) => {

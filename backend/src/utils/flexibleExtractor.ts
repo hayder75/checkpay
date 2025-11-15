@@ -9,6 +9,8 @@ interface ExtractedFields {
   txnId: string | null;
   bank: string | null;
   currency: string | null;
+  sendFrom: string | null;
+  sendTo: string | null;
 }
 
 /**
@@ -111,6 +113,57 @@ function extractSender(text: string): string | null {
 }
 
 /**
+ * Extract send from (institution/account sending money)
+ */
+function extractSendFrom(text: string): string | null {
+  const patterns = [
+    /from\s+([A-Za-z0-9\s\-]+?)(?:\s+to|\s+account|\s+on|\.|$)/i,
+    /sent\s+from\s+([A-Za-z0-9\s\-]+?)(?:\s+to|\s+account|\s+on|\.|$)/i,
+    /transfer\s+from\s+([A-Za-z0-9\s\-]+?)(?:\s+to|\s+account|\s+on|\.|$)/i,
+    /debit\s+from\s+([A-Za-z0-9\s\-]+?)(?:\s+to|\s+account|\s+on|\.|$)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      const value = match[1].trim();
+      // Check if it looks like an institution name (not just a phone number)
+      if (value && (value.length > 3 || value.match(/[A-Za-z]/))) {
+        return value;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract send to (institution/account receiving money)
+ */
+function extractSendTo(text: string): string | null {
+  const patterns = [
+    /to\s+([A-Za-z0-9\s\-]+?)(?:\s+account|\s+on|\s+from|\.|$)/i,
+    /sent\s+to\s+([A-Za-z0-9\s\-]+?)(?:\s+account|\s+on|\s+from|\.|$)/i,
+    /transfer\s+to\s+([A-Za-z0-9\s\-]+?)(?:\s+account|\s+on|\s+from|\.|$)/i,
+    /credit\s+to\s+([A-Za-z0-9\s\-]+?)(?:\s+account|\s+on|\s+from|\.|$)/i,
+    /received\s+by\s+([A-Za-z0-9\s\-]+?)(?:\s+account|\s+on|\s+from|\.|$)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      const value = match[1].trim();
+      // Check if it looks like an institution name (not just a phone number)
+      if (value && (value.length > 3 || value.match(/[A-Za-z]/))) {
+        return value;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Flexible extraction that works even if regex doesn't match perfectly
  */
 export function flexibleExtract(smsText: string, pattern: any): ExtractedFields {
@@ -137,12 +190,16 @@ export function flexibleExtract(smsText: string, pattern: any): ExtractedFields 
       const amount = parseFloat(amountStr.replace(/[^\d.]/g, '')) || null;
 
       if (txnId && amount) {
+        const sendFrom = match[extraction.sendFrom] || '';
+        const sendTo = match[extraction.sendTo] || '';
         return {
           txnId: txnId.trim(),
           amount,
           sender: sender.trim() || null,
           bank,
           currency,
+          sendFrom: sendFrom.trim() || null,
+          sendTo: sendTo.trim() || null,
         };
       }
     }
@@ -154,6 +211,8 @@ export function flexibleExtract(smsText: string, pattern: any): ExtractedFields 
   const txnId = extractTransactionId(smsText);
   const amount = extractAmount(smsText, currency);
   const sender = extractSender(smsText);
+  const sendFrom = extractSendFrom(smsText);
+  const sendTo = extractSendTo(smsText);
 
   return {
     txnId: txnId || null,
@@ -161,6 +220,8 @@ export function flexibleExtract(smsText: string, pattern: any): ExtractedFields 
     sender,
     bank,
     currency,
+    sendFrom,
+    sendTo,
   };
 }
 

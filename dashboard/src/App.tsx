@@ -28,6 +28,7 @@ import TemplateManagementPage from '@/pages/admin/TemplateManagementPage';
 import MissingTemplatesPage from '@/pages/admin/MissingTemplatesPage';
 import AuditLogsPage from '@/pages/admin/AuditLogsPage';
 import SystemHealthPage from '@/pages/admin/SystemHealthPage';
+import VerifyPage from '@/pages/merchant/VerifyPage';
 
 function App() {
   return (
@@ -210,6 +211,9 @@ function App() {
             </ProtectedRoute>
           }
         />
+
+        {/* Merchant verification portal (public, no auth required) */}
+        <Route path="/verify/:merchantId" element={<VerifyPage />} />
 
         {/* Catch all */}
         <Route path="*" element={<Navigate to="/" replace />} />

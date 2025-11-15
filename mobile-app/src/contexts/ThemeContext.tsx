@@ -15,29 +15,39 @@ interface ThemeContextType {
     border: string;
     primary: string;
     primaryText: string;
+    accent: string;
+    lightGreen: string;
+    darkGreen: string;
   };
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
+// Brand color scheme - orange primary
 const lightColors = {
   background: '#ffffff',
   surface: '#f5f5f5',
-  text: '#000000',
-  textSecondary: '#666666',
-  border: '#e0e0e0',
-  primary: '#F37100',
+  text: '#1f2937',
+  textSecondary: '#6b7280',
+  border: '#e5e7eb',
+  primary: '#F37100', // Brand color (orange)
   primaryText: '#ffffff',
+  accent: '#F37100',
+  lightGreen: '#d1fae5',
+  darkGreen: '#059669',
 };
 
 const darkColors = {
-  background: '#1a1a1a',
-  surface: '#2a2a2a',
-  text: '#ffffff',
-  textSecondary: '#888888',
-  border: '#333333',
-  primary: '#F37100',
+  background: '#ffffff',
+  surface: '#f9fafb',
+  text: '#1f2937',
+  textSecondary: '#6b7280',
+  border: '#e5e7eb',
+  primary: '#F37100', // Brand color (orange)
   primaryText: '#ffffff',
+  accent: '#F37100',
+  lightGreen: '#d1fae5',
+  darkGreen: '#059669',
 };
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {

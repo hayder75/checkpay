@@ -42,6 +42,28 @@ RATE_LIMIT_PREMIUM_MAX=1000000
 
 # Frontend URL (for CORS)
 FRONTEND_URL="http://localhost:5173"
+
+# AI Provider Configuration (Optional - for LLM extraction)
+# Set AI_PROVIDER to 'gemini', 'huggingface', 'openai', 'ollama', or 'auto' (tries all)
+AI_PROVIDER=auto
+
+# Google Gemini (FREE tier available - Recommended)
+# Get your API key from: https://aistudio.google.com/app/apikey
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash-lite-preview-06-17
+
+# Hugging Face (FREE - Currently migrating endpoints)
+# Get your API token from: https://huggingface.co/settings/tokens
+HUGGINGFACE_API_KEY=
+HUGGINGFACE_MODEL=meta-llama/Llama-3-8B-Instruct
+
+# OpenAI (Optional - has free credits for new accounts)
+# OPENAI_API_KEY=sk-...
+# OPENAI_MODEL=gpt-4o-mini
+
+# Ollama (Optional - Local AI, 100% free)
+# OLLAMA_URL=http://localhost:11434
+# OLLAMA_MODEL=llama3
 ```
 
 ### 3. Database Setup

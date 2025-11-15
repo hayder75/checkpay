@@ -24,6 +24,7 @@
     "express-rate-limit": "^7.4.1",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
+    "openai": "^6.8.1",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "zod": "^3.23.8"
@@ -42,4 +43,3 @@
     "vitest": "^2.1.4"
   }
 }
-

@@ -17,7 +17,7 @@ import { installationService } from '../services/installation';
 import { Pattern, ParsedSMS } from '../types';
 
 interface Props {
-  apiKey: string;
+  apiKey?: string | null;
   patterns: Pattern[];
   onLogout: () => void;
 }
@@ -81,38 +81,61 @@ export default function MainScreen({ apiKey, patterns, onLogout }: Props) {
         iccid: simIccid, // Include SIM ICCID
       };
 
-      // Send to backend
-      const response = await ingestTransaction(transaction);
+      // Send to backend only if apiKey is available
+      if (apiKey) {
+        const response = await ingestTransaction(transaction);
 
-      if (response.success) {
+        if (response.success) {
+          setLastTransaction(transaction);
+          setTransactionCount(prev => prev + 1);
+          setSmsText('');
+          Alert.alert('Success', 'Transaction sent to backend successfully!');
+        } else {
+          Alert.alert('Error', response.error || 'Failed to send transaction');
+        }
+      } else {
+        // No API key - just show parsed result locally
         setLastTransaction(transaction);
         setTransactionCount(prev => prev + 1);
         setSmsText('');
-        Alert.alert('Success', 'Transaction sent to backend successfully!');
-      } else {
-        Alert.alert('Error', response.error || 'Failed to send transaction');
+        Alert.alert(
+          'Transaction Parsed',
+          `Transaction parsed successfully!\n\n` +
+          `Amount: ${transaction.amount}\n` +
+          `Bank: ${transaction.bank}\n` +
+          `Txn ID: ${transaction.txnId}\n\n` +
+          `Login to sync to cloud.`,
+          [{ text: 'OK' }]
+        );
       }
     } catch (error: any) {
       console.error('Transaction processing error:', error);
-      const errorMessage = error.response?.data?.error || 'Failed to process transaction';
       
-      // Handle specific error cases
-      if (errorMessage.includes('SIM card is not registered')) {
-        Alert.alert(
-          'SIM Card Not Registered',
-          'This SIM card is not registered with your account.\n\n' +
-          'Please use the SIM card you registered with, or upgrade to Premium to add more SIMs.',
-          [{ text: 'OK' }]
-        );
-      } else if (errorMessage.includes('limit reached')) {
-        Alert.alert(
-          'Free Plan Limit Reached',
-          errorMessage + '\n\n' +
-          'Upgrade to Premium for unlimited transactions!',
-          [{ text: 'OK' }]
-        );
+      // Only show backend errors if apiKey exists
+      if (apiKey) {
+        const errorMessage = error.response?.data?.error || 'Failed to process transaction';
+        
+        // Handle specific error cases
+        if (errorMessage.includes('SIM card is not registered')) {
+          Alert.alert(
+            'SIM Card Not Registered',
+            'This SIM card is not registered with your account.\n\n' +
+            'Please use the SIM card you registered with, or upgrade to Premium to add more SIMs.',
+            [{ text: 'OK' }]
+          );
+        } else if (errorMessage.includes('limit reached')) {
+          Alert.alert(
+            'Free Plan Limit Reached',
+            errorMessage + '\n\n' +
+            'Upgrade to Premium for unlimited transactions!',
+            [{ text: 'OK' }]
+          );
+        } else {
+          Alert.alert('Error', errorMessage);
+        }
       } else {
-        Alert.alert('Error', errorMessage);
+        // No API key - this shouldn't happen if we're parsing locally
+        Alert.alert('Error', 'Failed to parse transaction. Please check the SMS format.');
       }
     } finally {
       setProcessing(false);

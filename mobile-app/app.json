@@ -12,6 +12,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+    "plugins": [
+      "expo-dev-client"
+    ],
     "ios": {
       "supportsTablet": true
     },
@@ -24,8 +27,10 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.READ_SMS",
-        "android.permission.RECEIVE_SMS"
-      ]
+        "android.permission.RECEIVE_SMS",
+        "android.permission.SEND_SMS"
+      ],
+      "package": "com.checkpay.mobile"
     },
     "web": {
       "favicon": "./assets/favicon.png"

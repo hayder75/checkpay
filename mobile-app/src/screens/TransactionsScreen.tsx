@@ -5,119 +5,159 @@ import {
   ScrollView,
   StyleSheet,
   RefreshControl,
-  ActivityIndicator,
+  FlatList,
 } from 'react-native';
-import { dashboardAPI } from '../services/api';
+import { CreditCard } from 'lucide-react-native';
+import { storage } from '../services/storage';
+import { smsService, LocalTransaction } from '../services/smsService';
 import { useTheme } from '../contexts/ThemeContext';
 
-interface Transaction {
-  id: string;
-  txnId: string;
-  amount: number;
-  sender: string;
-  bank: string | null;
-  patternId: string | null;
-  pattern?: {
-    name: string;
-    bank: string | null;
-  };
-  receivedAt: string;
-  createdAt: string;
-}
-
 interface Props {
-  apiKey: string;
+  apiKey?: string | null;
 }
 
 export default function TransactionsScreen({ apiKey }: Props) {
   const { colors } = useTheme();
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [transactions, setTransactions] = useState<LocalTransaction[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
 
   useEffect(() => {
     loadTransactions();
+    const interval = setInterval(loadTransactions, 3000);
+    return () => clearInterval(interval);
   }, []);
 
-  const loadTransactions = async (pageNum: number = 1) => {
+  const loadTransactions = async () => {
     try {
-      const response = await dashboardAPI.getTransactions({ page: pageNum, limit: 20 });
-      if (response.success) {
-        setTransactions(response.data.transactions);
-        setTotal(response.data.pagination.total);
-        setPage(pageNum);
-      }
-    } catch (error: any) {
+      const txs = await storage.getLocalTransactions();
+      // Sort by most recent first
+      txs.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
+      setTransactions(txs);
+    } catch (error) {
       console.error('Error loading transactions:', error);
-      console.error('Error details:', error.response?.data || error.message);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
     }
   };
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadTransactions(1);
+    await loadTransactions();
+    if (smsService.isActive()) {
+      try {
+        await smsService.manualCheck();
+      } catch (error) {
+        console.error('Error checking SMS:', error);
+      }
+    }
+    setRefreshing(false);
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) {
+      const hours = date.getHours();
+      const mins = date.getMinutes();
+      return `Today, ${hours.toString().padStart(2, '0')}.${mins.toString().padStart(2, '0')}`;
+    }
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  };
+
+  const renderTransaction = ({ item }: { item: LocalTransaction }) => {
+    const isIncome = item.amount > 0;
+    
+    return (
+      <View style={[styles.transactionCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <View style={styles.transactionHeader}>
+          <View style={styles.transactionHeaderLeft}>
+            <Text style={[styles.transactionBank, { color: colors.text }]}>
+              {item.bank || item.sender || 'Transaction'}
+            </Text>
+            <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>
+              {formatDate(item.receivedAt)}
+            </Text>
+          </View>
+          {item.synced && (
+            <View style={[styles.syncedBadge, { backgroundColor: colors.primary + '20' }]}>
+              <Text style={[styles.syncedText, { color: colors.primary }]}>✓ Synced</Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.transactionAmountRow}>
+          <Text style={[styles.amountValue, { color: isIncome ? colors.primary : colors.text }]}>
+            {isIncome ? '+' : '-'}${Math.abs(item.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </Text>
+          <Text style={[styles.transactionId, { color: colors.textSecondary }]}>
+            Ref: {item.txnId}
+          </Text>
+        </View>
+
+        {(item.sendFrom || item.sendTo || item.sender) && (
+          <View style={styles.transactionDetails}>
+            {item.sendFrom && (
+              <View style={styles.detailRow}>
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>From:</Text>
+                <Text style={[styles.detailValue, { color: colors.text }]}>{item.sendFrom}</Text>
+              </View>
+            )}
+            {item.sendTo && (
+              <View style={styles.detailRow}>
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>To:</Text>
+                <Text style={[styles.detailValue, { color: colors.text }]}>{item.sendTo}</Text>
+              </View>
+            )}
+            {item.sender && (
+              <View style={styles.detailRow}>
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Sender:</Text>
+                <Text style={[styles.detailValue, { color: colors.text }]}>{item.sender}</Text>
+              </View>
+            )}
+          </View>
+        )}
+      </View>
+    );
   };
 
   return (
-    <ScrollView
-      style={[styles.container, { backgroundColor: colors.background }]}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-    >
-      <View style={styles.header}>
-        <Text style={[styles.title, { color: colors.text }]}>Transaction History</Text>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <Text style={[styles.title, { color: colors.text }]}>Transactions</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-          {total} transaction(s) total
+          {transactions.length} transaction{transactions.length !== 1 ? 's' : ''}
         </Text>
       </View>
 
-      {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={[styles.loadingText, { color: colors.text }]}>Loading...</Text>
-        </View>
-      ) : transactions.length === 0 ? (
+      {transactions.length === 0 ? (
         <View style={styles.emptyState}>
+          <View style={{ marginBottom: 16 }}>
+            <CreditCard size={64} color={colors.textSecondary} />
+          </View>
           <Text style={[styles.emptyText, { color: colors.text }]}>No transactions yet</Text>
           <Text style={[styles.emptyHint, { color: colors.textSecondary }]}>
-            Transactions will appear here after you parse and send SMS messages from the main screen.
+            Transactions will appear here when SMS messages are detected
           </Text>
         </View>
       ) : (
-        <View style={styles.list}>
-          {transactions.map((txn) => (
-            <View key={txn.id} style={[styles.transactionCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <View style={styles.transactionHeader}>
-                <Text style={[styles.transactionAmount, { color: colors.primary }]}>
-                  {txn.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </Text>
-                <Text style={[styles.transactionBank, { color: colors.textSecondary }]}>
-                  {txn.pattern?.bank || txn.bank || 'Unknown'}
-                </Text>
-              </View>
-              <Text style={[styles.transactionId, { color: colors.text }]}>
-                <Text style={styles.label}>Ref:</Text> {txn.txnId}
-              </Text>
-              <Text style={[styles.transactionSender, { color: colors.textSecondary }]}>
-                From: {txn.sender}
-              </Text>
-              {txn.pattern?.name && (
-                <Text style={[styles.transactionPattern, { color: colors.textSecondary }]}>
-                  Pattern: {txn.pattern.name}
-                </Text>
-              )}
-              <Text style={[styles.transactionDate, { color: colors.textSecondary }]}>
-                {new Date(txn.receivedAt).toLocaleString()}
-              </Text>
-            </View>
-          ))}
-        </View>
+        <FlatList
+          data={transactions}
+          renderItem={renderTransaction}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+          }
+        />
       )}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -138,65 +178,93 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 14,
   },
-  center: {
-    padding: 40,
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-  },
-  emptyState: {
-    padding: 40,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 18,
-    marginBottom: 8,
-  },
-  emptyHint: {
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  list: {
-    padding: 20,
+  listContent: {
+    padding: 16,
   },
   transactionCard: {
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
   },
   transactionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
+    alignItems: 'flex-start',
+    marginBottom: 12,
   },
-  transactionAmount: {
-    fontSize: 20,
-    fontWeight: 'bold',
+  transactionHeaderLeft: {
+    flex: 1,
   },
   transactionBank: {
-    fontSize: 12,
-  },
-  transactionId: {
-    fontSize: 14,
+    fontSize: 16,
+    fontWeight: '600',
     marginBottom: 4,
   },
-  label: {
+  transactionTime: {
+    fontSize: 12,
+  },
+  syncedBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  syncedText: {
+    fontSize: 10,
     fontWeight: '600',
   },
-  transactionSender: {
+  transactionAmountRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginBottom: 12,
+  },
+  amountValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  transactionId: {
+    fontSize: 12,
+    fontFamily: 'monospace',
+  },
+  transactionDetails: {
+    gap: 6,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  detailLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    width: 60,
+  },
+  detailValue: {
+    fontSize: 13,
+    flex: 1,
+  },
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  emptyText: {
+    fontSize: 20,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  emptyHint: {
     fontSize: 14,
-    marginBottom: 4,
-  },
-  transactionPattern: {
-    fontSize: 12,
-    marginBottom: 4,
-    fontStyle: 'italic',
-  },
-  transactionDate: {
-    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 20,
   },
 });

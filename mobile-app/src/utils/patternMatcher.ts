@@ -1,6 +1,22 @@
 import { Pattern } from '../types';
 
 /**
+ * Institution Pattern interface (from backend)
+ */
+export interface InstitutionPattern {
+  id: string;
+  name: string;
+  institution: string | null;
+  regex: string;
+  extractFields: Record<string, any>;
+  bank?: string | null;
+  currency?: string | null;
+  usageCount: number;
+  smsExample?: string | null;
+  type: 'institution' | 'country';
+}
+
+/**
  * Match SMS text against a pattern and extract transaction data
  */
 export function matchPattern(smsText: string, pattern: Pattern): {
@@ -169,6 +185,173 @@ export function matchPattern(smsText: string, pattern: Pattern): {
     console.error('Pattern matching error:', error);
     return { matched: false };
   }
+}
+
+/**
+ * Match SMS against InstitutionPattern (from backend)
+ */
+export function matchInstitutionPattern(smsText: string, pattern: InstitutionPattern): {
+  matched: boolean;
+  confidence: number;
+  data?: {
+    txnId: string;
+    amount: number;
+    sender: string;
+    sendFrom: string | null;
+    sendTo: string | null;
+    bank: string;
+    currency: string;
+    patternId: string;
+    patternName: string;
+  };
+} {
+  try {
+    // Clean regex string
+    let regexStr = pattern.regex;
+    if (regexStr.startsWith('(?i)')) {
+      regexStr = regexStr.substring(4);
+    }
+    regexStr = regexStr.replace(/\(\?i\)/g, '');
+    
+    const regex = new RegExp(regexStr, 'i');
+    const match = smsText.match(regex);
+
+    if (!match) {
+      // Debug: Log why regex didn't match
+      console.log(`🔍 [Pattern Matcher] Regex didn't match for pattern ${pattern.id?.substring(0, 8)}:`, {
+        patternName: pattern.name,
+        institution: pattern.institution,
+        regexPreview: regexStr.substring(0, 100),
+        smsPreview: smsText.substring(0, 100),
+      });
+      return { matched: false, confidence: 0 };
+    }
+    
+    console.log(`✅ [Pattern Matcher] Regex matched for pattern ${pattern.id?.substring(0, 8)}:`, {
+      patternName: pattern.name,
+      matchGroups: match.length,
+    });
+
+    // Extract fields using extractFields mapping
+    const extraction = pattern.extractFields as Record<string, number>;
+    console.log(`🔍 [Pattern Matcher] ExtractFields:`, extraction);
+    console.log(`🔍 [Pattern Matcher] Match groups:`, match.slice(0, 10).map((m, i) => `[${i}]: ${m?.substring(0, 50)}`));
+    
+    const txnId = extraction.txnId ? (match[extraction.txnId] || '').trim() : '';
+    const amountStr = extraction.amount ? (match[extraction.amount] || '').trim() : '';
+    const sender = extraction.sender ? (match[extraction.sender] || '').trim() : '';
+    const sendFrom = extraction.sendFrom ? (match[extraction.sendFrom] || '').trim() : null;
+    const sendTo = extraction.sendTo ? (match[extraction.sendTo] || '').trim() : null;
+
+    console.log(`🔍 [Pattern Matcher] Extracted values:`, {
+      txnId,
+      amountStr,
+      sender: sender.substring(0, 30),
+      sendFrom,
+      sendTo,
+    });
+
+    // Validate extracted data
+    if (txnId && txnId.length < 6) {
+      console.log(`❌ [Pattern Matcher] Transaction ID too short: ${txnId}`);
+      return { matched: false, confidence: 0 };
+    }
+
+    const amount = parseFloat(amountStr.replace(/[^\d.]/g, '')) || 0;
+    if (amount <= 0) {
+      console.log(`❌ [Pattern Matcher] Invalid amount: ${amountStr} -> ${amount}`);
+      return { matched: false, confidence: 0 };
+    }
+
+    // Calculate confidence based on what we extracted
+    let confidence = 0.7; // Base confidence for regex match
+    if (txnId) confidence += 0.15;
+    if (amount > 0) confidence += 0.1;
+    if (sender) confidence += 0.05;
+    confidence = Math.min(confidence, 0.95);
+
+    return {
+      matched: true,
+      confidence,
+      data: {
+        txnId: txnId || 'N/A',
+        amount,
+        sender: sender || '',
+        sendFrom: sendFrom || null,
+        sendTo: sendTo || null,
+        bank: pattern.bank || 'Unknown',
+        currency: pattern.currency || 'ETB',
+        patternId: pattern.id,
+        patternName: pattern.name,
+      },
+    };
+  } catch (error) {
+    console.error('Institution pattern matching error:', error);
+    return { matched: false, confidence: 0 };
+  }
+}
+
+/**
+ * Find matching pattern from a list of InstitutionPatterns
+ * Returns the best match with highest confidence
+ */
+export function findMatchingInstitutionPattern(
+  smsText: string,
+  patterns: InstitutionPattern[],
+  senderAddress?: string
+): {
+  matched: boolean;
+  confidence: number;
+  pattern?: InstitutionPattern;
+  data?: any;
+} {
+  let bestMatch: {
+    confidence: number;
+    pattern: InstitutionPattern;
+    data: any;
+  } | null = null;
+
+  for (const pattern of patterns) {
+    // If we have sender address, prioritize patterns for that institution
+    if (senderAddress && pattern.institution) {
+      // Check if sender matches institution (could be phone number or name)
+      const normalizedSender = senderAddress.trim();
+      const normalizedInstitution = pattern.institution.trim();
+      
+      // Exact match gets priority
+      if (normalizedSender === normalizedInstitution) {
+        const result = matchInstitutionPattern(smsText, pattern);
+        if (result.matched && (!bestMatch || result.confidence > bestMatch.confidence)) {
+          bestMatch = {
+            confidence: result.confidence + 0.1, // Bonus for sender match
+            pattern,
+            data: result.data,
+          };
+        }
+      }
+    }
+
+    // Try matching regardless of sender
+    const result = matchInstitutionPattern(smsText, pattern);
+    if (result.matched && (!bestMatch || result.confidence > bestMatch.confidence)) {
+      bestMatch = {
+        confidence: result.confidence,
+        pattern,
+        data: result.data,
+      };
+    }
+  }
+
+  if (bestMatch) {
+    return {
+      matched: true,
+      confidence: bestMatch.confidence,
+      pattern: bestMatch.pattern,
+      data: bestMatch.data,
+    };
+  }
+
+  return { matched: false, confidence: 0 };
 }
 
 /**

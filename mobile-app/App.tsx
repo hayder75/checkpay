@@ -2,24 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
-import Drawer from './src/components/Drawer';
+import BottomNavigation, { Tab } from './src/components/BottomNavigation';
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
 import VerifyOTPScreen from './src/screens/VerifyOTPScreen';
-import DashboardScreen from './src/screens/DashboardScreen';
-import PatternsScreen from './src/screens/PatternsScreen';
+import HomeScreen from './src/screens/HomeScreen';
+import BanksScreen from './src/screens/BanksScreen';
 import TransactionsScreen from './src/screens/TransactionsScreen';
-import AnalyticsScreen from './src/screens/AnalyticsScreen';
-import SettingsScreen from './src/screens/SettingsScreen';
-import MainScreen from './src/screens/MainScreen';
-import PatternBuilderScreen from './src/screens/PatternBuilderScreen';
-import PremiumScreen from './src/screens/PremiumScreen';
+import ProfileScreen from './src/screens/ProfileScreen';
+import OnboardingScreen from './src/screens/OnboardingScreen';
+import SampleSMSScreen from './src/screens/SampleSMSScreen';
 import { storage } from './src/services/storage';
 import { authAPI, fetchPatterns } from './src/services/api';
+import { smsService } from './src/services/smsService';
 import { Pattern } from './src/types';
 import 'react-native-url-polyfill/auto';
-
-type Screen = 'dashboard' | 'patterns' | 'create-pattern' | 'transactions' | 'analytics' | 'settings' | 'test-sms' | 'premium';
 
 function AppContent() {
   const { colors } = useTheme();
@@ -27,14 +24,84 @@ function AppContent() {
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [patterns, setPatterns] = useState<Pattern[]>([]);
   const [loading, setLoading] = useState(true);
-  const [currentScreen, setCurrentScreen] = useState<Screen>('dashboard');
-  const [drawerVisible, setDrawerVisible] = useState(false);
-  const [authScreen, setAuthScreen] = useState<'login' | 'register' | 'verify-otp'>('login');
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showSampleSMS, setShowSampleSMS] = useState(false);
+  const [sampleSMSInstitution, setSampleSMSInstitution] = useState<string>('');
+  const [sampleSMSCountry, setSampleSMSCountry] = useState<string>('');
+  const [currentTab, setCurrentTab] = useState<Tab>('home');
+  const [authScreen, setAuthScreen] = useState<'login' | 'register' | 'verify-otp' | null>(null);
   const [registerPhone, setRegisterPhone] = useState<string>('');
 
   useEffect(() => {
-    checkAuth();
+    initializeApp();
+    
+    // Start SMS monitoring after app initializes
+    const startMonitoring = async () => {
+      try {
+        const onboardingCompleted = await storage.getOnboardingCompleted();
+        if (onboardingCompleted) {
+          await smsService.startMonitoring();
+        }
+      } catch (error) {
+        console.error('Error starting SMS monitoring:', error);
+      }
+    };
+    
+    // Start monitoring after a short delay to ensure app is ready
+    const timer = setTimeout(startMonitoring, 2000);
+    
+    // Cleanup on unmount
+    return () => {
+      clearTimeout(timer);
+      smsService.stopMonitoring();
+    };
   }, []);
+
+  const initializeApp = async () => {
+    try {
+      // First, check for stored credentials
+      const token = await storage.getToken();
+      const apiKey = await storage.getApiKey();
+      
+      if (token || apiKey) {
+        // User has credentials - authenticate automatically
+        console.log('Found stored credentials, authenticating automatically');
+        await checkAuth();
+        
+        // After checkAuth, verify if authentication was successful
+        // If not, show sign-in screen
+        const finalToken = await storage.getToken();
+        const finalApiKey = await storage.getApiKey();
+        if (!finalToken && !finalApiKey) {
+          // Authentication failed (token invalid/expired) - show sign-in screen
+          console.log('Authentication failed, showing sign-in screen');
+          setAuthScreen('login');
+        }
+      } else {
+        // No stored credentials - show login screen first
+        // User can sign in with existing account or register new account
+        // Onboarding will be shown only if needed after authentication
+        console.log('No stored credentials found, showing login screen');
+        setAuthScreen('login');
+        setLoading(false);
+      }
+    } catch (error) {
+      console.error('Error initializing app:', error);
+      // On error, show login screen
+      setAuthScreen('login');
+      setLoading(false);
+    }
+  };
+
+  const checkOnboarding = async () => {
+    try {
+      const completed = await storage.getOnboardingCompleted();
+      return completed;
+    } catch (error) {
+      console.error('Error checking onboarding:', error);
+      return false;
+    }
+  };
 
   const checkAuth = async () => {
     try {
@@ -59,9 +126,19 @@ function AppContent() {
                 const loadedPatterns = patternsResponse.data.patterns;
                 await storage.setPatterns(loadedPatterns);
                 setPatterns(loadedPatterns);
+                console.log(`✅ Loaded ${loadedPatterns.length} user patterns from backend`);
               } else {
                 const storedPatterns = await storage.getPatterns();
                 setPatterns(storedPatterns);
+                console.log(`✅ Loaded ${storedPatterns.length} patterns from local storage`);
+              }
+              
+              // Also download institution patterns for the country
+              const countryCode = await storage.getCountryCode();
+              if (countryCode) {
+                const { downloadCountryPatterns } = await import('./src/utils/patternVerifier');
+                const institutionPatterns = await downloadCountryPatterns(countryCode);
+                console.log(`✅ Downloaded ${institutionPatterns.length} institution patterns for country ${countryCode}`);
               }
             } catch (error) {
               console.error('Error loading patterns:', error);
@@ -94,6 +171,54 @@ function AppContent() {
     setUser(userData);
     setApiKey(userApiKey);
     setPatterns(userPatterns);
+    setAuthScreen(null); // Clear auth screen after successful login
+    
+    // Ensure patterns are saved locally
+    if (userPatterns && userPatterns.length > 0) {
+      await storage.setPatterns(userPatterns);
+      console.log(`✅ Saved ${userPatterns.length} user patterns to local storage`);
+    }
+    
+    // Check if onboarding is needed
+    const onboardingCompleted = await storage.getOnboardingCompleted();
+    const countryCode = await storage.getCountryCode();
+    const hasPatterns = (userPatterns && userPatterns.length > 0) || (await storage.getPatterns()).length > 0;
+    
+    if (!onboardingCompleted || !countryCode || !hasPatterns) {
+      // User needs onboarding - show onboarding screen
+      console.log('User needs onboarding, showing onboarding screen');
+      setShowOnboarding(true);
+      return;
+    }
+    
+    // Download and save institution patterns for the user's country
+    try {
+      if (countryCode) {
+        const { downloadCountryPatterns } = await import('./src/utils/patternVerifier');
+        const institutionPatterns = await downloadCountryPatterns(countryCode);
+        console.log(`✅ Downloaded and saved ${institutionPatterns.length} institution patterns for country ${countryCode}`);
+      }
+    } catch (error) {
+      console.error('Error downloading institution patterns:', error);
+    }
+    
+    // Start SMS monitoring after successful authentication
+    try {
+      if (onboardingCompleted) {
+        console.log('🔄 Starting SMS monitoring after login...');
+        await smsService.startMonitoring();
+        console.log('✅ SMS monitoring started');
+      }
+    } catch (error) {
+      console.error('Error starting SMS monitoring after login:', error);
+    }
+    
+    // Sync any unsynced transactions after login
+    try {
+      await smsService.syncAllUnsyncedTransactions();
+    } catch (error) {
+      console.error('Error syncing transactions after login:', error);
+    }
   };
 
   const handleLogout = async () => {
@@ -101,83 +226,21 @@ function AppContent() {
     setUser(null);
     setApiKey(null);
     setPatterns([]);
-    setCurrentScreen('dashboard');
-  };
-
-  const handleNavigate = (screen: Screen) => {
-    setCurrentScreen(screen);
-  };
-
-  const handleRefresh = async () => {
-    if (apiKey) {
-      try {
-        const patternsResponse = await fetchPatterns(apiKey);
-        if (patternsResponse.success && patternsResponse.data.patterns) {
-          const loadedPatterns = patternsResponse.data.patterns;
-          await storage.setPatterns(loadedPatterns);
-          setPatterns(loadedPatterns);
-        }
-      } catch (error) {
-        console.error('Error refreshing patterns:', error);
-      }
-    }
+    setCurrentTab('home');
   };
 
   const renderScreen = () => {
-    if (!apiKey) return null;
-
-    switch (currentScreen) {
-      case 'dashboard':
-        return (
-          <DashboardScreen
-            apiKey={apiKey}
-            patterns={patterns}
-            onNavigate={handleNavigate}
-          />
-        );
-      case 'patterns':
-        return (
-          <PatternsScreen
-            apiKey={apiKey}
-            patterns={patterns}
-            onRefresh={handleRefresh}
-            onNavigate={handleNavigate}
-          />
-        );
-      case 'create-pattern':
-        return (
-          <PatternBuilderScreen
-            apiKey={apiKey}
-            onPatternCreated={() => {
-              handleRefresh();
-              setCurrentScreen('patterns');
-            }}
-          />
-        );
+    switch (currentTab) {
+      case 'home':
+        return <HomeScreen apiKey={apiKey} />;
+      case 'banks':
+        return <BanksScreen apiKey={apiKey} />;
       case 'transactions':
         return <TransactionsScreen apiKey={apiKey} />;
-      case 'analytics':
-        return <AnalyticsScreen apiKey={apiKey} />;
-      case 'settings':
-        return <SettingsScreen apiKey={apiKey} onLogout={handleLogout} />;
-      case 'test-sms':
-        return (
-          <MainScreen
-            apiKey={apiKey}
-            patterns={patterns}
-            onLogout={handleLogout}
-          />
-        );
-      case 'premium':
-        return <PremiumScreen apiKey={apiKey} />;
+      case 'profile':
+        return <ProfileScreen apiKey={apiKey} onLogout={handleLogout} />;
       default:
-        return (
-          <DashboardScreen
-            apiKey={apiKey}
-            patterns={patterns}
-            onNavigate={handleNavigate}
-          />
-        );
+        return <HomeScreen apiKey={apiKey} />;
     }
   };
 
@@ -195,11 +258,118 @@ function AppContent() {
     setAuthScreen('verify-otp');
   };
 
-  const handleVerificationSuccess = (userData: any, userApiKey: string, userPatterns: Pattern[]) => {
+  const handleVerificationSuccess = async (userData: any, userApiKey: string, userPatterns: Pattern[]) => {
     setUser(userData);
     setApiKey(userApiKey);
     setPatterns(userPatterns);
-    setAuthScreen('login');
+    setAuthScreen(null); // Clear auth screen after successful verification
+    
+    // Ensure patterns are saved locally
+    if (userPatterns && userPatterns.length > 0) {
+      await storage.setPatterns(userPatterns);
+      console.log(`✅ Saved ${userPatterns.length} user patterns to local storage`);
+    }
+    
+    // Check if onboarding is needed
+    const onboardingCompleted = await storage.getOnboardingCompleted();
+    const countryCode = await storage.getCountryCode();
+    const hasPatterns = (userPatterns && userPatterns.length > 0) || (await storage.getPatterns()).length > 0;
+    
+    if (!onboardingCompleted || !countryCode || !hasPatterns) {
+      // User needs onboarding - show onboarding screen
+      console.log('User needs onboarding, showing onboarding screen');
+      setShowOnboarding(true);
+      return;
+    }
+    
+    // Download and save institution patterns for the user's country
+    try {
+      if (countryCode) {
+        const { downloadCountryPatterns } = await import('./src/utils/patternVerifier');
+        const institutionPatterns = await downloadCountryPatterns(countryCode);
+        console.log(`✅ Downloaded and saved ${institutionPatterns.length} institution patterns for country ${countryCode}`);
+      }
+    } catch (error) {
+      console.error('Error downloading institution patterns:', error);
+    }
+    
+    // Start SMS monitoring after successful authentication
+    try {
+      if (onboardingCompleted) {
+        console.log('🔄 Starting SMS monitoring after authentication...');
+        await smsService.startMonitoring();
+        console.log('✅ SMS monitoring started');
+      }
+    } catch (error) {
+      console.error('Error starting SMS monitoring after auth:', error);
+    }
+    
+    // Sync any unsynced transactions after login
+    try {
+      await smsService.syncAllUnsyncedTransactions();
+    } catch (error) {
+      console.error('Error syncing transactions after login:', error);
+    }
+  };
+
+  const handleOnboardingComplete = async (countryCode: string, selectedBanks: string[]) => {
+    try {
+      await storage.setOnboardingCompleted(true);
+      await storage.setUserCountry(countryCode);
+      await storage.setSelectedBanks(selectedBanks);
+      setShowOnboarding(false);
+      
+      // After onboarding, check if user is authenticated
+      // If not, show sign-in screen
+      const token = await storage.getToken();
+      const apiKey = await storage.getApiKey();
+      if (!token && !apiKey) {
+        // First time install - require sign-in
+        console.log('First time install - showing sign-in screen');
+        setAuthScreen('register');
+      } else {
+        // User already authenticated, proceed normally
+        await checkAuth();
+      }
+    } catch (error) {
+      console.error('Error completing onboarding:', error);
+    }
+  };
+
+  const handleNavigateToRegistration = () => {
+    setShowOnboarding(false);
+    setAuthScreen('register');
+  };
+
+  const handleNavigateToSampleSMS = (institution: string, countryCode: string) => {
+    setShowOnboarding(false);
+    setSampleSMSInstitution(institution);
+    setSampleSMSCountry(countryCode);
+    setShowSampleSMS(true);
+  };
+
+  const handleSampleSMSPatternCreated = async () => {
+    setShowSampleSMS(false);
+    
+    // Ensure patterns are saved and verified
+    try {
+      const savedPatterns = await storage.getInstitutionPatterns();
+      console.log(`✅ [SampleSMS] Verified ${savedPatterns.length} patterns are saved before proceeding`);
+      
+      if (savedPatterns.length === 0) {
+        console.warn('⚠️ [SampleSMS] No patterns saved! SMS monitoring may not work.');
+      }
+    } catch (error) {
+      console.error('Error verifying patterns:', error);
+    }
+    
+    // Navigate to registration - SMS monitoring will start after sign-in
+    setAuthScreen('register');
+  };
+
+  const handleSampleSMSCancel = () => {
+    setShowSampleSMS(false);
+    setShowOnboarding(true);
   };
 
   const renderAuthScreen = () => {
@@ -233,36 +403,33 @@ function AppContent() {
     }
   };
 
+  // Don't show auth screen by default - only when user explicitly requests it
+
   return (
     <>
       <StatusBar style={colors.background === '#1a1a1a' ? 'light' : 'dark'} />
-      {!user && !apiKey ? (
+      {showOnboarding ? (
+        <OnboardingScreen
+          onComplete={handleOnboardingComplete}
+          onNavigateToRegistration={handleNavigateToRegistration}
+          onNavigateToSampleSMS={handleNavigateToSampleSMS}
+        />
+      ) : showSampleSMS ? (
+        <SampleSMSScreen
+          institution={sampleSMSInstitution}
+          countryCode={sampleSMSCountry}
+          onPatternCreated={handleSampleSMSPatternCreated}
+          onCancel={handleSampleSMSCancel}
+        />
+      ) : authScreen ? (
         renderAuthScreen()
       ) : (
         <>
-          {/* Header with Hamburger Menu */}
-          <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-            <TouchableOpacity
-              style={styles.menuButton}
-              onPress={() => setDrawerVisible(true)}
-            >
-              <Text style={[styles.menuIcon, { color: colors.text }]}>☰</Text>
-            </TouchableOpacity>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>CheckPay</Text>
-            <View style={styles.headerSpacer} />
+          {/* Main Content with Bottom Navigation */}
+          <View style={{ flex: 1 }}>
+            {renderScreen()}
           </View>
-
-          {/* Drawer */}
-          <Drawer
-            visible={drawerVisible}
-            onClose={() => setDrawerVisible(false)}
-            onNavigate={handleNavigate}
-            currentScreen={currentScreen}
-            onLogout={handleLogout}
-          />
-
-          {/* Main Content */}
-          {renderScreen()}
+          <BottomNavigation currentTab={currentTab} onTabChange={setCurrentTab} />
         </>
       )}
     </>

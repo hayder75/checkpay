@@ -12,6 +12,63 @@ interface ExtractedData {
 }
 
 /**
+ * Extract transaction ID from URL
+ */
+function extractTxnIdFromURL(text: string): string | null {
+  // Extract all URLs from text
+  const urlPattern = /https?:\/\/[^\s]+/gi;
+  const urls = text.match(urlPattern) || [];
+  
+  for (const url of urls) {
+    try {
+      const urlObj = new URL(url);
+      
+      // Check query parameters: ?txn=, ?transactionId=, ?ref=, etc.
+      const txnParams = ['txn', 'transactionId', 'transaction_id', 'ref', 'reference', 'id', 'txnid'];
+      for (const param of txnParams) {
+        const value = urlObj.searchParams.get(param);
+        if (value && value.length >= 4) {
+          return value.trim();
+        }
+      }
+      
+      // Check path segments: /txn/ABC123, /transaction/ABC123
+      const pathMatch = urlObj.pathname.match(/\/(?:txn|transaction|ref|reference)\/([A-Z0-9_-]+)/i);
+      if (pathMatch && pathMatch[1] && pathMatch[1].length >= 4) {
+        return pathMatch[1].trim();
+      }
+      
+      // Check hash fragments: #txn=ABC123
+      if (urlObj.hash) {
+        const hashMatch = urlObj.hash.match(/[#&](?:txn|transactionId|ref)=([A-Z0-9_-]+)/i);
+        if (hashMatch && hashMatch[1] && hashMatch[1].length >= 4) {
+          return hashMatch[1].trim();
+        }
+      }
+    } catch (e) {
+      // Invalid URL, skip
+      continue;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Extract transaction ID from SMS (enhanced version with URL support)
+ */
+export function extractTxnIdEnhanced(text: string): string | null {
+  // First try URL extraction
+  const urlTxnId = extractTxnIdFromURL(text);
+  if (urlTxnId) {
+    return urlTxnId;
+  }
+  
+  // Then try standard patterns
+  return extractTxnId(text);
+}
+
+/**
  * Extract transaction ID from SMS
  */
 function extractTxnId(text: string): string | null {

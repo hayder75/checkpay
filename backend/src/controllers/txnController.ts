@@ -13,6 +13,8 @@ const ingestSchema = z.object({
   bank: z.string().optional(),
   pattern: z.string().optional(),
   iccid: z.string().optional(), // SIM card ICCID from mobile app
+  sendFrom: z.string().nullable().optional(), // Institution/account sending money
+  sendTo: z.string().nullable().optional(),   // Institution/account receiving money
 });
 
 /**
@@ -92,6 +94,8 @@ export async function ingestTransaction(req: AuthRequest, res: Response) {
         amount: data.amount,
         sender: data.sender, // Already masked by mobile app
         bank: data.bank,
+        sendFrom: data.sendFrom || null,
+        sendTo: data.sendTo || null,
         patternId: pattern?.id,
         receivedAt: new Date(),
       },

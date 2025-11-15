@@ -15,6 +15,8 @@ interface DrawerProps {
   onNavigate: (screen: string) => void;
   currentScreen: string;
   onLogout: () => void;
+  isAuthenticated?: boolean;
+  onLogin?: () => void;
 }
 
 export default function Drawer({
@@ -23,6 +25,8 @@ export default function Drawer({
   onNavigate,
   currentScreen,
   onLogout,
+  isAuthenticated = false,
+  onLogin,
 }: DrawerProps) {
   const { colors } = useTheme();
 
@@ -79,17 +83,33 @@ export default function Drawer({
           </ScrollView>
 
           <View style={[styles.footer, { borderTopColor: colors.border }]}>
-            <TouchableOpacity
-              style={[styles.logoutButton, { backgroundColor: colors.primary }]}
-              onPress={() => {
-                onLogout();
-                onClose();
-              }}
-            >
-              <Text style={[styles.logoutText, { color: colors.primaryText }]}>
-                Logout
-              </Text>
-            </TouchableOpacity>
+            {isAuthenticated ? (
+              <TouchableOpacity
+                style={[styles.logoutButton, { backgroundColor: colors.primary }]}
+                onPress={() => {
+                  onLogout();
+                  onClose();
+                }}
+              >
+                <Text style={[styles.logoutText, { color: colors.primaryText }]}>
+                  Logout
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[styles.logoutButton, { backgroundColor: colors.primary }]}
+                onPress={() => {
+                  if (onLogin) {
+                    onLogin();
+                  }
+                  onClose();
+                }}
+              >
+                <Text style={[styles.logoutText, { color: colors.primaryText }]}>
+                  Login / Sign Up
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </View>
