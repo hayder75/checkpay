@@ -19,6 +19,9 @@ export default function PatternBuilderPage() {
   const [preview, setPreview] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [usingAI, setUsingAI] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [forceAI, setForceAI] = useState(false); // Toggle to force AI usage
 
   const handleAnalyze = async () => {
     if (!smsText || !patternName) {
@@ -34,6 +37,7 @@ export default function PatternBuilderPage() {
     try {
       const response = await patternsAPI.validate({ smsText, name: patternName });
       setPreview(response.data.data);
+      setUsingAI(false); // Reset AI flag
     } catch (error: any) {
       toast({
         title: 'Error',
@@ -42,6 +46,43 @@ export default function PatternBuilderPage() {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleUseAI = async () => {
+    if (!smsText || !patternName) {
+      toast({
+        title: 'Error',
+        description: 'Please enter SMS text and pattern name',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setAiLoading(true);
+    try {
+      const response = await patternsAPI.createWithAI({ smsText, name: patternName, description });
+      setPreview({
+        pattern: response.data.data,
+        validation: { valid: true, errors: [] },
+        extractedValues: response.data.extracted,
+        method: 'ai',
+        aiSuggested: false,
+        canUseAI: true,
+      });
+      setUsingAI(true);
+      toast({
+        title: 'Success',
+        description: 'Pattern created using AI! Review and save.',
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.response?.data?.error || 'Failed to create pattern with AI',
+        variant: 'destructive',
+      });
+    } finally {
+      setAiLoading(false);
     }
   };
 
@@ -57,18 +98,44 @@ export default function PatternBuilderPage() {
 
     setSaving(true);
     try {
-      await patternsAPI.create({ smsText, name: patternName, description });
+      // If we used AI, the pattern is already created, just navigate
+      if (usingAI && preview?.pattern) {
+        toast({
+          title: 'Success',
+          description: 'Pattern created successfully!',
+        });
+        navigate('/dashboard/patterns');
+        return;
+      }
+
+      // Otherwise, create pattern normally (with forceAI flag if set)
+      const response = await patternsAPI.create({ 
+        smsText, 
+        name: patternName, 
+        description,
+        useAI: forceAI, // Pass the toggle value
+      });
+      
       toast({
         title: 'Success',
-        description: 'Pattern created successfully!',
+        description: `Pattern created successfully using ${response.data.method || 'rule-based'} extraction!`,
       });
       navigate('/dashboard/patterns');
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to save pattern',
-        variant: 'destructive',
-      });
+      // If error suggests AI, show that
+      if (error.response?.data?.canUseAI) {
+        toast({
+          title: 'Pattern Creation Failed',
+          description: error.response.data.suggestion || 'Try using AI for better accuracy',
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: 'Error',
+          description: error.response?.data?.error || 'Failed to save pattern',
+          variant: 'destructive',
+        });
+      }
     } finally {
       setSaving(false);
     }
@@ -120,14 +187,45 @@ export default function PatternBuilderPage() {
                   onChange={(e) => setDescription(e.target.value)}
                 />
               </div>
-              <Button
-                onClick={handleAnalyze}
-                className="w-full bg-[#F37100] hover:bg-[#F37100]/90"
-                disabled={loading || !smsText || !patternName}
-              >
-                <Sparkles className="mr-2 h-4 w-4" />
-                {loading ? 'Analyzing...' : 'Analyze SMS'}
-              </Button>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between p-3 bg-muted rounded-md">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-purple-600" />
+                    <Label htmlFor="force-ai" className="text-sm font-medium cursor-pointer">
+                      Use AI for Pattern Creation
+                    </Label>
+                  </div>
+                  <input
+                    id="force-ai"
+                    type="checkbox"
+                    checked={forceAI}
+                    onChange={(e) => setForceAI(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground px-1">
+                  {forceAI 
+                    ? 'AI will be used to create the pattern (may take longer)'
+                    : 'Rule-based extraction will be tried first, AI used if needed'}
+                </p>
+                <Button
+                  onClick={handleAnalyze}
+                  className="w-full bg-[#F37100] hover:bg-[#F37100]/90"
+                  disabled={loading || aiLoading || !smsText || !patternName}
+                >
+                  {loading ? 'Analyzing...' : forceAI ? 'Analyze SMS (AI)' : 'Analyze SMS (Rule-Based)'}
+                </Button>
+                {preview?.aiSuggested && preview?.canUseAI && !forceAI && (
+                  <Button
+                    onClick={handleUseAI}
+                    className="w-full bg-purple-600 hover:bg-purple-700"
+                    disabled={aiLoading || loading || !smsText || !patternName}
+                  >
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    {aiLoading ? 'Using AI...' : 'Use AI to Create Pattern'}
+                  </Button>
+                )}
+              </div>
             </CardContent>
           </Card>
 
@@ -141,19 +239,41 @@ export default function PatternBuilderPage() {
               {preview ? (
                 <>
                   <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      {preview.validation.valid ? (
-                        <>
-                          <CheckCircle2 className="h-5 w-5 text-green-500" />
-                          <span className="text-sm font-medium">Pattern Valid</span>
-                        </>
-                      ) : (
-                        <>
-                          <AlertCircle className="h-5 w-5 text-yellow-500" />
-                          <span className="text-sm font-medium">Validation Warnings</span>
-                        </>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {preview.validation.valid ? (
+                          <>
+                            <CheckCircle2 className="h-5 w-5 text-green-500" />
+                            <span className="text-sm font-medium">Pattern Valid</span>
+                          </>
+                        ) : (
+                          <>
+                            <AlertCircle className="h-5 w-5 text-yellow-500" />
+                            <span className="text-sm font-medium">Validation Warnings</span>
+                          </>
+                        )}
+                      </div>
+                      {preview.method && (
+                        <span className="text-xs px-2 py-1 rounded bg-muted">
+                          {preview.method === 'ai' ? '🤖 AI' : '⚡ Rule-Based'}
+                        </span>
                       )}
                     </div>
+                    {preview.aiSuggested && preview.canUseAI && (
+                      <div className="p-3 bg-purple-50 dark:bg-purple-950 border border-purple-200 dark:border-purple-800 rounded-md">
+                        <div className="flex items-start gap-2">
+                          <Sparkles className="h-4 w-4 text-purple-600 dark:text-purple-400 mt-0.5" />
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-purple-900 dark:text-purple-100">
+                              Rule-based extraction may not be accurate
+                            </p>
+                            <p className="text-xs text-purple-700 dark:text-purple-300 mt-1">
+                              Try using AI for better pattern accuracy and extraction results.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {preview.validation.errors.length > 0 && (
                       <ul className="list-disc list-inside text-sm text-muted-foreground">
                         {preview.validation.errors.map((error: string, i: number) => (

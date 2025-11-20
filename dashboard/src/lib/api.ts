@@ -68,8 +68,10 @@ export const authAPI = {
 
 // Patterns API
 export const patternsAPI = {
-  create: (data: { smsText: string; name: string; description?: string }) =>
+  create: (data: { smsText: string; name: string; description?: string; useAI?: boolean }) =>
     api.post('/patterns', data),
+  createWithAI: (data: { smsText: string; name: string; description?: string }) =>
+    api.post('/patterns/create-with-ai', data),
   getAll: () => api.get('/patterns'),
   getOne: (id: string) => api.get(`/patterns/${id}`),
   update: (id: string, data: any) => api.put(`/patterns/${id}`, data),

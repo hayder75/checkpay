@@ -23,8 +23,8 @@ function extractTxnIdFromURL(text: string): string | null {
     try {
       const urlObj = new URL(url);
       
-      // Check query parameters: ?txn=, ?transactionId=, ?ref=, etc.
-      const txnParams = ['txn', 'transactionId', 'transaction_id', 'ref', 'reference', 'id', 'txnid'];
+      // Check query parameters: ?txn=, ?transactionId=, ?ref=, ?trx=, etc.
+      const txnParams = ['txn', 'transactionId', 'transaction_id', 'ref', 'reference', 'id', 'txnid', 'trx'];
       for (const param of txnParams) {
         const value = urlObj.searchParams.get(param);
         if (value && value.length >= 4) {

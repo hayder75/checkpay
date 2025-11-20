@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   createPattern,
+  createPatternWithAI,
   getPatterns,
   getPattern,
   updatePattern,
@@ -29,6 +30,7 @@ router.use(authenticate as any);
 router.use(auditLog as any);
 
 router.post('/', createPattern as any);
+router.post('/create-with-ai', createPatternWithAI as any);
 router.get('/', getPatterns as any);
 router.get('/:id', getPattern as any);
 router.put('/:id', updatePattern as any);

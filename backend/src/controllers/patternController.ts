@@ -14,6 +14,7 @@ const createPatternSchema = z.object({
   smsText: z.string().min(10),
   name: z.string().min(3).max(100),
   description: z.string().optional(),
+  useAI: z.boolean().optional().default(false), // User can force AI usage
 });
 
 const updatePatternSchema = z.object({
@@ -27,13 +28,14 @@ const updatePatternSchema = z.object({
 
 /**
  * Create a new pattern from SMS text
+ * Uses rule-based extraction first, falls back to AI if needed
  */
 export async function createPattern(req: AuthRequest, res: Response) {
   if (!req.user) {
     throw new AppError(401, 'Not authenticated');
   }
 
-  const { smsText, name, description } = createPatternSchema.parse(req.body);
+  const { smsText, name, description, useAI = false } = createPatternSchema.parse(req.body);
 
   // Get user's country and plan
   const user = await prisma.user.findUnique({
@@ -52,12 +54,129 @@ export async function createPattern(req: AuthRequest, res: Response) {
     }
   }
 
-  // Generate pattern using AI (with country code if available)
-  const generatedPattern = generatePatternFromSMS(smsText, name, user?.country || null);
+  let generatedPattern;
+  let extractionMethod: 'rule-based' | 'ai' | 'existing' = 'rule-based';
+  let aiSuggested = false;
+  let existingPattern = null;
+
+  // Step 0: Check if pattern already exists (user/institution/country patterns)
+  const { findMatchingPattern } = await import('../utils/patternMatcher');
+  const patternMatch = await findMatchingPattern(smsText, req.user.id, user?.country || null);
+  
+  if (patternMatch && patternMatch.matched && patternMatch.confidence > 0.8) {
+    // Pattern already exists - return it instead of creating new
+    existingPattern = patternMatch.pattern;
+    extractionMethod = 'existing';
+    
+    // Check if user already has this pattern
+    if (patternMatch.source === 'user') {
+      throw new AppError(400, 'You already have a pattern that matches this SMS. Please use the existing pattern.');
+    }
+    
+    // If it's an institution/country pattern, we can still create user's own version
+    // but inform them about the existing pattern
+    console.log(`[PATTERN] Found existing ${patternMatch.source} pattern with confidence ${patternMatch.confidence}`);
+  }
+
+  // Step 1: Try rule-based extraction first (free, fast)
+  // UNLESS user explicitly requested AI
+  let ruleBasedPattern;
+  let ruleBasedValidation;
+  let ruleBasedSuccess = false;
+  
+  if (!useAI) {
+    // User didn't force AI - try rule-based first
+    ruleBasedPattern = generatePatternFromSMS(smsText, name, user?.country || null);
+    ruleBasedValidation = validatePattern(ruleBasedPattern);
+    
+    // Check if rule-based extraction was successful
+    // Success criteria: pattern is valid AND extracted at least amount or txnId
+    ruleBasedSuccess = ruleBasedValidation.valid && 
+      (ruleBasedPattern.extractFields.amount !== null || ruleBasedPattern.extractFields.txnId !== null);
+  }
+  
+  if (useAI || !ruleBasedSuccess) {
+    // User forced AI OR rule-based failed - use AI
+    if (useAI) {
+      console.log(`[PATTERN] User requested AI extraction for user ${req.user.id}`);
+    } else {
+      console.log(`[PATTERN] Rule-based extraction failed, trying AI for user ${req.user.id}`);
+    }
+    
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        // Use AI to extract and generate pattern
+        const { extractTxnIdWithLLM, generatePatternFromLLM } = await import('../utils/llmExtractor');
+        const llmResult = await extractTxnIdWithLLM(smsText);
+        generatedPattern = await generatePatternFromLLM(smsText, llmResult, user?.country || null);
+        extractionMethod = 'ai';
+        aiSuggested = false; // AI was used, not just suggested
+        console.log(`[PATTERN] Created pattern using AI extraction for user ${req.user.id}`);
+      } catch (error: any) {
+        console.warn(`[PATTERN] AI extraction failed, falling back to rule-based:`, error.message);
+        // AI failed - use rule-based anyway (even if not perfect)
+        if (!ruleBasedPattern) {
+          ruleBasedPattern = generatePatternFromSMS(smsText, name, user?.country || null);
+        }
+        generatedPattern = ruleBasedPattern;
+        extractionMethod = 'rule-based';
+        aiSuggested = true; // Suggest AI for better results
+      }
+    } else {
+      // No AI key - use rule-based (even if not perfect)
+      if (!ruleBasedPattern) {
+        ruleBasedPattern = generatePatternFromSMS(smsText, name, user?.country || null);
+      }
+      generatedPattern = ruleBasedPattern;
+      extractionMethod = 'rule-based';
+      aiSuggested = true; // Suggest AI for better results
+    }
+  } else if (ruleBasedSuccess) {
+    // Rule-based worked! Use it (no AI needed)
+    generatedPattern = ruleBasedPattern;
+    extractionMethod = 'rule-based';
+    console.log(`[PATTERN] Created pattern using rule-based extraction for user ${req.user.id}`);
+  } else {
+    // Rule-based failed or low confidence - try AI (if API key configured)
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        console.log(`[PATTERN] Rule-based extraction failed, trying AI for user ${req.user.id}`);
+        
+        // Use AI to extract and generate pattern
+        const { extractTxnIdWithLLM, generatePatternFromLLM } = await import('../utils/llmExtractor');
+        const llmResult = await extractTxnIdWithLLM(smsText);
+        generatedPattern = await generatePatternFromLLM(smsText, llmResult, user?.country || null);
+        extractionMethod = 'ai';
+        aiSuggested = false; // AI was used, not just suggested
+        console.log(`[PATTERN] Created pattern using AI extraction for user ${req.user.id}`);
+      } catch (error: any) {
+        console.warn(`[PATTERN] AI extraction failed, falling back to rule-based:`, error.message);
+        // AI failed - use rule-based anyway (even if not perfect)
+        generatedPattern = ruleBasedPattern;
+        extractionMethod = 'rule-based';
+        aiSuggested = true; // Suggest AI for better results
+      }
+    } else {
+      // No AI key - use rule-based (even if not perfect)
+      generatedPattern = ruleBasedPattern;
+      extractionMethod = 'rule-based';
+      aiSuggested = true; // Suggest AI for better results
+    }
+  }
 
   // Validate pattern
   const validation = validatePattern(generatedPattern);
   if (!validation.valid) {
+    // If validation fails and we haven't tried AI yet, suggest it
+    if (extractionMethod === 'rule-based' && process.env.GEMINI_API_KEY && !aiSuggested) {
+      return res.status(400).json({
+        success: false,
+        error: `Pattern validation failed: ${validation.errors.join(', ')}`,
+        suggestion: 'Try using AI pattern creation for better accuracy',
+        canUseAI: true,
+        method: 'rule-based',
+      });
+    }
     throw new AppError(400, `Invalid pattern: ${validation.errors.join(', ')}`);
   }
 
@@ -132,6 +251,13 @@ export async function createPattern(req: AuthRequest, res: Response) {
   res.status(201).json({
     success: true,
     data: pattern,
+    method: extractionMethod, // 'rule-based', 'ai', or 'existing'
+    aiSuggested: aiSuggested, // true if AI was suggested but not used
+    existingPattern: existingPattern ? {
+      id: existingPattern.id,
+      name: existingPattern.name,
+      source: patternMatch?.source,
+    } : null,
   });
 }
 
@@ -253,7 +379,96 @@ export async function deletePattern(req: AuthRequest, res: Response) {
 }
 
 /**
+ * Create pattern using AI explicitly
+ * POST /api/patterns/create-with-ai
+ */
+export async function createPatternWithAI(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const { smsText, name, description } = createPatternSchema.parse(req.body);
+
+  // Check if AI is available
+  if (!process.env.GEMINI_API_KEY) {
+    throw new AppError(400, 'AI pattern creation is not available. GEMINI_API_KEY is not configured.');
+  }
+
+  // Get user's country and plan
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { country: true, plan: true },
+  });
+
+  // Check pattern limit for FREE users
+  if (user?.plan === 'FREE') {
+    const patternCount = await prisma.pattern.count({
+      where: { userId: req.user.id },
+    });
+
+    if (patternCount >= 4) {
+      throw new AppError(403, 'You have reached the free plan limit (4 patterns). Upgrade to Premium for unlimited patterns!');
+    }
+  }
+
+  try {
+    // Use AI to extract and generate pattern
+    const { extractTxnIdWithLLM, generatePatternFromLLM } = await import('../utils/llmExtractor');
+    const llmResult = await extractTxnIdWithLLM(smsText);
+    const generatedPattern = await generatePatternFromLLM(smsText, llmResult, user?.country || null);
+
+    // Validate pattern
+    const validation = validatePattern(generatedPattern);
+    if (!validation.valid) {
+      throw new AppError(400, `Invalid pattern: ${validation.errors.join(', ')}`);
+    }
+
+    // Check if pattern name already exists for this user
+    const existing = await prisma.pattern.findFirst({
+      where: {
+        userId: req.user.id,
+        name,
+      },
+    });
+
+    if (existing) {
+      throw new AppError(400, 'Pattern name already exists');
+    }
+
+    // Create pattern
+    const pattern = await prisma.pattern.create({
+      data: {
+        userId: req.user.id,
+        name: generatedPattern.name,
+        regex: generatedPattern.regex,
+        extractFields: generatedPattern.extractFields,
+        bank: generatedPattern.bank,
+        currency: generatedPattern.currency,
+        description,
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      data: pattern,
+      method: 'ai',
+      extracted: {
+        txnId: llmResult.txnId,
+        amount: llmResult.amount,
+        sender: llmResult.sender,
+        bank: llmResult.bank,
+        currency: llmResult.currency,
+      },
+    });
+  } catch (error: any) {
+    console.error('Error creating pattern with AI:', error);
+    throw new AppError(500, error.message || 'Failed to create pattern with AI');
+  }
+}
+
+/**
  * Validate a pattern before saving
+ * Tries rule-based first, suggests AI if needed
  */
 export async function validatePatternEndpoint(req: AuthRequest, res: Response) {
   if (!req.user) {
@@ -271,8 +486,27 @@ export async function validatePatternEndpoint(req: AuthRequest, res: Response) {
     select: { country: true },
   });
 
-  const generatedPattern = generatePatternFromSMS(smsText, name, user?.country || null);
-  const validation = validatePattern(generatedPattern);
+  let generatedPattern;
+  let extractionMethod: 'rule-based' | 'ai' = 'rule-based';
+  let aiSuggested = false;
+
+  // Step 1: Try rule-based extraction first
+  const ruleBasedPattern = generatePatternFromSMS(smsText, name, user?.country || null);
+  const ruleBasedValidation = validatePattern(ruleBasedPattern);
+  
+  // Check if rule-based extraction was successful
+  const ruleBasedSuccess = ruleBasedValidation.valid && 
+    (ruleBasedPattern.extractFields.amount !== null || ruleBasedPattern.extractFields.txnId !== null);
+  
+  if (ruleBasedSuccess) {
+    generatedPattern = ruleBasedPattern;
+    extractionMethod = 'rule-based';
+  } else {
+    // Rule-based failed - suggest AI
+    generatedPattern = ruleBasedPattern; // Show rule-based result anyway
+    extractionMethod = 'rule-based';
+    aiSuggested = true; // Suggest AI for better results
+  }
   
   // Extract actual values to show in preview
   const extractedValues = extractActualValues(smsText);
@@ -281,8 +515,11 @@ export async function validatePatternEndpoint(req: AuthRequest, res: Response) {
     success: true,
     data: {
       pattern: generatedPattern,
-      validation,
+      validation: validatePattern(generatedPattern),
       extractedValues, // Show what will actually be extracted
+      method: extractionMethod, // 'rule-based' or 'ai'
+      aiSuggested: aiSuggested, // true if AI is suggested
+      canUseAI: !!process.env.GEMINI_API_KEY, // true if AI is available
     },
   });
 }
@@ -320,7 +557,7 @@ export async function getInstitutionPattern(req: Request, res: Response) {
   }
 
   // Check if pattern exists
-  const pattern = await prisma.institutionPattern.findUnique({
+  const pattern = await (prisma as any).institutionPattern.findUnique({
     where: {
       institution_countryCode: {
         institution: normalizedInstitution,
@@ -365,7 +602,7 @@ export async function checkPatternAndExtract(req: Request, res: Response) {
     let extractedData = null;
 
     if (countryCode) {
-      const patterns = await prisma.institutionPattern.findMany({
+      const patterns = await (prisma as any).institutionPattern.findMany({
         where: {
           countryCode: countryCode.toUpperCase(),
           isVerified: true,
@@ -463,7 +700,7 @@ export async function createPatternFromSample(req: Request, res: Response) {
     }
 
     // Step 4: Create or update InstitutionPattern in database
-    const institutionPattern = await prisma.institutionPattern.upsert({
+    const institutionPattern = await (prisma as any).institutionPattern.upsert({
       where: {
         institution_countryCode: {
           institution: institution.trim(),
@@ -541,7 +778,7 @@ export async function getInstitutionsWithPatterns(req: Request, res: Response) {
     throw new AppError(400, 'Country code is required');
   }
 
-  const patterns = await prisma.institutionPattern.findMany({
+  const patterns = await (prisma as any).institutionPattern.findMany({
     where: {
       countryCode: country,
       isVerified: true, // Only return verified patterns
@@ -559,7 +796,7 @@ export async function getInstitutionsWithPatterns(req: Request, res: Response) {
 
   res.json({
     success: true,
-    data: patterns.map(p => ({
+    data: patterns.map((p: any) => ({
       institution: p.institution,
       bank: p.bank,
       currency: p.currency,
@@ -583,7 +820,7 @@ export async function getCountryPatterns(req: Request, res: Response) {
 
   try {
     // Get all verified InstitutionPatterns for this country
-    const institutionPatterns = await prisma.institutionPattern.findMany({
+    const institutionPatterns = await (prisma as any).institutionPattern.findMany({
       where: {
         countryCode: countryCode.toUpperCase(),
         isVerified: true, // Only verified patterns
@@ -633,7 +870,7 @@ export async function getCountryPatterns(req: Request, res: Response) {
 
     // Format patterns for mobile app
     const formattedPatterns = [
-      ...institutionPatterns.map(p => ({
+      ...institutionPatterns.map((p: any) => ({
         id: p.id,
         name: `${p.institution} Pattern`,
         institution: p.institution,
