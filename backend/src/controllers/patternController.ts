@@ -468,16 +468,18 @@ export async function createPatternWithAI(req: AuthRequest, res: Response) {
 
 /**
  * Validate a pattern before saving
- * Tries rule-based first, suggests AI if needed
+ * Implements smart flow: existing patterns → URL → rule-based → AI
+ * Also uses AI if available to show better extraction preview
  */
 export async function validatePatternEndpoint(req: AuthRequest, res: Response) {
   if (!req.user) {
     throw new AppError(401, 'Not authenticated');
   }
 
-  const { smsText, name } = z.object({
+  const { smsText, name, useAI = false } = z.object({
     smsText: z.string().min(10),
     name: z.string().min(3).max(100),
+    useAI: z.boolean().optional().default(false),
   }).parse(req.body);
 
   // Get user's country for country-specific templates
@@ -487,39 +489,76 @@ export async function validatePatternEndpoint(req: AuthRequest, res: Response) {
   });
 
   let generatedPattern;
-  let extractionMethod: 'rule-based' | 'ai' = 'rule-based';
+  let extractionMethod: 'existing' | 'url' | 'rule-based' | 'ai' = 'rule-based';
   let aiSuggested = false;
+  let extractedValues: any = null;
 
-  // Step 1: Try rule-based extraction first
-  const ruleBasedPattern = generatePatternFromSMS(smsText, name, user?.country || null);
-  const ruleBasedValidation = validatePattern(ruleBasedPattern);
+  // Step 0: Check existing patterns
+  const { findMatchingPattern } = await import('../utils/patternMatcher');
+  const patternMatch = await findMatchingPattern(smsText, req.user.id, user?.country || null);
   
-  // Check if rule-based extraction was successful
-  const ruleBasedSuccess = ruleBasedValidation.valid && 
-    (ruleBasedPattern.extractFields.amount !== null || ruleBasedPattern.extractFields.txnId !== null);
-  
-  if (ruleBasedSuccess) {
-    generatedPattern = ruleBasedPattern;
-    extractionMethod = 'rule-based';
+  if (patternMatch.matched && patternMatch.confidence > 0.8) {
+    generatedPattern = patternMatch.pattern;
+    extractionMethod = 'existing';
+    extractedValues = patternMatch.extractedData;
   } else {
-    // Rule-based failed - suggest AI
-    generatedPattern = ruleBasedPattern; // Show rule-based result anyway
-    extractionMethod = 'rule-based';
-    aiSuggested = true; // Suggest AI for better results
+    // Step 1: Try rule-based extraction first
+    const ruleBasedPattern = generatePatternFromSMS(smsText, name, user?.country || null);
+    const ruleBasedValidation = validatePattern(ruleBasedPattern);
+    
+    // Check if rule-based extraction was successful
+    const ruleBasedSuccess = ruleBasedValidation.valid && 
+      (ruleBasedPattern.extractFields.amount !== null || ruleBasedPattern.extractFields.txnId !== null);
+    
+    if (useAI || !ruleBasedSuccess) {
+      // Try AI if user requested or rule-based failed
+      if (process.env.GEMINI_API_KEY) {
+        try {
+          const { extractTxnIdWithLLM, generatePatternFromLLM } = await import('../utils/llmExtractor');
+          const llmResult = await extractTxnIdWithLLM(smsText);
+          generatedPattern = await generatePatternFromLLM(smsText, llmResult, user?.country || null);
+          extractionMethod = 'ai';
+          extractedValues = {
+            txnId: llmResult.txnId,
+            amount: llmResult.amount,
+            sender: llmResult.sender,
+            bank: llmResult.bank,
+            currency: llmResult.currency,
+          };
+        } catch (error: any) {
+          console.warn('AI extraction failed in validation:', error.message);
+          generatedPattern = ruleBasedPattern;
+          extractionMethod = 'rule-based';
+          aiSuggested = true;
+          extractedValues = extractActualValues(smsText);
+        }
+      } else {
+        generatedPattern = ruleBasedPattern;
+        extractionMethod = 'rule-based';
+        aiSuggested = true;
+        extractedValues = extractActualValues(smsText);
+      }
+    } else {
+      generatedPattern = ruleBasedPattern;
+      extractionMethod = 'rule-based';
+      extractedValues = extractActualValues(smsText);
+    }
   }
-  
-  // Extract actual values to show in preview
-  const extractedValues = extractActualValues(smsText);
 
   res.json({
     success: true,
     data: {
       pattern: generatedPattern,
       validation: validatePattern(generatedPattern),
-      extractedValues, // Show what will actually be extracted
-      method: extractionMethod, // 'rule-based' or 'ai'
-      aiSuggested: aiSuggested, // true if AI is suggested
-      canUseAI: !!process.env.GEMINI_API_KEY, // true if AI is available
+      extractedValues: extractedValues || extractActualValues(smsText),
+      method: extractionMethod,
+      aiSuggested: aiSuggested,
+      canUseAI: !!process.env.GEMINI_API_KEY,
+      existingPattern: patternMatch.matched ? {
+        id: patternMatch.pattern?.id,
+        source: patternMatch.source,
+        confidence: patternMatch.confidence,
+      } : null,
     },
   });
 }
@@ -907,6 +946,236 @@ export async function getCountryPatterns(req: Request, res: Response) {
   } catch (error: any) {
     console.error('Error fetching country patterns:', error);
     throw new AppError(500, 'Failed to fetch country patterns');
+  }
+}
+
+/**
+ * Get global pattern library
+ * GET /api/patterns/global
+ * Lists all global patterns (InstitutionPattern and CountryPattern)
+ * Filter by country, bank, currency
+ */
+export async function getGlobalPatterns(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const { country, bank, currency } = req.query;
+
+  try {
+    // Get user's country if not specified
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { country: true },
+    });
+
+    const countryCode = (country as string) || user?.country || null;
+
+    const patterns: any[] = [];
+
+    // Get InstitutionPatterns
+    if (countryCode) {
+      const institutionPatterns = await (prisma as any).institutionPattern.findMany({
+        where: {
+          countryCode: countryCode.toUpperCase(),
+          isVerified: true,
+          ...(bank ? { bank: bank as string } : {}),
+          ...(currency ? { currency: currency as string } : {}),
+        },
+        select: {
+          id: true,
+          institution: true,
+          regex: true,
+          extractFields: true,
+          bank: true,
+          currency: true,
+          usageCount: true,
+          isVerified: true,
+          smsExample: true,
+          createdAt: true,
+        },
+        orderBy: {
+          usageCount: 'desc',
+        },
+      });
+
+      patterns.push(...institutionPatterns.map((p: any) => ({
+        ...p,
+        type: 'institution',
+        name: `${p.institution} Pattern`,
+      })));
+    }
+
+    // Get CountryPatterns
+    if (countryCode) {
+      const country = await prisma.country.findUnique({
+        where: { code: countryCode.toUpperCase() },
+        select: { id: true },
+      });
+
+      if (country) {
+        const countryPatterns = await prisma.countryPattern.findMany({
+          where: {
+            countryId: country.id,
+            isApproved: true,
+            isTemplate: true,
+            ...(bank ? { bank: bank as string } : {}),
+            ...(currency ? { currency: currency as string } : {}),
+          },
+          select: {
+            id: true,
+            name: true,
+            regex: true,
+            extractFields: true,
+            bank: true,
+            currency: true,
+            usageCount: true,
+            isApproved: true,
+            smsExample: true,
+            createdAt: true,
+          },
+          orderBy: {
+            usageCount: 'desc',
+          },
+        });
+
+        patterns.push(...countryPatterns.map((p: any) => ({
+          ...p,
+          type: 'country',
+          institution: null,
+        })));
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        patterns,
+        count: patterns.length,
+        filters: {
+          country: countryCode,
+          bank: bank || null,
+          currency: currency || null,
+        },
+      },
+    });
+  } catch (error: any) {
+    console.error('Error fetching global patterns:', error);
+    throw new AppError(500, 'Failed to fetch global patterns');
+  }
+}
+
+/**
+ * Select a global pattern and add it to user's patterns
+ * POST /api/patterns/global/:patternId/select
+ * Creates a user Pattern from a global pattern (InstitutionPattern or CountryPattern)
+ */
+export async function selectGlobalPattern(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const { patternId } = req.params;
+  const { type } = req.query; // 'institution' or 'country'
+
+  try {
+    let globalPattern: any = null;
+
+    // Get the global pattern based on type
+    if (type === 'institution') {
+      globalPattern = await (prisma as any).institutionPattern.findUnique({
+        where: { id: patternId },
+      });
+    } else if (type === 'country') {
+      globalPattern = await prisma.countryPattern.findUnique({
+        where: { id: patternId },
+      });
+    } else {
+      // Try both
+      globalPattern = await (prisma as any).institutionPattern.findUnique({
+        where: { id: patternId },
+      }).catch(() => null);
+
+      if (!globalPattern) {
+        globalPattern = await prisma.countryPattern.findUnique({
+          where: { id: patternId },
+        });
+      }
+    }
+
+    if (!globalPattern) {
+      throw new AppError(404, 'Global pattern not found');
+    }
+
+    // Check if user already has this pattern
+    const existing = await prisma.pattern.findFirst({
+      where: {
+        userId: req.user.id,
+        regex: globalPattern.regex,
+      },
+    });
+
+    if (existing) {
+      return res.json({
+        success: true,
+        data: existing,
+        message: 'Pattern already in your collection',
+      });
+    }
+
+    // Check pattern limit for FREE users
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { plan: true },
+    });
+
+    if (user?.plan === 'FREE') {
+      const patternCount = await prisma.pattern.count({
+        where: { userId: req.user.id },
+      });
+
+      if (patternCount >= 4) {
+        throw new AppError(403, 'You have reached the free plan limit (4 patterns). Upgrade to Premium for unlimited patterns!');
+      }
+    }
+
+    // Create user pattern from global pattern
+    const userPattern = await prisma.pattern.create({
+      data: {
+        userId: req.user.id,
+        name: globalPattern.name || `${globalPattern.institution || 'Global'} Pattern`,
+        regex: globalPattern.regex,
+        extractFields: globalPattern.extractFields,
+        bank: globalPattern.bank,
+        currency: globalPattern.currency,
+        description: `Selected from ${type === 'institution' ? 'institution' : 'country'} pattern library`,
+      },
+    });
+
+    // If it's a CountryPattern, create subscription
+    if (type === 'country' || globalPattern.isTemplate) {
+      try {
+        await prisma.userPatternSubscription.create({
+          data: {
+            userId: req.user.id,
+            countryPatternId: patternId,
+            patternId: userPattern.id,
+          },
+        });
+      } catch (error) {
+        // Subscription might already exist, continue
+        console.warn('Error creating pattern subscription:', error);
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      data: userPattern,
+      message: 'Pattern added to your collection',
+    });
+  } catch (error: any) {
+    console.error('Error selecting global pattern:', error);
+    throw new AppError(500, error.message || 'Failed to select global pattern');
   }
 }
 

@@ -1,149 +1,164 @@
 /**
- * Partial Transaction ID Matcher
- * Matches transactions with common prefixes (e.g., FT25315HZNYL59221741 vs FT25315HZNYL50058423)
+ * Partial Transaction ID Matching
+ * Handles cases where transaction IDs share a common prefix
+ * Example: FT25315HZNYL59221741 and FT25315HZNYL50058423 should match
  */
+
+interface Transaction {
+  id: string;
+  txnId: string;
+  txnIdPrefix?: string | null;
+  amount: number;
+  sender: string;
+  bank?: string | null;
+  receivedAt: Date;
+  pattern?: {
+    name?: string;
+    bank?: string | null;
+  } | null;
+}
+
+interface PartialMatch {
+  transaction: Transaction;
+  commonPrefix: string;
+  confidence: number; // 0-1
+}
 
 /**
- * Extract common prefix from two transaction IDs
- * Returns the longest common prefix
+ * Extract prefix from transaction ID
+ * @param txnId - Transaction ID
+ * @param minLength - Minimum prefix length (default: 8)
+ * @returns Prefix string
  */
-export function extractCommonPrefix(txnId1: string, txnId2: string): string {
-  const minLength = Math.min(txnId1.length, txnId2.length);
-  let prefix = '';
+export function extractPrefix(txnId: string, minLength: number = 8): string {
+  // Extract a meaningful prefix for matching
+  // For IDs like "FT25315HZNYL59221741", we want to extract enough to match similar transactions
+  if (txnId.length >= minLength) {
+    // Extract at least minLength, but prefer longer prefixes for better matching
+    // For short IDs (< 15 chars), use the full ID minus a few chars
+    // For longer IDs, use first 12-15 chars
+    if (txnId.length <= 15) {
+      // For IDs like "FT25315HZNYL" (12 chars), use first 10-12 chars
+      return txnId.substring(0, Math.max(minLength, txnId.length - 2));
+    } else {
+      // For longer IDs, use first 12-15 chars
+      return txnId.substring(0, Math.min(15, Math.max(minLength, 12)));
+    }
+  }
+  return txnId;
+}
 
+/**
+ * Find common prefix between two transaction IDs
+ * @param txnId1 - First transaction ID
+ * @param txnId2 - Second transaction ID
+ * @returns Common prefix and its length
+ */
+export function findCommonPrefix(txnId1: string, txnId2: string): { prefix: string; length: number } {
+  let commonLength = 0;
+  const minLength = Math.min(txnId1.length, txnId2.length);
+  
   for (let i = 0; i < minLength; i++) {
     if (txnId1[i] === txnId2[i]) {
-      prefix += txnId1[i];
+      commonLength++;
     } else {
       break;
     }
   }
-
-  return prefix;
-}
-
-/**
- * Extract meaningful prefix from a transaction ID
- * Tries to find a pattern-based prefix (e.g., before first long digit sequence)
- */
-export function extractPrefix(txnId: string, minPrefixLength: number = 8): string {
-  if (txnId.length <= minPrefixLength) {
-    return txnId;
-  }
-
-  // Try to find a pattern: letters followed by numbers
-  // Example: FT25315HZNYL59221741 -> FT25315HZNYL (before the long number sequence)
-  const letterNumberMatch = txnId.match(/^([A-Z]+[0-9]*[A-Z]+)/);
-  if (letterNumberMatch && letterNumberMatch[1].length >= minPrefixLength) {
-    return letterNumberMatch[1];
-  }
-
-  // Try to find pattern: letters + short numbers + letters
-  // Example: FT25315HZNYL -> FT25315HZNYL
-  const complexMatch = txnId.match(/^([A-Z0-9]{8,})(\d{6,})/);
-  if (complexMatch && complexMatch[1].length >= minPrefixLength) {
-    return complexMatch[1];
-  }
-
-  // Fallback: return first N characters
-  return txnId.substring(0, Math.max(minPrefixLength, Math.floor(txnId.length * 0.6)));
-}
-
-/**
- * Check if two transaction IDs match (exact or partial)
- * @param txnId1 First transaction ID
- * @param txnId2 Second transaction ID
- * @param minPrefixLength Minimum prefix length for partial match (default: 8)
- * @returns Object with match result and confidence
- */
-export function matchTransactionIds(
-  txnId1: string,
-  txnId2: string,
-  minPrefixLength: number = 8
-): {
-  matched: boolean;
-  confidence: number;
-  commonPrefix: string;
-  matchType: 'exact' | 'partial' | 'none';
-} {
-  // Normalize transaction IDs (uppercase, trim)
-  const id1 = txnId1.toUpperCase().trim();
-  const id2 = txnId2.toUpperCase().trim();
-
-  // Exact match
-  if (id1 === id2) {
-    return {
-      matched: true,
-      confidence: 1.0,
-      commonPrefix: id1,
-      matchType: 'exact',
-    };
-  }
-
-  // Partial match - find common prefix
-  const commonPrefix = extractCommonPrefix(id1, id2);
-
-  if (commonPrefix.length >= minPrefixLength) {
-    // Calculate confidence based on prefix length
-    const maxLength = Math.max(id1.length, id2.length);
-    const confidence = Math.min(0.95, 0.7 + (commonPrefix.length / maxLength) * 0.25);
-
-    return {
-      matched: true,
-      confidence,
-      commonPrefix,
-      matchType: 'partial',
-    };
-  }
-
+  
   return {
-    matched: false,
-    confidence: 0,
-    commonPrefix: '',
-    matchType: 'none',
+    prefix: txnId1.substring(0, commonLength),
+    length: commonLength,
   };
 }
 
 /**
- * Find transactions with matching prefix
- * Used for verification when transaction IDs have variations
+ * Calculate confidence score for partial match
+ * @param commonPrefixLength - Length of common prefix
+ * @param txnIdLength - Length of the transaction ID being matched
+ * @returns Confidence score (0-1)
+ */
+export function calculateConfidence(commonPrefixLength: number, txnIdLength: number): number {
+  if (commonPrefixLength === 0) return 0;
+  
+  // Higher confidence for longer prefixes
+  const ratio = commonPrefixLength / txnIdLength;
+  
+  // Minimum 8 characters for high confidence
+  if (commonPrefixLength >= 12) {
+    return Math.min(0.95, 0.7 + ratio * 0.25);
+  } else if (commonPrefixLength >= 8) {
+    return Math.min(0.85, 0.5 + ratio * 0.35);
+  } else if (commonPrefixLength >= 6) {
+    return Math.min(0.7, 0.3 + ratio * 0.4);
+  } else {
+    return Math.min(0.5, ratio * 0.5);
+  }
+}
+
+/**
+ * Find transactions that match by prefix
+ * @param transactions - Array of transactions to search
+ * @param searchTxnId - Transaction ID to search for
+ * @param minPrefixLength - Minimum prefix length for matching (default: 8)
+ * @returns Array of matches sorted by confidence (highest first)
  */
 export function findTransactionsByPrefix(
-  transactions: Array<{ txnId: string; [key: string]: any }>,
+  transactions: Transaction[],
   searchTxnId: string,
   minPrefixLength: number = 8
-): Array<{
-  transaction: any;
-  confidence: number;
-  commonPrefix: string;
-  matchType: 'exact' | 'partial';
-}> {
-  const matches: Array<{
-    transaction: any;
-    confidence: number;
-    commonPrefix: string;
-    matchType: 'exact' | 'partial';
-  }> = [];
-
-  for (const txn of transactions) {
-    const match = matchTransactionIds(searchTxnId, txn.txnId, minPrefixLength);
-    if (match.matched) {
+): PartialMatch[] {
+  const matches: PartialMatch[] = [];
+  
+  for (const transaction of transactions) {
+    // Compare the full transaction IDs, not just prefixes
+    // This handles cases where stored ID is shorter than search ID
+    // Example: stored "FT25315HZNYL" should match search "FT25315HZNYL59221741"
+    const common = findCommonPrefix(searchTxnId, transaction.txnId);
+    
+    if (common.length >= minPrefixLength) {
+      const confidence = calculateConfidence(common.length, Math.max(searchTxnId.length, transaction.txnId.length));
+      
       matches.push({
-        transaction: txn,
-        confidence: match.confidence,
-        commonPrefix: match.commonPrefix,
-        matchType: match.matchType as 'exact' | 'partial',
+        transaction,
+        commonPrefix: common.prefix,
+        confidence,
       });
     }
   }
-
-  // Sort by confidence (highest first), then by match type (exact before partial)
-  matches.sort((a, b) => {
-    if (a.matchType === 'exact' && b.matchType !== 'exact') return -1;
-    if (a.matchType !== 'exact' && b.matchType === 'exact') return 1;
-    return b.confidence - a.confidence;
-  });
-
-  return matches;
+  
+  // Sort by confidence (highest first)
+  return matches.sort((a, b) => b.confidence - a.confidence);
 }
 
+/**
+ * Check if two transaction IDs should be considered the same transaction
+ * @param txnId1 - First transaction ID
+ * @param txnId2 - Second transaction ID
+ * @param minPrefixLength - Minimum prefix length for matching (default: 8)
+ * @returns Object with match status and confidence
+ */
+export function areTransactionsMatching(
+  txnId1: string,
+  txnId2: string,
+  minPrefixLength: number = 8
+): { matching: boolean; confidence: number; commonPrefix: string } {
+  // Exact match
+  if (txnId1 === txnId2) {
+    return {
+      matching: true,
+      confidence: 1.0,
+      commonPrefix: txnId1,
+    };
+  }
+  
+  // Partial match
+  const common = findCommonPrefix(txnId1, txnId2);
+  const confidence = calculateConfidence(common.length, Math.max(txnId1.length, txnId2.length));
+  
+  return {
+    matching: common.length >= minPrefixLength && confidence >= 0.75,
+    confidence,
+    commonPrefix: common.prefix,
+  };
+}

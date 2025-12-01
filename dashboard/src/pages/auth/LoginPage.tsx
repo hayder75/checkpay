@@ -101,10 +101,7 @@ export default function LoginPage() {
           });
           
           if (registerResponse.data.data.debug?.otp) {
-            console.log(`\n🔐 ==========================================`);
-            console.log(`📱 OTP Code: ${registerResponse.data.data.debug.otp}`);
-            console.log(`⏰ Use this code to verify your account`);
-            console.log(`🔐 ==========================================\n`);
+            // OTP sent via SMS - no console logging
           }
           
           toast({

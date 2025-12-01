@@ -160,15 +160,19 @@ export const authAPI = {
 
 // Patterns API
 export const patternsAPI = {
-  create: async (data: { smsText: string; name: string; description?: string }) => {
+  create: async (data: { smsText: string; name: string; description?: string; useAI?: boolean }) => {
     const response = await api.post('/patterns', data);
+    return response.data;
+  },
+  createWithAI: async (data: { smsText: string; name: string; description?: string }) => {
+    const response = await api.post('/patterns/create-with-ai', data);
     return response.data;
   },
   getAll: async () => {
     const response = await api.get('/patterns');
     return response.data;
   },
-  validate: async (data: { smsText: string; name: string }) => {
+  validate: async (data: { smsText: string; name: string; useAI?: boolean }) => {
     const response = await api.post('/patterns/validate', data);
     return response.data;
   },

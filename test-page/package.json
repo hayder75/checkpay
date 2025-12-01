@@ -1,0 +1,12 @@
+{
+  "name": "checkpay-test-page",
+  "version": "1.0.0",
+  "description": "Test page simulating developer checkout with CheckPay",
+  "scripts": {
+    "start": "npx http-server -p 3006 -c-1"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}
+

@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Store - Checkout</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 500px;
+            width: 100%;
+            padding: 40px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+            font-size: 14px;
+        }
+        input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 8px;
+            display: none;
+        }
+        .result.success {
+            background: #d4edda;
+            border: 2px solid #28a745;
+            color: #155724;
+        }
+        .result.error {
+            background: #f8d7da;
+            border: 2px solid #dc3545;
+            color: #721c24;
+        }
+        .result.pending {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            color: #856404;
+        }
+        .result h3 {
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+        .result-details {
+            margin-top: 10px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 10px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .back-link {
+            display: inline-block;
+            margin-top: 20px;
+            color: #667eea;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🛒 Complete Payment</h1>
+        <p class="subtitle">Enter your transaction ID to verify payment</p>
+        
+        <form id="checkoutForm">
+            <div class="form-group">
+                <label for="txnId">Transaction ID</label>
+                <input 
+                    type="text" 
+                    id="txnId" 
+                    name="txnId" 
+                    placeholder="e.g., FT25315HZNYL"
+                    required
+                    autocomplete="off"
+                />
+            </div>
+            
+            <button type="submit" id="verifyBtn">
+                Verify Payment
+            </button>
+        </form>
+        
+        <div id="result" class="result"></div>
+        
+        <a href="/" class="back-link">← Back to Home</a>
+    </div>
+
+    <script>
+        const form = document.getElementById('checkoutForm');
+        const resultDiv = document.getElementById('result');
+        const verifyBtn = document.getElementById('verifyBtn');
+        const txnIdInput = document.getElementById('txnId');
+
+        // Check if we have a transaction ID in URL params
+        const urlParams = new URLSearchParams(window.location.search);
+        const txnIdFromUrl = urlParams.get('txn');
+        if (txnIdFromUrl) {
+            txnIdInput.value = txnIdFromUrl;
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const txnId = txnIdInput.value.trim();
+            if (!txnId) {
+                showResult('error', 'Please enter a transaction ID');
+                return;
+            }
+
+            // Show loading state
+            verifyBtn.disabled = true;
+            verifyBtn.innerHTML = '<span class="loading"></span> Verifying...';
+            showResult('pending', 'Verifying transaction...');
+
+            try {
+                // Call CheckPay API (simulating developer's backend call)
+                const response = await fetch(
+                    `http://localhost:3000/api/verify?key=ckp_67719f296d5c57a060ef2f7324dd4638&txn=${encodeURIComponent(txnId)}`
+                );
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Verification failed');
+                }
+
+                if (data.success && data.data.confirmed) {
+                    // Payment verified!
+                    const txn = data.data;
+                    showResult('success', 
+                        `✅ Payment Verified!`,
+                        `Transaction ID: ${txn.txnId || txnId}<br>
+                        Amount: ETB ${txn.amount?.toLocaleString() || 'N/A'}<br>
+                        From: ${txn.sender || 'N/A'}<br>
+                        Bank: ${txn.bank || 'N/A'}<br>
+                        Received: ${txn.receivedAt ? new Date(txn.receivedAt).toLocaleString() : 'N/A'}<br>
+                        ${txn.matchType ? `<br>Match Type: ${txn.matchType} (${(txn.confidence * 100).toFixed(0)}% confidence)` : ''}`
+                    );
+                } else {
+                    // Payment not found
+                    showResult('error', 
+                        '❌ Payment Not Verified',
+                        `Transaction ID "${txnId}" was not found in our system.<br>
+                        Please check the transaction ID and try again.`
+                    );
+                }
+            } catch (error) {
+                console.error('Verification error:', error);
+                showResult('error', 
+                    '❌ Verification Failed',
+                    error.message || 'Unable to verify payment. Please try again later.'
+                );
+            } finally {
+                verifyBtn.disabled = false;
+                verifyBtn.innerHTML = 'Verify Payment';
+            }
+        });
+
+        function showResult(type, title, details = '') {
+            resultDiv.className = `result ${type}`;
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = `
+                <h3>${title}</h3>
+                ${details ? `<div class="result-details">${details}</div>` : ''}
+            `;
+        }
+    </script>
+</body>
+</html>
+

@@ -56,10 +56,7 @@ export default function RegisterPage() {
       
       // Log OTP to frontend console for testing
       if (response.data.data.debug?.otp) {
-        console.log(`\n🔐 ==========================================`);
-        console.log(`📱 OTP Code: ${response.data.data.debug.otp}`);
-        console.log(`⏰ Use this code to verify your account`);
-        console.log(`🔐 ==========================================\n`);
+        // OTP sent via SMS - no console logging
       }
       
       // Check if account already exists

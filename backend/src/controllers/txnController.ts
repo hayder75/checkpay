@@ -95,6 +95,7 @@ export async function ingestTransaction(req: AuthRequest, res: Response) {
       data: {
         userId: req.user.id,
         txnId: data.txnId,
+        txnIdPrefix: txnIdPrefix,
         amount: data.amount,
         sender: data.sender, // Already masked by mobile app
         bank: data.bank,
@@ -174,6 +175,15 @@ export async function verifyTransaction(req: AuthRequest, res: Response) {
   });
 
   if (exactMatch) {
+    // Mark transaction as verified
+    await prisma.transaction.update({
+      where: { id: exactMatch.id },
+      data: {
+        verified: true,
+        verifiedAt: new Date(),
+      },
+    });
+    
     // Track usage for dev requests (verify)
     await trackUsage(req.user.id, 'dev');
     
@@ -224,6 +234,15 @@ export async function verifyTransaction(req: AuthRequest, res: Response) {
       
       // Only return match if confidence is high enough (>= 0.75)
       if (bestMatch.confidence >= 0.75) {
+        // Mark transaction as verified
+        await prisma.transaction.update({
+          where: { id: bestMatch.transaction.id },
+          data: {
+            verified: true,
+            verifiedAt: new Date(),
+          },
+        });
+        
         // Track usage for dev requests (verify)
         await trackUsage(req.user.id, 'dev');
         
@@ -269,12 +288,29 @@ export async function getTransactions(req: AuthRequest, res: Response) {
   const page = parseInt(req.query.page as string) || 1;
   const limit = parseInt(req.query.limit as string) || 20;
   const skip = (page - 1) * limit;
+  const verified = req.query.verified === 'true' ? true : req.query.verified === 'false' ? false : undefined;
+  const search = req.query.search as string | undefined;
 
-  const [transactions, total] = await Promise.all([
+  // Build where clause
+  const where: any = {
+    userId: req.user.id,
+  };
+
+  if (verified !== undefined) {
+    where.verified = verified;
+  }
+
+  if (search) {
+    where.OR = [
+      { txnId: { contains: search, mode: 'insensitive' } },
+      { sender: { contains: search, mode: 'insensitive' } },
+      { bank: { contains: search, mode: 'insensitive' } },
+    ];
+  }
+
+  const [transactions, total, verifiedCount, unverifiedCount, verifiedAmount, unverifiedAmount] = await Promise.all([
     prisma.transaction.findMany({
-      where: {
-        userId: req.user.id,
-      },
+      where,
       orderBy: {
         createdAt: 'desc',
       },
@@ -289,9 +325,35 @@ export async function getTransactions(req: AuthRequest, res: Response) {
         },
       },
     }),
+    prisma.transaction.count({ where }),
     prisma.transaction.count({
       where: {
         userId: req.user.id,
+        verified: true,
+      },
+    }),
+    prisma.transaction.count({
+      where: {
+        userId: req.user.id,
+        verified: false,
+      },
+    }),
+    prisma.transaction.aggregate({
+      where: {
+        userId: req.user.id,
+        verified: true,
+      },
+      _sum: {
+        amount: true,
+      },
+    }),
+    prisma.transaction.aggregate({
+      where: {
+        userId: req.user.id,
+        verified: false,
+      },
+      _sum: {
+        amount: true,
       },
     }),
   ]);
@@ -305,6 +367,14 @@ export async function getTransactions(req: AuthRequest, res: Response) {
         limit,
         total,
         pages: Math.ceil(total / limit),
+      },
+      stats: {
+        verifiedCount,
+        unverifiedCount,
+        totalCount: verifiedCount + unverifiedCount,
+        verifiedAmount: verifiedAmount._sum.amount || 0,
+        unverifiedAmount: unverifiedAmount._sum.amount || 0,
+        totalAmount: (verifiedAmount._sum.amount || 0) + (unverifiedAmount._sum.amount || 0),
       },
     },
   });

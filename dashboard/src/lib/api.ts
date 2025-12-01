@@ -31,10 +31,14 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Clear token and redirect to login
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/auth/login';
+      // Only redirect if we're not already on the login page
+      // This prevents redirect loops
+      if (!window.location.pathname.includes('/auth/login')) {
+        // Clear token and redirect to login
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/auth/login';
+      }
     }
     return Promise.reject(error);
   }

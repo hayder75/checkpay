@@ -12,6 +12,8 @@ import {
   checkPatternAndExtract,
   getInstitutionsWithPatterns,
   getCountryPatterns,
+  getGlobalPatterns,
+  selectGlobalPattern,
 } from '../controllers/patternController';
 import { authenticate } from '../middleware/auth';
 import { auditLog } from '../middleware/auditLog';
@@ -32,6 +34,8 @@ router.use(auditLog as any);
 router.post('/', createPattern as any);
 router.post('/create-with-ai', createPatternWithAI as any);
 router.get('/', getPatterns as any);
+router.get('/global', getGlobalPatterns as any);
+router.post('/global/:patternId/select', selectGlobalPattern as any);
 router.get('/:id', getPattern as any);
 router.put('/:id', updatePattern as any);
 router.delete('/:id', deletePattern as any);
