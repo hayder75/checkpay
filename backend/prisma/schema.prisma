@@ -83,12 +83,15 @@ model Transaction {
   id         String   @id @default(cuid())
   userId     String
   txnId      String
+  txnIdPrefix String? // Prefix for partial matching (e.g., first 8-12 chars)
   amount     Float
   sender     String // masked phone number
   sendFrom   String? // Institution/account sending money
   sendTo     String? // Institution/account receiving money
   bank       String?
   patternId  String?
+  verified   Boolean  @default(false) // Whether transaction has been verified via API
+  verifiedAt DateTime? // When transaction was verified
   receivedAt DateTime
   createdAt  DateTime @default(now())
 
@@ -99,6 +102,8 @@ model Transaction {
   @@index([userId])
   @@index([txnId])
   @@index([userId, txnId])
+  @@index([txnIdPrefix]) // Index for partial matching
+  @@index([userId, verified]) // Index for filtering verified transactions
 }
 
 model OTP {

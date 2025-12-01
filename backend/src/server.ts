@@ -24,42 +24,37 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS must be before other middleware - allow all origins in development
+// CORS configuration - allow specific origins with credentials
 app.use(cors({
-  origin: function (origin, callback) {
-    // In development, allow all origins
-    if (process.env.NODE_ENV === 'development' || !origin) {
-      return callback(null, true);
-    }
-    
+  origin: (origin, callback) => {
+    // Allow requests from frontend dashboard, test page, or no origin (mobile apps, Postman, etc.)
     const allowedOrigins = [
-      process.env.FRONTEND_URL || 'http://localhost:5173',
-      'http://localhost:5173',
+      'http://localhost:5173', // Frontend dashboard
+      'http://localhost:3006', // Test page
       'http://127.0.0.1:5173',
-      'http://localhost:5174',
+      'http://127.0.0.1:3006',
     ];
+    
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
     
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(null, true); // Allow in dev mode
+      callback(null, true); // Allow all for development - change in production
     }
   },
-  credentials: true,
+  credentials: true, // Allow cookies/credentials
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'Accept', 'Origin', 'X-Requested-With', 'ngrok-skip-browser-warning'],
   exposedHeaders: ['Content-Type', 'Authorization'],
-  optionsSuccessStatus: 200,
-  preflightContinue: false,
-  maxAge: 86400, // 24 hours
+  maxAge: 86400,
 }));
 
-// Handle preflight requests explicitly
-app.options('*', cors());
-
-// Security middleware
+// Security middleware - relaxed for local development
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" }
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: false, // Disable CSP for local dev
 }));
 
 // Body parsing middleware

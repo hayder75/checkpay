@@ -1,31 +1,89 @@
 /**
  * Pattern Recognition Engine
- * Tries multiple extraction methods in order of priority
+ * Tries multiple extraction methods in order of priority:
+ * 1. Pattern matching (existing patterns)
+ * 2. URL extraction
+ * 3. Rule-based extraction
+ * 4. LLM extraction (last resort)
  */
 
 import { extractTxnIdEnhanced } from './extractFromSMS';
 import { extractTxnIdWithLLM } from './llmExtractor';
 import { generatePatternFromSMS } from './patternAI';
+import { findMatchingPattern } from './patternMatcher';
+import { extractTxnIdFromURL, generatePatternFromURL } from './urlPatternGenerator';
 
 interface RecognitionResult {
   success: boolean;
   extractedTxnId: string | null;
   pattern?: any;
   confidence: number;
-  method: 'url' | 'rule-based' | 'llm' | 'none';
+  method: 'existing' | 'url' | 'rule-based' | 'llm' | 'none';
+  source?: 'user' | 'institution' | 'country' | null;
+}
+
+/**
+ * Comprehensive rule-based pattern generator
+ * Extracts ALL fields and generates complete pattern object
+ */
+export async function generateComprehensiveRuleBasedPattern(
+  smsText: string,
+  patternName: string,
+  countryCode?: string | null
+): Promise<any> {
+  // Use existing generatePatternFromSMS which already does comprehensive extraction
+  return generatePatternFromSMS(smsText, patternName, countryCode);
 }
 
 /**
  * Recognize pattern from SMS and validate with user-provided transaction ID
+ * Implements smart flow: existing patterns → URL → rule-based → AI
  */
 export async function recognizePattern(
   smsText: string,
-  userTxnId: string
+  userTxnId: string,
+  userId?: string | null,
+  countryCode?: string | null
 ): Promise<RecognitionResult> {
+  // Stage 0: Check existing patterns first (fastest, no extraction needed)
+  if (userId || countryCode) {
+    const patternMatch = await findMatchingPattern(smsText, userId, countryCode);
+    if (patternMatch.matched && patternMatch.extractedData?.txnId === userTxnId) {
+      return {
+        success: true,
+        extractedTxnId: patternMatch.extractedData.txnId,
+        pattern: patternMatch.pattern,
+        confidence: patternMatch.confidence,
+        method: 'existing',
+        source: patternMatch.source,
+      };
+    }
+  }
+
   // Stage 1: Try URL extraction (fastest, highest confidence)
   const urlTxnId = extractTxnIdFromURL(smsText);
   if (urlTxnId && urlTxnId === userTxnId) {
-    const pattern = generatePatternFromSMS(smsText, 'URL Pattern');
+    // Try to generate pattern from URL
+    const urlPattern = /https?:\/\/[^\s]+/gi;
+    const urls = smsText.match(urlPattern) || [];
+    if (urls.length > 0) {
+      const generatedPattern = generatePatternFromURL(urls[0], smsText);
+      if (generatedPattern) {
+        return {
+          success: true,
+          extractedTxnId: urlTxnId,
+          pattern: {
+            regex: generatedPattern.regex,
+            extractFields: generatedPattern.extractFields,
+            name: 'URL Pattern',
+          },
+          confidence: 0.95,
+          method: 'url',
+        };
+      }
+    }
+    // Fallback to regular pattern generation
+    const pattern = generatePatternFromSMS(smsText, 'URL Pattern', countryCode);
     return {
       success: true,
       extractedTxnId: urlTxnId,
@@ -40,7 +98,7 @@ export async function recognizePattern(
   if (ruleBasedTxnId) {
     if (ruleBasedTxnId === userTxnId) {
       // Perfect match
-      const pattern = generatePatternFromSMS(smsText, 'Rule-Based Pattern');
+      const pattern = await generateComprehensiveRuleBasedPattern(smsText, 'Rule-Based Pattern', countryCode);
       return {
         success: true,
         extractedTxnId: ruleBasedTxnId,
@@ -65,7 +123,7 @@ export async function recognizePattern(
     if (llmResult.txnId) {
       if (llmResult.txnId === userTxnId) {
         // LLM match
-        const pattern = generatePatternFromSMS(smsText, 'LLM Pattern');
+        const pattern = generatePatternFromSMS(smsText, 'LLM Pattern', countryCode);
         return {
           success: true,
           extractedTxnId: llmResult.txnId,
@@ -95,47 +153,6 @@ export async function recognizePattern(
     confidence: 0,
     method: 'none',
   };
-}
-
-/**
- * Extract transaction ID from URL (helper function)
- */
-function extractTxnIdFromURL(text: string): string | null {
-  const urlPattern = /https?:\/\/[^\s]+/gi;
-  const urls = text.match(urlPattern) || [];
-  
-  for (const url of urls) {
-    try {
-      const urlObj = new URL(url);
-      
-      // Check query parameters
-      const txnParams = ['txn', 'transactionId', 'transaction_id', 'ref', 'reference', 'id', 'txnid'];
-      for (const param of txnParams) {
-        const value = urlObj.searchParams.get(param);
-        if (value && value.length >= 4) {
-          return value.trim();
-        }
-      }
-      
-      // Check path segments
-      const pathMatch = urlObj.pathname.match(/\/(?:txn|transaction|ref|reference)\/([A-Z0-9_-]+)/i);
-      if (pathMatch && pathMatch[1] && pathMatch[1].length >= 4) {
-        return pathMatch[1].trim();
-      }
-      
-      // Check hash fragments
-      if (urlObj.hash) {
-        const hashMatch = urlObj.hash.match(/[#&](?:txn|transactionId|ref)=([A-Z0-9_-]+)/i);
-        if (hashMatch && hashMatch[1] && hashMatch[1].length >= 4) {
-          return hashMatch[1].trim();
-        }
-      }
-    } catch (e) {
-      continue;
-    }
-  }
-  
-  return null;
 }
 
 

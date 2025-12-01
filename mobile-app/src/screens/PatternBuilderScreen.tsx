@@ -27,6 +27,8 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated }: Props
   const [preview, setPreview] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [useAI, setUseAI] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
 
   const handleAnalyze = async () => {
     if (!smsText.trim() || !patternName.trim()) {
@@ -36,7 +38,7 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated }: Props
 
     setLoading(true);
     try {
-      const response = await patternsAPI.validate({ smsText: smsText.trim(), name: patternName.trim() });
+      const response = await patternsAPI.validate({ smsText: smsText.trim(), name: patternName.trim(), useAI: false });
       if (response.success) {
         setPreview(response.data);
       } else {
@@ -47,6 +49,41 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated }: Props
       Alert.alert('Error', error.response?.data?.error || 'Failed to analyze pattern');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleUseAI = async () => {
+    if (!smsText.trim() || !patternName.trim()) {
+      Alert.alert('Error', 'Please enter SMS text and pattern name');
+      return;
+    }
+
+    setAiLoading(true);
+    try {
+      const response = await patternsAPI.createWithAI({ 
+        smsText: smsText.trim(), 
+        name: patternName.trim(), 
+        description: description.trim() || undefined 
+      });
+      if (response.success) {
+        setPreview({
+          pattern: response.data,
+          validation: { valid: true, errors: [] },
+          extractedValues: response.extracted,
+          method: 'ai',
+          aiSuggested: false,
+          canUseAI: true,
+        });
+        setUseAI(true);
+        Alert.alert('Success', 'Pattern created using AI! Review and save.');
+      } else {
+        Alert.alert('Error', response.error || 'Failed to create pattern with AI');
+      }
+    } catch (error: any) {
+      console.error('AI error:', error);
+      Alert.alert('Error', error.response?.data?.error || 'Failed to create pattern with AI');
+    } finally {
+      setAiLoading(false);
     }
   };
 
@@ -63,14 +100,24 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated }: Props
 
     setSaving(true);
     try {
+      // If we used AI, the pattern is already created, just navigate
+      if (useAI && preview?.pattern) {
+        Alert.alert('Success', 'Pattern created successfully!', [
+          { text: 'OK', onPress: onPatternCreated },
+        ]);
+        return;
+      }
+
+      // Otherwise, create pattern normally (with useAI flag if set)
       const response = await patternsAPI.create({
         smsText: smsText.trim(),
         name: patternName.trim(),
         description: description.trim() || undefined,
+        useAI: useAI,
       });
       
       if (response.success) {
-        Alert.alert('Success', 'Pattern created successfully!', [
+        Alert.alert('Success', `Pattern created successfully using ${response.method || 'rule-based'} extraction!`, [
           { text: 'OK', onPress: onPatternCreated },
         ]);
       } else {
@@ -78,7 +125,12 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated }: Props
       }
     } catch (error: any) {
       console.error('Save error:', error);
-      Alert.alert('Error', error.response?.data?.error || 'Failed to save pattern');
+      // If error suggests AI, show that
+      if (error.response?.data?.canUseAI) {
+        Alert.alert('Pattern Creation Failed', error.response.data.suggestion || 'Try using AI for better accuracy');
+      } else {
+        Alert.alert('Error', error.response?.data?.error || 'Failed to save pattern');
+      }
     } finally {
       setSaving(false);
     }
@@ -142,19 +194,55 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated }: Props
             />
           </View>
 
+          {/* AI Toggle */}
+          <View style={[styles.inputGroup, { marginBottom: 12 }]}>
+            <View style={[styles.toggleContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.toggleLabel, { color: colors.text }]}>
+                🤖 Use AI for Pattern Creation
+              </Text>
+              <TouchableOpacity
+                style={[styles.toggle, useAI && { backgroundColor: colors.primary }]}
+                onPress={() => setUseAI(!useAI)}
+              >
+                <View style={[styles.toggleThumb, useAI && styles.toggleThumbActive]} />
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.toggleHint, { color: colors.textSecondary }]}>
+              {useAI 
+                ? 'AI will be used to create the pattern (may take longer)'
+                : 'Rule-based extraction will be tried first, AI used if needed'}
+            </Text>
+          </View>
+
           <TouchableOpacity
-            style={[styles.button, { backgroundColor: colors.primary }, (loading || !smsText || !patternName) && styles.buttonDisabled]}
+            style={[styles.button, { backgroundColor: colors.primary }, (loading || aiLoading || !smsText || !patternName) && styles.buttonDisabled]}
             onPress={handleAnalyze}
-            disabled={loading || !smsText || !patternName}
+            disabled={loading || aiLoading || !smsText || !patternName}
           >
             {loading ? (
               <ActivityIndicator color={colors.primaryText} />
             ) : (
               <Text style={[styles.buttonText, { color: colors.primaryText }]}>
-                ✨ Analyze SMS
+                {useAI ? '🤖 Analyze SMS (AI)' : '⚡ Analyze SMS (Rule-Based)'}
               </Text>
             )}
           </TouchableOpacity>
+
+          {preview?.aiSuggested && preview?.canUseAI && !useAI && (
+            <TouchableOpacity
+              style={[styles.button, { backgroundColor: '#9333ea', marginTop: 8 }, (aiLoading || loading || !smsText || !patternName) && styles.buttonDisabled]}
+              onPress={handleUseAI}
+              disabled={aiLoading || loading || !smsText || !patternName}
+            >
+              {aiLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={[styles.buttonText, { color: '#fff' }]}>
+                  🤖 Use AI to Create Pattern
+                </Text>
+              )}
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Preview Section */}
@@ -400,6 +488,42 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     textAlign: 'center',
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  toggleLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    flex: 1,
+  },
+  toggle: {
+    width: 50,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#ccc',
+    justifyContent: 'center',
+    padding: 2,
+  },
+  toggleThumb: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    alignSelf: 'flex-start',
+  },
+  toggleThumbActive: {
+    alignSelf: 'flex-end',
+  },
+  toggleHint: {
+    fontSize: 12,
+    marginTop: 4,
+    paddingHorizontal: 4,
   },
 });
 

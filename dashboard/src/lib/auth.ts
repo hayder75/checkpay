@@ -1,9 +1,13 @@
 export interface User {
   id: string;
+  username?: string | null;
   email: string | null;
   phone: string | null;
   apiKey: string;
+  devApiKey?: string;
   plan: 'FREE' | 'PREMIUM';
+  role?: 'USER' | 'ADMIN' | 'SUPER_ADMIN';
+  country?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }

@@ -13,9 +13,9 @@ interface ExtractedData {
 
 /**
  * Extract transaction ID from URL
+ * Enhanced version that handles more URL formats
  */
 function extractTxnIdFromURL(text: string): string | null {
-  // Extract all URLs from text
   const urlPattern = /https?:\/\/[^\s]+/gi;
   const urls = text.match(urlPattern) || [];
   
@@ -23,8 +23,12 @@ function extractTxnIdFromURL(text: string): string | null {
     try {
       const urlObj = new URL(url);
       
-      // Check query parameters: ?txn=, ?transactionId=, ?ref=, etc.
-      const txnParams = ['txn', 'transactionId', 'transaction_id', 'ref', 'reference', 'id', 'txnid'];
+      // Check query parameters: ?txn=, ?transactionId=, ?ref=, ?trx=, etc.
+      const txnParams = [
+        'txn', 'transactionId', 'transaction_id', 'ref', 'reference', 
+        'id', 'txnid', 'trx', 'transaction', 'txn_id', 'txn_ref'
+      ];
+      
       for (const param of txnParams) {
         const value = urlObj.searchParams.get(param);
         if (value && value.length >= 4) {
@@ -32,15 +36,25 @@ function extractTxnIdFromURL(text: string): string | null {
         }
       }
       
-      // Check path segments: /txn/ABC123, /transaction/ABC123
-      const pathMatch = urlObj.pathname.match(/\/(?:txn|transaction|ref|reference)\/([A-Z0-9_-]+)/i);
+      // Check path segments: /txn/ABC123, /transaction/ABC123, /slip/?trx=...
+      const pathMatch = urlObj.pathname.match(/\/(?:txn|transaction|ref|reference|slip|verify|check)\/([A-Z0-9_-]+)/i);
       if (pathMatch && pathMatch[1] && pathMatch[1].length >= 4) {
         return pathMatch[1].trim();
       }
       
+      // Check path with query: /slip/?trx=ABC123
+      if (urlObj.pathname.includes('/slip') || urlObj.pathname.includes('/verify')) {
+        for (const param of txnParams) {
+          const value = urlObj.searchParams.get(param);
+          if (value && value.length >= 4) {
+            return value.trim();
+          }
+        }
+      }
+      
       // Check hash fragments: #txn=ABC123
       if (urlObj.hash) {
-        const hashMatch = urlObj.hash.match(/[#&](?:txn|transactionId|ref)=([A-Z0-9_-]+)/i);
+        const hashMatch = urlObj.hash.match(/[#&](?:txn|transactionId|ref|trx)=([A-Z0-9_-]+)/i);
         if (hashMatch && hashMatch[1] && hashMatch[1].length >= 4) {
           return hashMatch[1].trim();
         }

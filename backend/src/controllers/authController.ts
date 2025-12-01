@@ -57,12 +57,30 @@ async function sendOTP(phone?: string, email?: string): Promise<string> {
     },
   });
 
-  // Log OTP prominently (backend console)
-  const identifier = phone || email || 'user';
-  console.log(`\n🔐 ==========================================`);
-  console.log(`📱 OTP for ${identifier}: ${otpCode}`);
-  console.log(`⏰ Expires in 10 minutes`);
-  console.log(`🔐 ==========================================\n`);
+  // Send OTP via SMS using AfroMessage (REQUIRED - no fallback console logging)
+  try {
+    const { sendOTPSMS } = await import('../utils/afroSmsService');
+    const smsSent = await sendOTPSMS(phone, otpCode);
+    
+    if (!smsSent) {
+      console.error(`\n❌ ==========================================`);
+      console.error(`❌ SMS SENDING FAILED for ${phone}`);
+      console.error(`❌ OTP Code: ${otpCode} (NOT SENT VIA SMS)`);
+      console.error(`❌ Check AfroMessage API configuration`);
+      console.error(`❌ ==========================================\n`);
+      throw new Error('Failed to send OTP via SMS. Please check SMS service configuration.');
+    }
+    
+    // Only log success, not the OTP code
+    console.log(`\n✅ OTP SMS sent successfully to ${phone}`);
+  } catch (error: any) {
+    console.error(`\n❌ ==========================================`);
+    console.error(`❌ SMS SERVICE ERROR`);
+    console.error(`❌ Phone: ${phone}`);
+    console.error(`❌ Error: ${error.message}`);
+    console.error(`❌ ==========================================\n`);
+    throw new Error(`Failed to send OTP: ${error.message}`);
+  }
 
   return otpCode;
 }
@@ -145,15 +163,21 @@ export async function register(req: AuthRequest, res: Response) {
               ...user,
               phone: maskPhone(user.phone!),
             },
-            ...(process.env.NODE_ENV === 'development' && { debug: { otp: otpCode } }),
           },
         });
       }
     }
   }
 
-  // New user - create account
+  // New user - send OTP FIRST before creating account
   isNewUser = true;
+
+  // Send OTP BEFORE creating user (so we don't create user if SMS fails)
+  if (data.phone) {
+    await sendOTP(data.phone);
+  } else {
+    throw new AppError(400, 'Phone number is required for registration');
+  }
 
   // Generate both API keys
   let apiKey = generateApiKey();
@@ -169,7 +193,7 @@ export async function register(req: AuthRequest, res: Response) {
     devKeyExists = await prisma.user.findUnique({ where: { devApiKey } });
   }
 
-  // Create user with both API keys
+  // Create user with both API keys (only after OTP is sent successfully)
   user = await prisma.user.create({
     data: {
       username: data.username || null,
@@ -197,12 +221,6 @@ export async function register(req: AuthRequest, res: Response) {
     },
   });
 
-  // Generate OTP if phone provided (for new users)
-  let otpCode: string | undefined;
-  if (data.phone) {
-    otpCode = await sendOTP(data.phone);
-  }
-
   res.status(201).json({
     success: true,
     data: {
@@ -210,8 +228,7 @@ export async function register(req: AuthRequest, res: Response) {
         ...user,
         phone: user.phone ? maskPhone(user.phone) : null,
       },
-      ...(data.phone && { message: 'OTP sent to your phone' }),
-      ...(process.env.NODE_ENV === 'development' && otpCode && { debug: { otp: otpCode } }),
+      message: 'OTP sent to your phone via SMS. Please verify to complete registration.',
     },
   });
 }
@@ -235,8 +252,7 @@ export async function resendOTP(req: AuthRequest, res: Response) {
 
   res.json({
     success: true,
-    message: 'OTP resent successfully',
-    ...(process.env.NODE_ENV === 'development' && { debug: { otp: otpCode } }),
+    message: 'OTP resent successfully via SMS',
   });
 }
 

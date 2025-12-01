@@ -85,12 +85,17 @@ export async function ingestTransaction(req: AuthRequest, res: Response) {
     });
   }
 
+  // Extract prefix for partial matching (optional optimization)
+  const { extractPrefix } = await import('../utils/partialTxnIdMatcher');
+  const txnIdPrefix = extractPrefix(data.txnId, 8);
+
   // Create transaction
   try {
     const transaction = await prisma.transaction.create({
       data: {
         userId: req.user.id,
         txnId: data.txnId,
+        txnIdPrefix: txnIdPrefix,
         amount: data.amount,
         sender: data.sender, // Already masked by mobile app
         bank: data.bank,
@@ -137,20 +142,27 @@ export async function ingestTransaction(req: AuthRequest, res: Response) {
 
 /**
  * Verify a transaction
+ * Supports exact and partial transaction ID matching
  */
 export async function verifyTransaction(req: AuthRequest, res: Response) {
   if (!req.user) {
     throw new AppError(401, 'Not authenticated');
   }
 
-  const { txn } = z.object({
-    txn: z.string().min(1),
-  }).parse(req.query);
+  // Support both query param (GET) and body (POST)
+  const txnId = (req.query.txn as string) || (req.body?.txnId as string) || (req.body?.txn as string);
+  
+  if (!txnId) {
+    throw new AppError(400, 'Transaction ID is required');
+  }
 
-  const transaction = await prisma.transaction.findFirst({
+  const allowPartialMatch = req.body?.allowPartialMatch !== false; // Default to true
+
+  // First, try exact match
+  const exactMatch = await prisma.transaction.findFirst({
     where: {
       userId: req.user.id,
-      txnId: txn,
+      txnId,
     },
     include: {
       pattern: {
@@ -162,28 +174,105 @@ export async function verifyTransaction(req: AuthRequest, res: Response) {
     },
   });
 
-  // Track usage for dev requests (verify)
-  await trackUsage(req.user.id, 'dev');
-
-  if (!transaction) {
+  if (exactMatch) {
+    // Mark transaction as verified
+    await prisma.transaction.update({
+      where: { id: exactMatch.id },
+      data: {
+        verified: true,
+        verifiedAt: new Date(),
+      },
+    });
+    
+    // Track usage for dev requests (verify)
+    await trackUsage(req.user.id, 'dev');
+    
     return res.json({
       success: true,
       data: {
-        confirmed: false,
-        message: 'Transaction not found',
+        confirmed: true,
+        matchType: 'exact',
+        amount: exactMatch.amount,
+        sender: exactMatch.sender,
+        bank: exactMatch.bank || exactMatch.pattern?.bank || null,
+        receivedAt: exactMatch.receivedAt,
+        txnId: exactMatch.txnId,
       },
     });
   }
 
-  res.json({
+  // If exact match not found and partial matching is allowed, try partial match
+  if (allowPartialMatch) {
+    const { findTransactionsByPrefix } = await import('../utils/partialTxnIdMatcher');
+    
+    // Get all transactions for this user (limit to recent ones for performance)
+    const recentTransactions = await prisma.transaction.findMany({
+      where: {
+        userId: req.user.id,
+        receivedAt: {
+          gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // Last 30 days
+        },
+      },
+      include: {
+        pattern: {
+          select: {
+            name: true,
+            bank: true,
+          },
+        },
+      },
+      orderBy: {
+        receivedAt: 'desc',
+      },
+      take: 1000, // Limit to 1000 most recent transactions
+    });
+
+    const partialMatches = findTransactionsByPrefix(recentTransactions, txnId, 8);
+
+    if (partialMatches.length > 0) {
+      const bestMatch = partialMatches[0];
+      
+      // Only return match if confidence is high enough (>= 0.75)
+      if (bestMatch.confidence >= 0.75) {
+        // Mark transaction as verified
+        await prisma.transaction.update({
+          where: { id: bestMatch.transaction.id },
+          data: {
+            verified: true,
+            verifiedAt: new Date(),
+          },
+        });
+        
+        // Track usage for dev requests (verify)
+        await trackUsage(req.user.id, 'dev');
+        
+        return res.json({
+          success: true,
+          data: {
+            confirmed: true,
+            matchType: 'partial',
+            confidence: bestMatch.confidence,
+            commonPrefix: bestMatch.commonPrefix,
+            amount: bestMatch.transaction.amount,
+            sender: bestMatch.transaction.sender,
+            bank: bestMatch.transaction.bank || bestMatch.transaction.pattern?.bank || null,
+            receivedAt: bestMatch.transaction.receivedAt,
+            txnId: bestMatch.transaction.txnId,
+          },
+        });
+      }
+    }
+  }
+
+  // Track usage for dev requests (verify) - even if not found
+  await trackUsage(req.user.id, 'dev');
+
+  // No match found
+  return res.json({
     success: true,
     data: {
-      confirmed: true,
-      amount: transaction.amount,
-      sender: transaction.sender,
-      bank: transaction.bank || transaction.pattern?.bank || null,
-      receivedAt: transaction.receivedAt,
-      txnId: transaction.txnId,
+      confirmed: false,
+      message: 'Transaction not found',
     },
   });
 }
@@ -199,12 +288,29 @@ export async function getTransactions(req: AuthRequest, res: Response) {
   const page = parseInt(req.query.page as string) || 1;
   const limit = parseInt(req.query.limit as string) || 20;
   const skip = (page - 1) * limit;
+  const verified = req.query.verified === 'true' ? true : req.query.verified === 'false' ? false : undefined;
+  const search = req.query.search as string | undefined;
 
-  const [transactions, total] = await Promise.all([
+  // Build where clause
+  const where: any = {
+    userId: req.user.id,
+  };
+
+  if (verified !== undefined) {
+    where.verified = verified;
+  }
+
+  if (search) {
+    where.OR = [
+      { txnId: { contains: search, mode: 'insensitive' } },
+      { sender: { contains: search, mode: 'insensitive' } },
+      { bank: { contains: search, mode: 'insensitive' } },
+    ];
+  }
+
+  const [transactions, total, verifiedCount, unverifiedCount, verifiedAmount, unverifiedAmount] = await Promise.all([
     prisma.transaction.findMany({
-      where: {
-        userId: req.user.id,
-      },
+      where,
       orderBy: {
         createdAt: 'desc',
       },
@@ -219,9 +325,35 @@ export async function getTransactions(req: AuthRequest, res: Response) {
         },
       },
     }),
+    prisma.transaction.count({ where }),
     prisma.transaction.count({
       where: {
         userId: req.user.id,
+        verified: true,
+      },
+    }),
+    prisma.transaction.count({
+      where: {
+        userId: req.user.id,
+        verified: false,
+      },
+    }),
+    prisma.transaction.aggregate({
+      where: {
+        userId: req.user.id,
+        verified: true,
+      },
+      _sum: {
+        amount: true,
+      },
+    }),
+    prisma.transaction.aggregate({
+      where: {
+        userId: req.user.id,
+        verified: false,
+      },
+      _sum: {
+        amount: true,
       },
     }),
   ]);
@@ -235,6 +367,14 @@ export async function getTransactions(req: AuthRequest, res: Response) {
         limit,
         total,
         pages: Math.ceil(total / limit),
+      },
+      stats: {
+        verifiedCount,
+        unverifiedCount,
+        totalCount: verifiedCount + unverifiedCount,
+        verifiedAmount: verifiedAmount._sum.amount || 0,
+        unverifiedAmount: unverifiedAmount._sum.amount || 0,
+        totalAmount: (verifiedAmount._sum.amount || 0) + (unverifiedAmount._sum.amount || 0),
       },
     },
   });

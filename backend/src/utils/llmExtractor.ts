@@ -14,27 +14,52 @@ interface LLMExtractionResult {
   sendTo?: string | null;   // Institution/account receiving money
 }
 
-const EXTRACTION_PROMPT = `Extract transaction details from this SMS message. Return only the transaction ID, amount, currency, bank name, sender, send from (institution), and send to (institution) if found.
+const EXTRACTION_PROMPT = `You are an expert at extracting financial transaction data from SMS messages. Analyze the SMS text carefully and extract all relevant transaction information.
 
-SMS: "{smsText}"
+SMS Text: "{smsText}"
 
-Return a JSON object with:
-- txnId: The transaction ID/number if found, or null
-- amount: The transaction amount as a number if found, or null
-- currency: The currency code (e.g., "KES", "ETB") if found, or null
-- bank: The bank/institution name if found, or null
-- sender: The sender phone number or name if found, or null
-- sendFrom: The institution/account sending money (e.g., "M-Pesa", "Telebirr", account number) if found, or null
-- sendTo: The institution/account receiving money (e.g., "M-Pesa", "Telebirr", account number) if found, or null
+Extract the following fields from the SMS:
+1. Transaction ID: Look for reference numbers, transaction IDs, confirmation codes, receipt numbers. These are usually alphanumeric codes (6+ characters). Check for keywords like "transaction number", "txn", "ref", "reference", "id", "receipt", "confirmation code", or similar terms. Also check URLs for transaction IDs in query parameters (e.g., ?txn=, ?trx=, ?id=, ?ref=).
 
-Only return valid JSON, no other text.`;
+2. Amount: Find the transaction amount. Look for numbers near currency keywords (ETB, KES, NGN, GHS, USD, etc.) or keywords like "received", "credited", "transferred", "deposited", "amount". Handle comma-separated numbers (e.g., 1,000.00). Ignore balance amounts.
+
+3. Currency: Extract the currency code (ETB, KES, NGN, GHS, USD, etc.) or currency name (Birr, Shilling, Naira, Cedi, Dollar).
+
+4. Bank/Institution: Identify the bank or financial institution name (e.g., "Commercial Bank of Ethiopia", "CBE", "M-Pesa", "Telebirr", "MTN MoMo", "Airtel Money").
+
+5. Sender: Extract the sender's name or phone number. Look for keywords like "from", "by", "sent by", "sender".
+
+6. Send From: The institution/account/service sending money (e.g., "M-Pesa", "Telebirr", account number, wallet name).
+
+7. Send To: The institution/account/service receiving money (e.g., "M-Pesa", "Telebirr", account number, wallet name).
+
+IMPORTANT:
+- Be flexible with formats and variations in wording
+- Transaction IDs can be in URLs, text, or both
+- Amounts may have commas (1,000.00) or not (1000.00)
+- Currency might be before or after the amount
+- Handle abbreviations (CBE = Commercial Bank of Ethiopia)
+- If a field is not found, return null (not empty string or 0)
+
+Return ONLY a valid JSON object with this exact structure:
+{
+  "txnId": "string or null",
+  "amount": number or null,
+  "currency": "string or null",
+  "bank": "string or null",
+  "sender": "string or null",
+  "sendFrom": "string or null",
+  "sendTo": "string or null"
+}
+
+Do not include any explanation, markdown formatting, or additional text. Only return the JSON object.`;
 
 /**
  * Extract using Google Gemini API
  */
 async function extractWithGemini(smsText: string): Promise<LLMExtractionResult> {
   const apiKey = process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite-preview-06-17';
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
   
   if (!apiKey) {
     throw new Error('Gemini API key not configured');
@@ -58,7 +83,7 @@ async function extractWithGemini(smsText: string): Promise<LLMExtractionResult> 
           }],
           generationConfig: {
             temperature: 0.1,
-            maxOutputTokens: 200,
+            maxOutputTokens: 4000,
             responseMimeType: 'application/json',
           },
         }),
@@ -137,36 +162,27 @@ export async function extractTxnIdWithLLM(smsText: string): Promise<LLMExtractio
  */
 export async function generatePatternFromLLM(smsText: string, llmResult: LLMExtractionResult, countryCode?: string | null) {
   const apiKey = process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite-preview-06-17';
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
   
   if (!apiKey) {
     throw new Error('Gemini API key not configured');
   }
 
-  const prompt = `Create a regex pattern to extract transaction data from SMS messages like this one.
+  const prompt = `Create a JavaScript regex pattern to extract transaction data from SMS messages.
 
-SMS Example: "${smsText}"
+SMS: "${smsText}"
 
-Extracted Data:
-- Transaction ID: ${llmResult.txnId || 'N/A'}
-- Amount: ${llmResult.amount || 'N/A'}
-- Currency: ${llmResult.currency || 'N/A'}
-- Bank: ${llmResult.bank || 'N/A'}
-- Sender: ${llmResult.sender || 'N/A'}
+Extracted: txnId="${llmResult.txnId || ''}", amount=${llmResult.amount || 0}, currency="${llmResult.currency || ''}", bank="${llmResult.bank || ''}", sender="${llmResult.sender || ''}"
 
-Create a JavaScript-compatible regex pattern that can extract these fields from similar SMS messages.
-The regex should use capture groups for:
-1. Transaction ID (if present)
-2. Amount (if present)
-3. Sender (if present)
+Create a flexible regex with capture groups for: txnId, amount, sender. Handle URLs with ?trx= or ?txn=, comma-separated numbers (1,000.00), case variations, optional words.
 
-Return a JSON object with:
-- regex: The regex pattern string (JavaScript compatible, no (?i) prefix)
-- extractFields: Object mapping field names to capture group numbers (e.g., {"txnId": 1, "amount": 2, "sender": 3})
-- bank: Bank name or null
-- currency: Currency code or null
-
-Only return valid JSON, no other text.`;
+Return JSON only:
+{
+  "regex": "pattern string (JavaScript compatible, no (?i) prefix)",
+  "extractFields": {"txnId": 1, "amount": 2, "sender": 3},
+  "bank": "${llmResult.bank || null}",
+  "currency": "${llmResult.currency || null}"
+}`;
 
   try {
     const response = await fetch(
@@ -184,7 +200,7 @@ Only return valid JSON, no other text.`;
           }],
           generationConfig: {
             temperature: 0.1,
-            maxOutputTokens: 500,
+            maxOutputTokens: 10000, // Increased to account for thinking tokens in gemini-2.5-flash
             responseMimeType: 'application/json',
           },
         }),
@@ -207,9 +223,19 @@ Only return valid JSON, no other text.`;
     }
 
     const data = JSON.parse(responseText);
+    
+    // Check for thinking tokens consuming output
+    if (data.usageMetadata?.thoughtsTokenCount && data.usageMetadata.thoughtsTokenCount > 0) {
+      console.log(`[Gemini] Thinking tokens used: ${data.usageMetadata.thoughtsTokenCount}`);
+    }
+    
     const generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     
     if (!generatedText) {
+      // Check if it's a MAX_TOKENS issue
+      if (data.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
+        throw new Error('Gemini response exceeded token limit. Try increasing maxOutputTokens or simplifying the prompt.');
+      }
       throw new Error('No generated text in Gemini response');
     }
     
