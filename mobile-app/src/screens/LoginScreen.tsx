@@ -11,11 +11,14 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { authAPI } from '../services/api';
 import { storage } from '../services/storage';
-import { fetchPatterns } from '../services/api';
 import { useTheme } from '../contexts/ThemeContext';
 import { Pattern } from '../types';
+import { authAPI } from '../services/api';
+import { patternsAPI } from '../services/api';
+import PhoneInput from '../components/PhoneInput';
+import { validatePhoneNumber } from '../utils/phoneCodes';
+import { signInWithGoogle, completeGoogleAuth } from '../services/googleAuth';
 
 interface Props {
   onLoginSuccess: (user: any, apiKey: string, patterns: Pattern[]) => void;
@@ -24,14 +27,20 @@ interface Props {
 
 export default function LoginScreen({ onLoginSuccess, onSwitchToRegister }: Props) {
   const { colors } = useTheme();
-  const [username, setUsername] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const handleLogin = async () => {
-    if (!username.trim() && !phone.trim()) {
-      Alert.alert('Error', 'Please enter your username or phone number');
+    if (!phone.trim()) {
+      Alert.alert('Error', 'Please enter your phone number');
+      return;
+    }
+
+    // Validate phone number format
+    if (!validatePhoneNumber(phone.trim())) {
+      Alert.alert('Error', 'Please enter a valid phone number with country code (e.g., +254712345678)');
       return;
     }
 
@@ -42,30 +51,57 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister }: Prop
 
     setLoading(true);
     try {
+      // Use real API authentication - phone only
       const response = await authAPI.login({
-        username: username.trim() || undefined,
-        phone: phone.trim() || undefined,
+        phone: phone.trim(),
         password: password.trim(),
       });
 
       if (response.success) {
         const { token, user } = response.data;
         
+        if (!token) {
+          Alert.alert('Error', 'No token received from server');
+          return;
+        }
+        
         // Store token and user
+        console.log('💾 [Login] Saving authentication data...');
         await storage.setToken(token);
         await storage.setUser(user);
+        
+        // Verify token was saved
+        const savedToken = await storage.getToken();
+        if (!savedToken || savedToken !== token) {
+          console.error('❌ [Login] Token was not saved correctly');
+          Alert.alert('Error', 'Failed to save authentication token');
+          return;
+        }
         
         // Get API key from user
         const apiKey = user.apiKey;
         if (apiKey) {
           await storage.setApiKey(apiKey);
           
-          // Fetch patterns
+          // Verify API key was saved
+          const savedApiKey = await storage.getApiKey();
+          if (!savedApiKey || savedApiKey !== apiKey) {
+            console.error('❌ [Login] API key was not saved correctly');
+            Alert.alert('Error', 'Failed to save API key');
+            return;
+          }
+          
+          console.log('✅ [Login] Authentication data saved successfully (token + API key)');
+          
+          // Fetch patterns from real API
           try {
-            const patternsResponse = await fetchPatterns(apiKey);
-            if (patternsResponse.success && patternsResponse.data.patterns) {
-              await storage.setPatterns(patternsResponse.data.patterns);
-              onLoginSuccess(user, apiKey, patternsResponse.data.patterns);
+            const patternsResponse = await patternsAPI.getAll();
+            if (patternsResponse.success && patternsResponse.data) {
+              const patterns = Array.isArray(patternsResponse.data) 
+                ? patternsResponse.data 
+                : [];
+              // Patterns are now always fetched from backend, no local storage
+              onLoginSuccess(user, apiKey, patterns);
             } else {
               onLoginSuccess(user, apiKey, []);
             }
@@ -74,17 +110,56 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister }: Prop
             onLoginSuccess(user, apiKey, []);
           }
         } else {
-          Alert.alert('Error', 'No API key found for this account');
+          console.error('❌ [Login] No API key in user object:', user);
+          Alert.alert('Error', 'No API key found for this account. Please contact support.');
         }
       } else {
-        Alert.alert('Error', response.error || 'Login failed');
+        Alert.alert('Error', response.message || 'Login failed');
       }
     } catch (error: any) {
       console.error('Login error:', error);
-      const errorMessage = error.response?.data?.error || error.message || 'Login failed';
-      Alert.alert('Error', errorMessage);
+      
+      // Check if user needs to set a password first
+      const errorMessage = error.response?.data?.error || error.message || '';
+      if (errorMessage.includes('Please set a password first') || errorMessage.includes('set a password')) {
+        Alert.alert(
+          'Password Not Set',
+          'Your account exists but you haven\'t set a password yet. Please register again with a password or contact support.',
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                if (onSwitchToRegister) {
+                  onSwitchToRegister();
+                }
+              },
+            },
+          ]
+        );
+      } else {
+        Alert.alert('Error', errorMessage || 'Login failed');
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setGoogleLoading(true);
+    try {
+      const result = await signInWithGoogle();
+      
+      if (result.success && result.token && result.user) {
+        // Complete authentication
+        await completeGoogleAuth(result.token, result.user, onLoginSuccess);
+      } else {
+        Alert.alert('Error', result.error || 'Google sign-in failed');
+      }
+    } catch (error: any) {
+      console.error('Google sign-in error:', error);
+      Alert.alert('Error', error.message || 'Google sign-in failed');
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -106,28 +181,11 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister }: Prop
 
         <View style={styles.form}>
           <View style={styles.inputGroup}>
-            <Text style={[styles.label, { color: colors.text }]}>Username</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-              placeholder="Enter username"
-              placeholderTextColor={colors.textSecondary}
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </View>
-
-          <View style={styles.inputGroup}>
             <Text style={[styles.label, { color: colors.text }]}>Phone Number</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-              placeholder="+254712345678"
-              placeholderTextColor={colors.textSecondary}
+            <PhoneInput
               value={phone}
               onChangeText={setPhone}
-              keyboardType="phone-pad"
-              autoCapitalize="none"
+              placeholder="712345678"
             />
           </View>
 
@@ -143,14 +201,10 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister }: Prop
             />
           </View>
 
-          <Text style={[styles.hint, { color: colors.textSecondary }]}>
-            Enter either username or phone number, and your password
-          </Text>
-
           <TouchableOpacity
             style={[styles.button, { backgroundColor: colors.primary }, loading && styles.buttonDisabled]}
             onPress={handleLogin}
-            disabled={loading || (!username && !phone) || !password}
+            disabled={loading || !phone || !password}
           >
             {loading ? (
               <ActivityIndicator color={colors.primaryText} />
@@ -158,6 +212,31 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister }: Prop
               <Text style={[styles.buttonText, { color: colors.primaryText }]}>
                 Login
               </Text>
+            )}
+          </TouchableOpacity>
+
+          <View style={styles.divider}>
+            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+            <Text style={[styles.dividerText, { color: colors.textSecondary }]}>OR</Text>
+            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+          </View>
+
+          <TouchableOpacity
+            style={[styles.googleButton, { borderColor: colors.border }, googleLoading && styles.buttonDisabled]}
+            onPress={handleGoogleSignIn}
+            disabled={googleLoading || loading}
+          >
+            {googleLoading ? (
+              <ActivityIndicator color={colors.text} />
+            ) : (
+              <>
+                <View style={styles.googleIcon}>
+                  <Text style={styles.googleIconText}>G</Text>
+                </View>
+                <Text style={[styles.googleButtonText, { color: colors.text }]}>
+                  Continue with Google
+                </Text>
+              </>
             )}
           </TouchableOpacity>
 
@@ -241,6 +320,47 @@ const styles = StyleSheet.create({
   switchText: {
     fontSize: 14,
     fontWeight: '500',
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 20,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+  },
+  dividerText: {
+    marginHorizontal: 12,
+    fontSize: 12,
+    textTransform: 'uppercase',
+  },
+  googleButton: {
+    height: 50,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  googleIcon: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#4285F4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  googleIconText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  googleButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

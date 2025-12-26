@@ -2,15 +2,21 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  ScrollView,
   StyleSheet,
   RefreshControl,
   FlatList,
+  TouchableOpacity,
+  Alert,
+  Modal,
+  ScrollView,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
-import { CreditCard } from 'lucide-react-native';
+import { CreditCard, RefreshCw, ArrowDown, ArrowUp, X } from 'lucide-react-native';
 import { storage } from '../services/storage';
 import { smsService, LocalTransaction } from '../services/smsService';
 import { useTheme } from '../contexts/ThemeContext';
+import { dashboardAPI } from '../services/api';
 
 interface Props {
   apiKey?: string | null;
@@ -20,18 +26,95 @@ export default function TransactionsScreen({ apiKey }: Props) {
   const { colors } = useTheme();
   const [transactions, setTransactions] = useState<LocalTransaction[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [selectedTransaction, setSelectedTransaction] = useState<LocalTransaction | null>(null);
 
   useEffect(() => {
+    checkAuth();
     loadTransactions();
     const interval = setInterval(loadTransactions, 3000);
-    return () => clearInterval(interval);
+    
+    // Refresh when app comes to foreground
+    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'active') {
+        console.log('🔄 [TransactionsScreen] App came to foreground, refreshing transactions');
+        loadTransactions();
+      }
+    });
+    
+    return () => {
+      clearInterval(interval);
+      subscription.remove();
+    };
   }, []);
+
+  const checkAuth = async () => {
+    const token = await storage.getToken();
+    setIsAuthenticated(!!token);
+  };
 
   const loadTransactions = async () => {
     try {
-      const txs = await storage.getLocalTransactions();
+      // First load local transactions as fallback
+      let txs = await storage.getLocalTransactions();
+      
+      // Try to fetch from backend if authenticated (backend is source of truth)
+      const token = await storage.getToken();
+      if (token) {
+        try {
+          const response = await dashboardAPI.getTransactions({ limit: 100 });
+          if (response.success && response.data) {
+            const backendTxs = Array.isArray(response.data) 
+              ? response.data 
+              : response.data.transactions || [];
+            
+            // Convert backend transactions to LocalTransaction format
+            const convertedTxs: LocalTransaction[] = backendTxs.map((tx: any) => ({
+              id: tx.id || `backend_${tx.txnId}`,
+              txnId: tx.txnId || tx.id,
+              amount: tx.amount || 0,
+              sender: tx.sender || '',
+              sendFrom: tx.sendFrom || null,
+              sendTo: tx.sendTo || null,
+              bank: tx.bank || tx.receiverBank || null,
+              pattern: tx.pattern || 'Backend Pattern',
+              smsText: tx.smsText || '',
+              receivedAt: tx.createdAt || tx.receivedAt || new Date().toISOString(),
+              synced: true,
+              createdAt: tx.createdAt || new Date().toISOString(),
+            }));
+            
+            // Use backend transactions as primary source, merge with local unsynced ones
+            const backendTxnIds = new Set(convertedTxs.map(t => t.txnId));
+            const unsyncedLocalTxs = txs.filter(t => !t.synced && !backendTxnIds.has(t.txnId));
+            txs = [...convertedTxs, ...unsyncedLocalTxs];
+            
+            console.log(`📥 [TransactionsScreen] Fetched ${backendTxs.length} transactions from backend, total: ${txs.length}`);
+          } else {
+            console.warn('⚠️ [TransactionsScreen] Backend response not successful:', response);
+          }
+        } catch (error) {
+          console.error('❌ [TransactionsScreen] Error fetching transactions from backend:', error);
+          // Continue with local transactions if backend fetch fails
+        }
+      } else {
+        console.log('ℹ️ [TransactionsScreen] No auth token, using local transactions only');
+      }
+      
+      // Filter out withdrawals - only show deposits (positive amounts)
+      const beforeFilter = txs.length;
+      txs = txs.filter(t => t.amount > 0);
+      const afterFilter = txs.length;
+      
+      if (beforeFilter !== afterFilter) {
+        console.log(`🔍 [TransactionsScreen] Filtered out ${beforeFilter - afterFilter} withdrawal(s), showing ${afterFilter} deposit(s)`);
+      }
+      
       // Sort by most recent first
       txs.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
+      
+      console.log(`📊 [TransactionsScreen] Final transaction count: ${txs.length}`);
       setTransactions(txs);
     } catch (error) {
       console.error('Error loading transactions:', error);
@@ -48,7 +131,63 @@ export default function TransactionsScreen({ apiKey }: Props) {
         console.error('Error checking SMS:', error);
       }
     }
+    if (isAuthenticated) {
+      try {
+        await syncUnsyncedTransactions();
+      } catch (error) {
+        // Error already handled in syncUnsyncedTransactions
+      }
+    }
     setRefreshing(false);
+  };
+
+  const syncUnsyncedTransactions = async () => {
+    const token = await storage.getToken();
+    if (!token) {
+      Alert.alert('Not Signed In', 'Please sign in to sync transactions');
+      return;
+    }
+
+    setSyncing(true);
+    try {
+      const unsyncedCount = transactions.filter(t => !t.synced).length;
+      if (unsyncedCount === 0) {
+        Alert.alert('All Synced', 'All transactions are already synced to the backend');
+        return;
+      }
+
+      const { testAPIConnection } = await import('../services/api');
+      const connectionTest = await testAPIConnection();
+      if (!connectionTest.success) {
+        Alert.alert(
+          'Connection Error',
+          connectionTest.message + '\n\nPlease check:\n- Backend is running\n- Correct API URL in config\n- Network connection'
+        );
+        return;
+      }
+
+      await smsService.syncAllUnsyncedTransactions();
+      
+      // Wait a moment for backend to process, then refresh multiple times to ensure we get the data
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      await loadTransactions();
+      
+      // Refresh again after another short delay to ensure backend has processed
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      await loadTransactions();
+      
+      console.log('✅ [TransactionsScreen] Sync complete, transactions refreshed');
+      Alert.alert('Success', `Successfully synced ${unsyncedCount} transaction(s) to the backend!`);
+    } catch (error: any) {
+      console.error('Error syncing transactions:', error);
+      const errorMsg = error.response?.data?.error || error.message || 'Failed to sync transactions';
+      Alert.alert(
+        'Sync Failed',
+        errorMsg + '\n\nCheck console logs for details.'
+      );
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const formatDate = (dateString: string) => {
@@ -71,80 +210,114 @@ export default function TransactionsScreen({ apiKey }: Props) {
     return date.toLocaleDateString();
   };
 
+  // Extract sender name from SMS text if not already captured
+  const extractSenderFromSMS = (smsText: string): string | null => {
+    if (!smsText) return null;
+    
+    const senderPatterns = [
+      // "from NAME (phone)" or "from NAME"
+      /from\s+([A-Za-z\s]+?)(?:\s*\(|\s+on\s+|\s+at\s+|,|\.|$)/i,
+      // "received ... from NAME"
+      /received\s+.*?from\s+([A-Za-z\s]+?)(?:\s*\(|\s+on\s+|\s+at\s+|,|\.|$)/i,
+      // "credited ... from NAME"
+      /credited\s+.*?from\s+([A-Za-z\s]+?)(?:\s*\(|\s+on\s+|\s+at\s+|,|\.|$)/i,
+    ];
+    
+    for (const pattern of senderPatterns) {
+      const match = smsText.match(pattern);
+      if (match && match[1]) {
+        return match[1].trim();
+      }
+    }
+    return null;
+  };
+
+  const getDisplayName = (item: LocalTransaction): string => {
+    // First try to extract sender from SMS text if sender is Unknown or empty
+    if ((!item.sender || item.sender === 'Unknown' || item.sender === '') && item.smsText) {
+      const extractedSender = extractSenderFromSMS(item.smsText);
+      if (extractedSender) return extractedSender;
+    }
+    
+    // Prefer sender name (if valid), then bank name, then sendFrom, then pattern name
+    if (item.sender && item.sender !== 'Unknown' && item.sender !== '') return item.sender;
+    if (item.bank && item.bank !== 'Unknown') return item.bank;
+    if (item.sendFrom) return item.sendFrom;
+    if (item.pattern && item.pattern !== 'Institution Pattern') return item.pattern;
+    return 'Transaction';
+  };
+
   const renderTransaction = ({ item }: { item: LocalTransaction }) => {
     const isIncome = item.amount > 0;
+    const displayName = getDisplayName(item);
     
     return (
-      <View style={[styles.transactionCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <View style={styles.transactionHeader}>
-          <View style={styles.transactionHeaderLeft}>
-            <Text style={[styles.transactionBank, { color: colors.text }]}>
-              {item.bank || item.sender || 'Transaction'}
-            </Text>
-            <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>
-              {formatDate(item.receivedAt)}
-            </Text>
-          </View>
-          {item.synced && (
-            <View style={[styles.syncedBadge, { backgroundColor: colors.primary + '20' }]}>
-              <Text style={[styles.syncedText, { color: colors.primary }]}>✓ Synced</Text>
+      <TouchableOpacity 
+        style={styles.transactionItem}
+        onPress={() => setSelectedTransaction(item)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.transactionLeft}>
+            <View style={[styles.transactionIcon, { backgroundColor: isIncome ? colors.lightGreen : '#fee2e2' }]}>
+                {isIncome ? (
+                <ArrowDown size={20} color={colors.darkGreen} />
+                ) : (
+                <ArrowUp size={20} color="#ef4444" />
+                )}
             </View>
-          )}
+            <View style={styles.transactionInfo}>
+                <Text style={[styles.transactionBank, { color: colors.text }]}>
+                {displayName}
+                </Text>
+                <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>
+                {formatDate(item.receivedAt)}
+                </Text>
+            </View>
         </View>
-
-        <View style={styles.transactionAmountRow}>
-          <Text style={[styles.amountValue, { color: isIncome ? colors.primary : colors.text }]}>
-            {isIncome ? '+' : '-'}${Math.abs(item.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </Text>
-          <Text style={[styles.transactionId, { color: colors.textSecondary }]}>
-            Ref: {item.txnId}
-          </Text>
+        <View style={styles.transactionRight}>
+            <Text style={[styles.transactionAmount, { color: isIncome ? colors.darkGreen : '#ef4444' }]}>
+                {isIncome ? '+' : '-'}${Math.abs(item.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </Text>
+            {!item.synced && (
+                <View style={styles.unsyncedDot} />
+            )}
         </View>
-
-        {(item.sendFrom || item.sendTo || item.sender) && (
-          <View style={styles.transactionDetails}>
-            {item.sendFrom && (
-              <View style={styles.detailRow}>
-                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>From:</Text>
-                <Text style={[styles.detailValue, { color: colors.text }]}>{item.sendFrom}</Text>
-              </View>
-            )}
-            {item.sendTo && (
-              <View style={styles.detailRow}>
-                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>To:</Text>
-                <Text style={[styles.detailValue, { color: colors.text }]}>{item.sendTo}</Text>
-              </View>
-            )}
-            {item.sender && (
-              <View style={styles.detailRow}>
-                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Sender:</Text>
-                <Text style={[styles.detailValue, { color: colors.text }]}>{item.sender}</Text>
-              </View>
-            )}
-          </View>
-        )}
-      </View>
+      </TouchableOpacity>
     );
   };
 
+  const unsyncedCount = transactions.filter(t => !t.synced).length;
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Text style={[styles.title, { color: colors.text }]}>Transactions</Text>
-        <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-          {transactions.length} transaction{transactions.length !== 1 ? 's' : ''}
-        </Text>
+      <View style={styles.header}>
+        <View style={styles.headerLeft}>
+          <Text style={[styles.title, { color: colors.text }]}>Transactions</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+            {transactions.length} transaction{transactions.length !== 1 ? 's' : ''}
+          </Text>
+        </View>
+        {isAuthenticated && unsyncedCount > 0 && (
+          <TouchableOpacity
+            onPress={syncUnsyncedTransactions}
+            disabled={syncing}
+            style={[styles.syncButton, { backgroundColor: colors.primary + '10' }]}
+          >
+            <RefreshCw 
+              size={14} 
+              color={colors.primary} 
+              style={syncing ? { transform: [{ rotate: '180deg' }] } : undefined}
+            />
+            <Text style={[styles.syncButtonText, { color: colors.primary }]}>
+              Sync ({unsyncedCount})
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {transactions.length === 0 ? (
         <View style={styles.emptyState}>
-          <View style={{ marginBottom: 16 }}>
-            <CreditCard size={64} color={colors.textSecondary} />
-          </View>
-          <Text style={[styles.emptyText, { color: colors.text }]}>No transactions yet</Text>
-          <Text style={[styles.emptyHint, { color: colors.textSecondary }]}>
-            Transactions will appear here when SMS messages are detected
-          </Text>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No transactions yet</Text>
         </View>
       ) : (
         <FlatList
@@ -155,8 +328,122 @@ export default function TransactionsScreen({ apiKey }: Props) {
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
           }
+          showsVerticalScrollIndicator={false}
         />
       )}
+
+      {/* Transaction Detail Modal */}
+      <Modal
+        visible={selectedTransaction !== null}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setSelectedTransaction(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Transaction Details</Text>
+              <TouchableOpacity
+                onPress={() => setSelectedTransaction(null)}
+                style={styles.closeButton}
+              >
+                <X size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            
+            {selectedTransaction && (() => {
+              // Get the best sender name for display
+              const getSenderForDisplay = () => {
+                if (selectedTransaction.sender && selectedTransaction.sender !== 'Unknown' && selectedTransaction.sender !== '') {
+                  return selectedTransaction.sender;
+                }
+                if (selectedTransaction.smsText) {
+                  const extracted = extractSenderFromSMS(selectedTransaction.smsText);
+                  if (extracted) return extracted;
+                }
+                return null;
+              };
+              const displaySender = getSenderForDisplay();
+              
+              return (
+              <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Amount</Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>
+                    ${selectedTransaction.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </Text>
+                </View>
+
+                {selectedTransaction.bank && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Bank/Institution</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.bank}</Text>
+                  </View>
+                )}
+
+                {displaySender && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Sender</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{displaySender}</Text>
+                  </View>
+                )}
+
+                {selectedTransaction.sendFrom && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>From (Phone)</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.sendFrom}</Text>
+                  </View>
+                )}
+
+                {selectedTransaction.sendTo && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>To</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.sendTo}</Text>
+                  </View>
+                )}
+
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Transaction ID</Text>
+                  <Text style={[styles.detailValue, { color: colors.text, fontFamily: 'monospace' }]}>
+                    {selectedTransaction.txnId}
+                  </Text>
+                </View>
+
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Date & Time</Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>
+                    {new Date(selectedTransaction.receivedAt).toLocaleString()}
+                  </Text>
+                </View>
+
+                {selectedTransaction.pattern && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Pattern</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.pattern}</Text>
+                  </View>
+                )}
+
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Status</Text>
+                  <Text style={[styles.detailValue, { color: selectedTransaction.synced ? colors.primary : '#ef4444' }]}>
+                    {selectedTransaction.synced ? 'Synced' : 'Not Synced'}
+                  </Text>
+                </View>
+
+                {selectedTransaction.smsText && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Original SMS</Text>
+                    <View style={[styles.smsTextContainer, { backgroundColor: colors.background }]}>
+                      <Text style={[styles.smsText, { color: colors.text }]}>{selectedTransaction.smsText}</Text>
+                    </View>
+                  </View>
+                )}
+              </ScrollView>
+              );
+            })()}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -166,39 +453,63 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     padding: 20,
     paddingTop: 60,
-    borderBottomWidth: 1,
+    paddingBottom: 10,
+  },
+  headerLeft: {
+    flex: 1,
   },
   title: {
     fontSize: 28,
-    fontWeight: 'bold',
+    fontWeight: '700',
+    letterSpacing: -0.5,
     marginBottom: 4,
   },
   subtitle: {
     fontSize: 14,
   },
+  syncButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  syncButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
   listContent: {
-    padding: 16,
+    padding: 20,
+    paddingTop: 10,
   },
-  transactionCard: {
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  transactionHeader: {
+  transactionItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
+    alignItems: 'center',
+    paddingVertical: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#f0f0f0',
   },
-  transactionHeaderLeft: {
+  transactionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  transactionIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  transactionInfo: {
     flex: 1,
   },
   transactionBank: {
@@ -209,47 +520,19 @@ const styles = StyleSheet.create({
   transactionTime: {
     fontSize: 12,
   },
-  syncedBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
+  transactionRight: {
+      alignItems: 'flex-end',
+      gap: 4,
   },
-  syncedText: {
-    fontSize: 10,
+  transactionAmount: {
+    fontSize: 16,
     fontWeight: '600',
   },
-  transactionAmountRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-    marginBottom: 12,
-  },
-  amountValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-  },
-  transactionId: {
-    fontSize: 12,
-    fontFamily: 'monospace',
-  },
-  transactionDetails: {
-    gap: 6,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-  },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  detailLabel: {
-    fontSize: 13,
-    fontWeight: '500',
-    width: 60,
-  },
-  detailValue: {
-    fontSize: 13,
-    flex: 1,
+  unsyncedDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: '#ef4444',
   },
   emptyState: {
     flex: 1,
@@ -258,13 +541,59 @@ const styles = StyleSheet.create({
     padding: 40,
   },
   emptyText: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  emptyHint: {
     fontSize: 14,
-    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '90%',
+    paddingBottom: 40,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  closeButton: {
+    padding: 4,
+  },
+  modalBody: {
+    padding: 20,
+  },
+  detailSection: {
+    marginBottom: 20,
+  },
+  detailLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  detailValue: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  smsTextContainer: {
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  smsText: {
+    fontSize: 14,
     lineHeight: 20,
   },
 });

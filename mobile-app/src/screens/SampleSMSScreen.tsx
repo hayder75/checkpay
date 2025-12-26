@@ -159,6 +159,21 @@ export default function SampleSMSScreen({ institution, countryCode, onPatternCre
         await storage.setCountryCode(countryCode);
         await storage.setOnboardingCompleted(true);
 
+        // Refresh patterns from backend to get the newly created one
+        try {
+          const { patternsAPI } = await import('../services/api');
+          const patternsResponse = await patternsAPI.getAll();
+          if (patternsResponse.success && patternsResponse.data) {
+            const updatedPatterns = Array.isArray(patternsResponse.data) 
+              ? patternsResponse.data 
+              : [];
+            // Patterns are now always fetched from backend, no local storage
+            console.log(`✅ Refreshed ${updatedPatterns.length} patterns after creating institution pattern`);
+          }
+        } catch (error) {
+          console.error('Error refreshing patterns:', error);
+        }
+
         // Immediately add the newly created pattern to local storage
         if (response.data.pattern) {
           const newPattern = response.data.pattern;

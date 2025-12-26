@@ -49,7 +49,7 @@ export default function ApiKeyScreen({ onApiKeySet }: Props) {
       setApiKey(key);
       const response = await fetchPatterns(key);
       if (response.success && response.data.patterns) {
-        await storage.setPatterns(response.data.patterns);
+        // Patterns are now always fetched from backend, no local storage
         await installationService.ensureInstallationDate();
         onApiKeySet(key, response.data.patterns);
       }
@@ -86,7 +86,7 @@ export default function ApiKeyScreen({ onApiKeySet }: Props) {
         
         // Save patterns
         const patterns = response.data.patterns || [];
-        await storage.setPatterns(patterns);
+        // Patterns are now always fetched from backend, no local storage
         
         onApiKeySet(apiKey, patterns);
         Alert.alert('Success', `Loaded ${patterns.length} pattern(s)`);

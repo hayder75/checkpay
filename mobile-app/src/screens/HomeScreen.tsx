@@ -7,19 +7,24 @@ import {
   Dimensions,
   TouchableOpacity,
   Modal,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
-import { ArrowDown, ArrowUp, ChevronDown } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, ChevronDown, User } from 'lucide-react-native';
+import { LineChart } from 'react-native-chart-kit';
 import { useTheme } from '../contexts/ThemeContext';
 import { storage } from '../services/storage';
 import { smsService, LocalTransaction } from '../services/smsService';
+import { dashboardAPI } from '../services/api';
 
 interface Props {
   apiKey?: string | null;
+  onNavigateToProfile?: () => void;
 }
 
 const { width } = Dimensions.get('window');
 
-export default function HomeScreen({ apiKey }: Props) {
+export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
   const { colors } = useTheme();
   const [transactions, setTransactions] = useState<LocalTransaction[]>([]);
   const [isMonitoring, setIsMonitoring] = useState(false);
@@ -41,7 +46,19 @@ export default function HomeScreen({ apiKey }: Props) {
   useEffect(() => {
     loadData();
     const interval = setInterval(loadData, 5000);
-    return () => clearInterval(interval);
+    
+    // Refresh when app comes to foreground
+    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'active') {
+        console.log('🔄 [HomeScreen] App came to foreground, refreshing transactions');
+        loadData();
+      }
+    });
+    
+    return () => {
+      clearInterval(interval);
+      subscription.remove();
+    };
   }, [timeFilter]);
 
   const loadData = async () => {
@@ -49,7 +66,97 @@ export default function HomeScreen({ apiKey }: Props) {
       const storedUser = await storage.getUser();
       setUser(storedUser);
       
-      const txs = await storage.getLocalTransactions();
+      // First load local transactions as fallback
+      let txs = await storage.getLocalTransactions();
+      
+      // Try to fetch from backend if authenticated (backend is source of truth)
+      const token = await storage.getToken();
+      if (token) {
+        try {
+          console.log('🔄 [HomeScreen] Fetching transactions from backend...');
+          const response = await dashboardAPI.getTransactions({ limit: 100 });
+          console.log('📥 [HomeScreen] Backend response:', {
+            success: response.success,
+            hasData: !!response.data,
+            dataType: Array.isArray(response.data) ? 'array' : typeof response.data,
+            dataKeys: response.data && typeof response.data === 'object' ? Object.keys(response.data) : 'N/A',
+            dataLength: Array.isArray(response.data) ? response.data.length : 
+                       (response.data?.transactions ? response.data.transactions.length : 'N/A'),
+          });
+          
+          if (response.success && response.data) {
+            // Backend returns { success: true, data: { transactions: [...], pagination: {...} } }
+            let backendTxs: any[] = [];
+            
+            if (Array.isArray(response.data)) {
+              backendTxs = response.data;
+            } else if (response.data.transactions && Array.isArray(response.data.transactions)) {
+              backendTxs = response.data.transactions;
+            } else if (response.data.data && response.data.data.transactions && Array.isArray(response.data.data.transactions)) {
+              backendTxs = response.data.data.transactions;
+            }
+            
+            console.log(`📊 [HomeScreen] Extracted ${backendTxs.length} transactions from backend response`);
+            
+            console.log(`📊 [HomeScreen] Processing ${backendTxs.length} backend transactions`);
+            
+            // Convert backend transactions to LocalTransaction format
+            const convertedTxs: LocalTransaction[] = backendTxs.map((tx: any) => ({
+              id: tx.id || `backend_${tx.txnId}`,
+              txnId: tx.txnId || tx.id,
+              amount: tx.amount || 0,
+              sender: tx.sender || '',
+              sendFrom: tx.sendFrom || null,
+              sendTo: tx.sendTo || null,
+              bank: tx.bank || tx.receiverBank || null,
+              pattern: tx.pattern || 'Backend Pattern',
+              smsText: tx.smsText || '',
+              receivedAt: tx.createdAt || tx.receivedAt || new Date().toISOString(),
+              synced: true,
+              createdAt: tx.createdAt || new Date().toISOString(),
+            }));
+            
+            // Use backend transactions as primary source, merge with local unsynced ones
+            const backendTxnIds = new Set(convertedTxs.map(t => t.txnId));
+            const unsyncedLocalTxs = txs.filter(t => !t.synced && !backendTxnIds.has(t.txnId));
+            txs = [...convertedTxs, ...unsyncedLocalTxs];
+            
+            console.log(`✅ [HomeScreen] Fetched ${backendTxs.length} transactions from backend, ${unsyncedLocalTxs.length} unsynced local, total: ${txs.length}`);
+          } else {
+            console.warn('⚠️ [HomeScreen] Backend response not successful:', {
+              success: response.success,
+              error: response.error,
+              message: response.message,
+              data: response.data,
+            });
+          }
+        } catch (error: any) {
+          console.error('❌ [HomeScreen] Error fetching transactions from backend:', {
+            message: error.message,
+            response: error.response?.data,
+            status: error.response?.status,
+            code: error.code,
+            stack: error.stack,
+          });
+          // Continue with local transactions if backend fetch fails
+        }
+      } else {
+        console.log('ℹ️ [HomeScreen] No auth token, using local transactions only');
+      }
+      
+      // Filter out withdrawals - only show deposits (positive amounts)
+      const beforeFilter = txs.length;
+      txs = txs.filter(t => t.amount > 0);
+      const afterFilter = txs.length;
+      
+      if (beforeFilter !== afterFilter) {
+        console.log(`🔍 [HomeScreen] Filtered out ${beforeFilter - afterFilter} withdrawal(s), showing ${afterFilter} deposit(s)`);
+      }
+      
+      // Sort by most recent first
+      txs.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
+      
+      console.log(`📊 [HomeScreen] Final transaction count: ${txs.length}`);
       setTransactions(txs);
       setIsMonitoring(smsService.isActive());
 
@@ -91,11 +198,14 @@ export default function HomeScreen({ apiKey }: Props) {
     let daysToShow = 7;
     
     if (timeFilter === '1d') {
-      daysToShow = 1;
+      daysToShow = 1; // For 1d, maybe show hours? Keeping simple for now
     } else if (timeFilter === '30d') {
-      daysToShow = 30;
+      daysToShow = 7; // Show last 7 days even for 30d filter to keep graph clean, or aggregate
     }
     
+    const dataPoints = [];
+    const labels = [];
+
     for (let i = daysToShow - 1; i >= 0; i--) {
       const date = new Date(now);
       date.setDate(date.getDate() - i);
@@ -111,20 +221,31 @@ export default function HomeScreen({ apiKey }: Props) {
       
       const dayTotal = dayTransactions.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
       
-      days.push({
-        label: timeFilter === '30d' 
-          ? date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-          : date.toLocaleDateString('en-US', { weekday: 'short' }),
-        value: dayTotal,
-        date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      });
+      dataPoints.push(dayTotal);
+      labels.push(date.toLocaleDateString('en-US', { weekday: 'short' }));
     }
     
-    return days;
+    // If no data, show flat line
+    if (dataPoints.every(val => val === 0)) {
+         return {
+            labels: labels,
+            datasets: [{ data: new Array(labels.length).fill(0) }]
+        };
+    }
+
+    return {
+        labels: labels,
+        datasets: [
+            {
+                data: dataPoints,
+                color: (opacity = 1) => colors.primary,
+                strokeWidth: 2
+            }
+        ]
+    };
   };
 
   const chartData = getChartData();
-  const maxValue = Math.max(...chartData.map((d) => Math.abs(d.value)), 1);
 
   const getUserName = () => {
     if (user?.username) return user.username;
@@ -132,38 +253,139 @@ export default function HomeScreen({ apiKey }: Props) {
     return 'User';
   };
 
+  // Extract sender name from SMS text if not already captured
+  const extractSenderFromSMS = (smsText: string): string | null => {
+    if (!smsText) return null;
+    
+    const senderPatterns = [
+      // "from NAME (phone)" or "from NAME"
+      /from\s+([A-Za-z\s]+?)(?:\s*\(|\s+on\s+|\s+at\s+|,|\.|$)/i,
+      // "received ... from NAME"
+      /received\s+.*?from\s+([A-Za-z\s]+?)(?:\s*\(|\s+on\s+|\s+at\s+|,|\.|$)/i,
+      // "credited ... from NAME"
+      /credited\s+.*?from\s+([A-Za-z\s]+?)(?:\s*\(|\s+on\s+|\s+at\s+|,|\.|$)/i,
+    ];
+    
+    for (const pattern of senderPatterns) {
+      const match = smsText.match(pattern);
+      if (match && match[1]) {
+        return match[1].trim();
+      }
+    }
+    return null;
+  };
+
+  const getDisplayName = (item: LocalTransaction): string => {
+    // First try to extract sender from SMS text if sender is Unknown or empty
+    if ((!item.sender || item.sender === 'Unknown' || item.sender === '') && item.smsText) {
+      const extractedSender = extractSenderFromSMS(item.smsText);
+      if (extractedSender) return extractedSender;
+    }
+    
+    // Prefer sender name (if valid), then bank name, then sendFrom, then pattern name
+    if (item.sender && item.sender !== 'Unknown' && item.sender !== '') return item.sender;
+    if (item.bank && item.bank !== 'Unknown') return item.bank;
+    if (item.sendFrom) return item.sendFrom;
+    if (item.pattern && item.pattern !== 'Institution Pattern') return item.pattern;
+    return 'Transaction';
+  };
+
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Header */}
-      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} showsVerticalScrollIndicator={false}>
+      {/* Header (Separate) */}
+      <View style={styles.header}>
         <View>
           <Text style={[styles.greeting, { color: colors.textSecondary }]}>Welcome Back</Text>
           <Text style={[styles.title, { color: colors.text }]}>{getUserName()}</Text>
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: isMonitoring ? colors.primary + '20' : '#ef444420' }]}>
-          <View style={[styles.statusDot, { backgroundColor: isMonitoring ? colors.primary : '#ef4444' }]} />
-          <Text style={[styles.statusText, { color: isMonitoring ? colors.primary : '#ef4444' }]}>
-            {isMonitoring ? 'Active' : 'Inactive'}
-          </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={[styles.statusBadge, { backgroundColor: isMonitoring ? colors.lightGreen : '#fee2e2' }]}>
+            <View style={[styles.statusDot, { backgroundColor: isMonitoring ? colors.darkGreen : '#ef4444' }]} />
+            <Text style={[styles.statusText, { color: isMonitoring ? colors.darkGreen : '#ef4444' }]}>
+              {isMonitoring ? 'Active' : 'Inactive'}
+            </Text>
+          </View>
+          <TouchableOpacity 
+            onPress={onNavigateToProfile}
+            style={{ 
+              padding: 8, 
+              backgroundColor: colors.surface, 
+              borderRadius: 20,
+              borderWidth: 1,
+              borderColor: colors.border
+            }}
+          >
+            <User size={20} color={colors.text} />
+          </TouchableOpacity>
         </View>
       </View>
 
-      {/* Payment Card with Time Filter */}
-      <View style={styles.statsContainer}>
-        <View style={[styles.statCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <View style={styles.paymentHeader}>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Payment</Text>
-            <TouchableOpacity
-              style={[styles.dropdownButton, { backgroundColor: colors.background, borderColor: colors.border }]}
-              onPress={() => setShowDropdown(!showDropdown)}
-            >
-              <Text style={[styles.dropdownText, { color: colors.text }]}>{getFilterLabel()}</Text>
-              <ChevronDown size={16} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
-          <Text style={[styles.statValue, { color: colors.text }]}>
-            ${paymentTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      {/* Unified Card (Payment + Graph) */}
+      <View style={styles.unifiedCard}>
+        {/* Background Pattern */}
+        <View style={styles.cardPattern} />
+        <View style={styles.cardPattern2} />
+
+        {/* Payment Info */}
+        <View style={styles.paymentSection}>
+          <View style={styles.paymentHeader}><Text style={styles.statValue}>
+              ${paymentTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </Text>
+              {/* <Text style={styles.statLabel}>Total Payment</Text> */}
+              <TouchableOpacity
+                  style={styles.dropdownButton}
+                  onPress={() => setShowDropdown(!showDropdown)}
+              >
+                  <Text style={styles.dropdownText}>{getFilterLabel()}</Text>
+                  <ChevronDown size={16} color="#fff" />
+              </TouchableOpacity>
+          </View>
+          
+        </View>
+
+        {/* Analytics Chart */}
+        <View style={styles.chartContainer}>
+          <LineChart
+              data={chartData}
+              width={width - 24} // Width minus margins
+              height={140}
+              yAxisLabel=""
+              yAxisSuffix=""
+              withHorizontalLabels={false}
+              withVerticalLabels={false}
+              chartConfig={{
+                  backgroundColor: '#1C1C1E',
+                  backgroundGradientFrom: '#1C1C1E',
+                  backgroundGradientTo: '#1C1C1E',
+                  decimalPlaces: 0,
+                  color: (opacity = 1) => `rgba(255, 107, 0, ${opacity})`, // Orange accent
+                  labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                  style: {
+                      borderRadius: 0
+                  },
+                  propsForDots: {
+                      r: "0",
+                  },
+                  propsForBackgroundLines: {
+                      strokeWidth: 0,
+                  },
+                  fillShadowGradientFrom: '#FF6B00',
+                  fillShadowGradientTo: '#FF6B00',
+                  fillShadowGradientFromOpacity: 0.2,
+                  fillShadowGradientToOpacity: 0,
+              }}
+              bezier
+              style={{
+                  marginVertical: 0,
+                  paddingRight: 0,
+                  paddingLeft: 0,
+              }}
+              withInnerLines={false}
+              withOuterLines={false}
+              withVerticalLines={false}
+              withHorizontalLines={false}
+              withDots={false}
+          />
         </View>
       </View>
 
@@ -186,8 +408,7 @@ export default function HomeScreen({ apiKey }: Props) {
                   key={option.value}
                   style={[
                     styles.dropdownItem,
-                    timeFilter === option.value && { backgroundColor: colors.primary + '20' },
-                    index < timeFilterOptions.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border },
+                    timeFilter === option.value && { backgroundColor: colors.primary + '10' },
                   ]}
                   onPress={() => {
                     setTimeFilter(option.value);
@@ -205,48 +426,12 @@ export default function HomeScreen({ apiKey }: Props) {
                   >
                     {option.label}
                   </Text>
-                  {timeFilter === option.value && (
-                    <View style={[styles.checkmark, { backgroundColor: colors.primary }]} />
-                  )}
                 </TouchableOpacity>
               ))}
             </View>
           </View>
         </TouchableOpacity>
       </Modal>
-
-      {/* Analytics Chart */}
-      <View style={[styles.chartSection, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>
-          {timeFilter === '1d' ? 'Today' : timeFilter === '7d' ? 'Last 7 Days' : 'Last 30 Days'}
-        </Text>
-        <View style={styles.chartContainer}>
-          {chartData.map((day, index) => {
-            const height = (Math.abs(day.value) / maxValue) * 120;
-            const isPositive = day.value >= 0;
-            
-            return (
-              <View key={index} style={styles.chartBarContainer}>
-                <View style={styles.chartBarWrapper}>
-                  <View
-                    style={[
-                      styles.chartBar,
-                      {
-                        height: height || 2,
-                        backgroundColor: isPositive ? colors.primary : '#ef4444',
-                      },
-                    ]}
-                  />
-                </View>
-                <Text style={[styles.chartLabel, { color: colors.textSecondary }]}>{day.label}</Text>
-                <Text style={[styles.chartValue, { color: colors.text }]}>
-                  ${Math.abs(day.value).toFixed(0)}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
-      </View>
 
       {/* Recent Transactions */}
       <View style={styles.recentSection}>
@@ -256,26 +441,27 @@ export default function HomeScreen({ apiKey }: Props) {
         </View>
         {transactions.slice(0, 5).map((tx) => {
           const isIncome = tx.amount > 0;
+          const displayName = getDisplayName(tx);
           return (
             <View key={tx.id} style={[styles.transactionItem, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <View style={styles.transactionLeft}>
-                <View style={[styles.transactionIcon, { backgroundColor: isIncome ? colors.primary + '20' : '#ef444420' }]}>
+                <View style={[styles.transactionIcon, { backgroundColor: isIncome ? colors.lightGreen + '20' : '#fee2e2' }]}>
                   {isIncome ? (
-                    <ArrowDown size={20} color={colors.primary} />
+                    <ArrowDown size={20} color={colors.darkGreen} />
                   ) : (
                     <ArrowUp size={20} color="#ef4444" />
                   )}
                 </View>
                 <View style={styles.transactionInfo}>
                   <Text style={[styles.transactionBank, { color: colors.text }]}>
-                    {tx.bank || tx.sender || 'Transaction'}
+                    {displayName}
                   </Text>
                   <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>
                     {new Date(tx.receivedAt).toLocaleDateString()}
                   </Text>
                 </View>
               </View>
-              <Text style={[styles.transactionAmount, { color: isIncome ? colors.primary : '#ef4444' }]}>
+              <Text style={[styles.transactionAmount, { color: isIncome ? colors.darkGreen : '#ef4444' }]}>
                 {isIncome ? '+' : '-'}${Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </Text>
             </View>
@@ -299,171 +485,175 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: 24,
     paddingTop: 60,
-    borderBottomWidth: 1,
+    paddingBottom: 20,
   },
   greeting: {
     fontSize: 14,
-    marginBottom: 4,
+    marginBottom: 0,
+    fontWeight: '500',
+    opacity: 0.6,
+    // textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   title: {
-    fontSize: 28,
-    fontWeight: 'bold',
+    fontSize: 24,
+    fontWeight: '700',
+    letterSpacing: -0.5,
   },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 16,
   },
   statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     marginRight: 6,
   },
   statusText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
   },
-  statsContainer: {
-    padding: 20,
-    gap: 12,
+  unifiedCard: {
+    marginHorizontal: 12,
+    marginBottom: 24,
+    borderRadius: 32,
+    paddingTop: 18,
+    paddingBottom: 0,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 10,
+    overflow: 'hidden',
+    backgroundColor: '#1C1C1E', // Dark background
   },
-  statCard: {
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
+  cardPattern: {
+    position: 'absolute',
+    top: -50,
+    right: -50,
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: '#FF6B00', // Orange accent
+    opacity: 0.05, // Subtle pattern
   },
-  statLabel: {
-    fontSize: 14,
-    marginBottom: 8,
+  cardPattern2: {
+    position: 'absolute',
+    bottom: -30,
+    left: -30,
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    backgroundColor: '#FF6B00',
+    opacity: 0.03,
   },
-  statValue: {
-    fontSize: 32,
-    fontWeight: 'bold',
+  paymentSection: {
+    paddingHorizontal: 24,
+    marginBottom: 1, // Reduced gap
   },
   paymentHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 4, // Reduced gap
+  },
+  statLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    opacity: 0.8,
+    color: '#fff',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  statValue: {
+    fontSize: 36,
+    fontWeight: '700',
+    letterSpacing: -1,
+    color: '#fff',
   },
   dropdownButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    gap: 8,
+    paddingHorizontal: 14, // Increased size
+    paddingVertical: 8, // Increased size
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    gap: 6,
   },
   dropdownText: {
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: 13, // Increased size
+    fontWeight: '600',
+    color: '#fff',
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
   },
   dropdownContainer: {
     position: 'absolute',
-    top: 180,
-    right: 20,
+    top: 220,
+    right: 48,
     alignItems: 'flex-end',
   },
   dropdownMenu: {
     borderRadius: 12,
     borderWidth: 1,
-    minWidth: 150,
+    minWidth: 140, // Increased width
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
     elevation: 8,
     overflow: 'hidden',
+    padding: 4,
   },
   dropdownItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
+    borderRadius: 8,
   },
   dropdownItemText: {
     fontSize: 14,
   },
-  checkmark: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  chartSection: {
-    margin: 20,
-    marginTop: 0,
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 16,
-  },
   chartContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'flex-end',
-    height: 180,
-  },
-  chartBarContainer: {
-    flex: 1,
     alignItems: 'center',
-  },
-  chartBarWrapper: {
-    height: 120,
-    justifyContent: 'flex-end',
-    width: '100%',
-    alignItems: 'center',
-  },
-  chartBar: {
-    width: '80%',
-    borderRadius: 4,
-    minHeight: 2,
-  },
-  chartLabel: {
-    fontSize: 10,
-    marginTop: 8,
-  },
-  chartValue: {
-    fontSize: 10,
-    marginTop: 4,
-    fontWeight: '600',
+    marginTop: 10,
+    marginBottom: 0,
   },
   recentSection: {
-    padding: 20,
-    paddingTop: 0,
+    paddingHorizontal: 24,
+    paddingBottom: 40,
   },
   recentHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: -0.5,
   },
   seeAll: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
   transactionItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: 16,
     borderWidth: 1,
+    borderColor: 'transparent',
   },
   transactionLeft: {
     flexDirection: 'row',
@@ -482,16 +672,17 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   transactionBank: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   transactionTime: {
     fontSize: 12,
+    opacity: 0.5,
   },
   transactionAmount: {
-    fontSize: 16,
-    fontWeight: 'bold',
+    fontSize: 15,
+    fontWeight: '700',
   },
   emptyState: {
     padding: 40,
@@ -499,6 +690,7 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
+    fontStyle: 'italic',
   },
 });
 

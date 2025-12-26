@@ -8,61 +8,180 @@ import {
   TouchableOpacity,
   Alert,
   FlatList,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
-import { Building2, X } from 'lucide-react-native';
+import { Building2, X, Plus, RefreshCw, Sparkles } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { storage } from '../services/storage';
-import { getBanksForCountryCode } from '../utils/countries';
+import { patternsAPI, institutionPatternsAPI } from '../services/api';
 
 interface Props {
   apiKey?: string | null;
+  onNavigateToInstitutionBuilder?: () => void;
 }
 
-export default function BanksScreen({ apiKey }: Props) {
+export default function BanksScreen({ apiKey, onNavigateToInstitutionBuilder }: Props) {
   const { colors } = useTheme();
   const [banks, setBanks] = useState<string[]>([]);
+  const [availableInstitutions, setAvailableInstitutions] = useState<string[]>([]);
   const [newBank, setNewBank] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     loadBanks();
+    loadInstitutionsFromBackend();
   }, []);
 
   const loadBanks = async () => {
     try {
       const selectedBanks = await storage.getSelectedBanks();
-      const countryCode = await storage.getCountryCode();
-      
-      // If no selected banks, load from country defaults
-      if (selectedBanks.length === 0 && countryCode) {
-        const countryBanks = getBanksForCountryCode(countryCode);
-        setBanks(countryBanks);
-        await storage.setSelectedBanks(countryBanks);
-      } else {
-        setBanks(selectedBanks);
-      }
+      setBanks(selectedBanks);
     } catch (error) {
       console.error('Error loading banks:', error);
     }
   };
 
+  const loadInstitutionsFromBackend = async () => {
+    try {
+      setLoading(true);
+      const countryCode = await storage.getCountryCode();
+      const token = await storage.getToken();
+      
+      if (!token) {
+        console.warn('⚠️ [BanksScreen] No authentication token, cannot load institutions from backend');
+        setLoading(false);
+        return;
+      }
+
+      const institutionsSet = new Set<string>();
+      let loadedFromUserPatterns = 0;
+      let loadedFromInstitutionPatterns = 0;
+
+      // 1. Get institutions from user patterns (works even without country code)
+      try {
+        console.log('🔄 [BanksScreen] Loading user patterns...');
+        const userPatternsResponse = await patternsAPI.getAll();
+        if (userPatternsResponse.success && userPatternsResponse.data) {
+          const userPatterns = Array.isArray(userPatternsResponse.data) 
+            ? userPatternsResponse.data 
+            : [];
+          
+          userPatterns.forEach((pattern: any) => {
+            if (pattern.bank && pattern.bank.trim()) {
+              institutionsSet.add(pattern.bank.trim());
+              loadedFromUserPatterns++;
+            }
+          });
+          
+          console.log(`✅ [BanksScreen] Loaded ${userPatterns.length} user patterns, found ${loadedFromUserPatterns} institutions`);
+        }
+      } catch (error: any) {
+        console.error('❌ [BanksScreen] Error loading user patterns:', error.message || error);
+      }
+
+      // 2. Get institutions from institution patterns (country-specific, requires country code)
+      if (countryCode) {
+        try {
+          // Ensure country code is uppercase
+          const upperCountryCode = countryCode.toUpperCase();
+          console.log(`🔄 [BanksScreen] Loading institution patterns for country ${upperCountryCode}...`);
+          const institutionPatternsResponse = await institutionPatternsAPI.getCountryPatterns(upperCountryCode);
+          if (institutionPatternsResponse.success && institutionPatternsResponse.data) {
+            const institutionPatterns = Array.isArray(institutionPatternsResponse.data)
+              ? institutionPatternsResponse.data
+              : [];
+            
+            institutionPatterns.forEach((pattern: any) => {
+              // Add institution name (normalize case)
+              if (pattern.institution && pattern.institution.trim()) {
+                const instName = pattern.institution.trim();
+                institutionsSet.add(instName);
+                loadedFromInstitutionPatterns++;
+                console.log(`  📌 Found institution: ${instName}`);
+              }
+              // Also add bank name if different from institution
+              if (pattern.bank && pattern.bank.trim()) {
+                const bankName = pattern.bank.trim();
+                const instName = pattern.institution?.trim() || '';
+                // Only add if different (case-insensitive comparison)
+                if (bankName.toLowerCase() !== instName.toLowerCase()) {
+                  institutionsSet.add(bankName);
+                  loadedFromInstitutionPatterns++;
+                  console.log(`  📌 Found bank: ${bankName}`);
+                }
+              }
+            });
+            
+            console.log(`✅ [BanksScreen] Loaded ${institutionPatterns.length} institution patterns for country ${upperCountryCode}, found ${loadedFromInstitutionPatterns} unique institutions`);
+          }
+        } catch (error: any) {
+          console.error(`❌ [BanksScreen] Error loading institution patterns for ${countryCode}:`, error.message || error);
+        }
+      } else {
+        console.warn('⚠️ [BanksScreen] No country code set, skipping institution patterns (only loading from user patterns)');
+      }
+
+      // Convert to sorted array
+      const institutions = Array.from(institutionsSet).sort();
+      setAvailableInstitutions(institutions);
+      
+      console.log(`✅ [BanksScreen] Total unique institutions found: ${institutions.length}`, {
+        fromUserPatterns: loadedFromUserPatterns,
+        fromInstitutionPatterns: loadedFromInstitutionPatterns,
+        total: institutions.length,
+        institutions: institutions,
+      });
+      
+      // If user has no selected banks but we found institutions, suggest them
+      const selectedBanks = await storage.getSelectedBanks();
+      if (selectedBanks.length === 0 && institutions.length > 0) {
+        // Auto-select all available institutions
+        setBanks(institutions);
+        await storage.setSelectedBanks(institutions);
+        console.log(`✅ [BanksScreen] Auto-selected ${institutions.length} institutions`);
+      }
+    } catch (error: any) {
+      console.error('❌ [BanksScreen] Error loading institutions from backend:', error.message || error);
+      Alert.alert(
+        'Error',
+        `Failed to load institutions from backend: ${error.message || 'Unknown error'}. Please check your connection and try again.`
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadInstitutionsFromBackend();
+    await loadBanks();
+    setRefreshing(false);
+  };
+
   const handleAddBank = async () => {
     if (!newBank.trim()) {
-      Alert.alert('Error', 'Please enter a bank name');
+      Alert.alert('Error', 'Please enter an institution name');
       return;
     }
 
     const bankName = newBank.trim();
     if (banks.includes(bankName)) {
-      Alert.alert('Error', 'This bank is already in the list');
+      Alert.alert('Error', 'This institution is already in the list');
       return;
     }
 
     const updatedBanks = [...banks, bankName];
     setBanks(updatedBanks);
     await storage.setSelectedBanks(updatedBanks);
+    
+    // Also add to available institutions if not already there
+    if (!availableInstitutions.includes(bankName)) {
+      setAvailableInstitutions([...availableInstitutions, bankName].sort());
+    }
+    
     setNewBank('');
-    Alert.alert('Success', 'Bank added successfully');
   };
 
   const handleRemoveBank = async (bankName: string) => {
@@ -78,7 +197,6 @@ export default function BanksScreen({ apiKey }: Props) {
             const updatedBanks = banks.filter((b) => b !== bankName);
             setBanks(updatedBanks);
             await storage.setSelectedBanks(updatedBanks);
-            Alert.alert('Success', 'Bank removed successfully');
           },
         },
       ]
@@ -86,18 +204,18 @@ export default function BanksScreen({ apiKey }: Props) {
   };
 
   const renderBankItem = ({ item }: { item: string }) => (
-    <View style={[styles.bankItem, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+    <View style={styles.bankItem}>
       <View style={styles.bankInfo}>
-        <View style={[styles.bankIcon, { backgroundColor: colors.primary + '20' }]}>
+        <View style={[styles.bankIcon, { backgroundColor: colors.surface }]}>
           <Building2 size={20} color={colors.primary} />
         </View>
         <Text style={[styles.bankName, { color: colors.text }]}>{item}</Text>
       </View>
       <TouchableOpacity
         onPress={() => handleRemoveBank(item)}
-        style={[styles.removeButton, { backgroundColor: '#ef444420' }]}
+        style={styles.removeButton}
       >
-        <Text style={[styles.removeButtonText, { color: '#ef4444' }]}>Remove</Text>
+        <X size={20} color={colors.textSecondary} />
       </TouchableOpacity>
     </View>
   );
@@ -105,24 +223,63 @@ export default function BanksScreen({ apiKey }: Props) {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
-      <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Text style={[styles.title, { color: colors.text }]}>Financial Institutions</Text>
+      <View style={styles.header}>
+        <View style={styles.headerTop}>
+          <Text style={[styles.title, { color: colors.text }]}>Financial Institutions</Text>
+          <View style={styles.headerActions}>
+            {onNavigateToInstitutionBuilder && (
+              <TouchableOpacity
+                onPress={onNavigateToInstitutionBuilder}
+                style={[styles.createButton, { backgroundColor: colors.primary }]}
+              >
+                <Sparkles size={18} color="#fff" />
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              onPress={onRefresh}
+              style={[styles.refreshButton, { backgroundColor: colors.surface }]}
+              disabled={loading || refreshing}
+            >
+              <RefreshCw 
+                size={20} 
+                color={colors.primary} 
+                style={refreshing ? styles.refreshingIcon : undefined}
+              />
+            </TouchableOpacity>
+          </View>
+        </View>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-          Track SMS from {banks.length} institution{banks.length !== 1 ? 's' : ''}
+          Tracking {banks.length} institution{banks.length !== 1 ? 's' : ''}
+          {availableInstitutions.length > 0 && ` • ${availableInstitutions.length} available from backend`}
+          {availableInstitutions.length === 0 && !loading && ' • Pull to refresh'}
         </Text>
       </View>
 
-      <ScrollView style={styles.content}>
-        {/* Add Bank Form */}
-        <View style={[styles.addSection, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Add Institution</Text>
-          <Text style={[styles.sectionHint, { color: colors.textSecondary }]}>
-            Add a new financial institution to track SMS messages from
+      {loading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+            Loading institutions from backend...
           </Text>
-          <View style={styles.inputRow}>
+        </View>
+      ) : (
+        <ScrollView 
+          style={styles.content} 
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.primary}
+            />
+          }
+        >
+        {/* Add Bank Form */}
+        <View style={styles.addSection}>
+          <View style={[styles.inputContainer, { backgroundColor: colors.surface }]}>
             <TextInput
-              style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
-              placeholder="Enter institution name"
+              style={[styles.input, { color: colors.text }]}
+              placeholder="Add new institution..."
               placeholderTextColor={colors.textSecondary}
               value={newBank}
               onChangeText={setNewBank}
@@ -132,22 +289,20 @@ export default function BanksScreen({ apiKey }: Props) {
               style={[styles.addButton, { backgroundColor: colors.primary }]}
               onPress={handleAddBank}
             >
-              <Text style={[styles.addButtonText, { color: colors.primaryText }]}>Add</Text>
+              <Plus size={20} color="#fff" />
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Banks List */}
         <View style={styles.listSection}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Tracked Institutions</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>TRACKED INSTITUTIONS</Text>
           {banks.length === 0 ? (
             <View style={styles.emptyState}>
-              <View style={{ marginBottom: 16 }}>
-                <Building2 size={64} color={colors.textSecondary} />
-              </View>
-              <Text style={[styles.emptyText, { color: colors.text }]}>No institutions added</Text>
-              <Text style={[styles.emptyHint, { color: colors.textSecondary }]}>
-                Add institutions above to start tracking SMS messages
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                {availableInstitutions.length > 0 
+                  ? 'No institutions selected. Pull to refresh to load from backend.'
+                  : 'No institutions found. Pull to refresh to load from backend.'}
               </Text>
             </View>
           ) : (
@@ -159,7 +314,77 @@ export default function BanksScreen({ apiKey }: Props) {
             />
           )}
         </View>
+
+        {/* Available Institutions (from backend) */}
+        {availableInstitutions.length > 0 ? (
+          <View style={styles.listSection}>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
+              AVAILABLE INSTITUTIONS ({availableInstitutions.length})
+            </Text>
+            <Text style={[styles.infoText, { color: colors.textSecondary }]}>
+              These institutions are available from your patterns. Tap to add them to tracked list.
+            </Text>
+            <View style={styles.availableList}>
+              {availableInstitutions
+                .filter(inst => {
+                  // Case-insensitive check if already tracked
+                  const isTracked = banks.some(b => b.toLowerCase() === inst.toLowerCase());
+                  return !isTracked;
+                })
+                .slice(0, 20) // Show first 20 available
+                .map((institution) => (
+                  <TouchableOpacity
+                    key={institution}
+                    style={[styles.availableItem, { backgroundColor: colors.surface }]}
+                    onPress={async () => {
+                      const updatedBanks = [...banks, institution];
+                      setBanks(updatedBanks);
+                      await storage.setSelectedBanks(updatedBanks);
+                    }}
+                  >
+                    <Building2 size={16} color={colors.primary} />
+                    <Text style={[styles.availableItemText, { color: colors.text }]}>
+                      {institution}
+                    </Text>
+                    <Plus size={16} color={colors.primary} />
+                  </TouchableOpacity>
+                ))}
+              {availableInstitutions.filter(inst => {
+                const isTracked = banks.some(b => b.toLowerCase() === inst.toLowerCase());
+                return !isTracked;
+              }).length === 0 && (
+                <Text style={[styles.infoText, { color: colors.textSecondary, fontStyle: 'italic' }]}>
+                  All available institutions are already tracked.
+                </Text>
+              )}
+              {availableInstitutions.filter(inst => {
+                const isTracked = banks.some(b => b.toLowerCase() === inst.toLowerCase());
+                return !isTracked;
+              }).length > 20 && (
+                <Text style={[styles.moreText, { color: colors.textSecondary }]}>
+                  +{availableInstitutions.filter(inst => {
+                    const isTracked = banks.some(b => b.toLowerCase() === inst.toLowerCase());
+                    return !isTracked;
+                  }).length - 20} more available
+                </Text>
+              )}
+            </View>
+          </View>
+        ) : !loading && (
+          <View style={styles.listSection}>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
+              AVAILABLE INSTITUTIONS
+            </Text>
+            <View style={styles.emptyState}>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                No institutions found from patterns.{'\n'}
+                Pull to refresh or check if you have patterns in the system.
+              </Text>
+            </View>
+          </View>
+        )}
       </ScrollView>
+      )}
     </View>
   );
 }
@@ -171,71 +396,99 @@ const styles = StyleSheet.create({
   header: {
     padding: 20,
     paddingTop: 60,
-    borderBottomWidth: 1,
+    paddingBottom: 10,
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
   },
   title: {
     fontSize: 28,
-    fontWeight: 'bold',
-    marginBottom: 4,
+    fontWeight: '700',
+    letterSpacing: -0.5,
+    flex: 1,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  createButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  refreshButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  refreshingIcon: {
+    transform: [{ rotate: '180deg' }],
   },
   subtitle: {
     fontSize: 14,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 14,
+    textAlign: 'center',
   },
   content: {
     flex: 1,
   },
   addSection: {
-    margin: 20,
-    marginBottom: 12,
     padding: 20,
-    borderRadius: 16,
-    borderWidth: 1,
+    paddingTop: 10,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  sectionHint: {
-    fontSize: 14,
-    marginBottom: 16,
-    lineHeight: 20,
-  },
-  inputRow: {
+  inputContainer: {
     flexDirection: 'row',
-    gap: 12,
+    alignItems: 'center',
+    borderRadius: 12,
+    padding: 4,
+    paddingLeft: 16,
   },
   input: {
     flex: 1,
-    height: 50,
-    borderRadius: 12,
-    paddingHorizontal: 16,
+    height: 44,
     fontSize: 16,
-    borderWidth: 1,
   },
   addButton: {
-    paddingHorizontal: 24,
-    height: 50,
-    borderRadius: 12,
+    width: 44,
+    height: 44,
+    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  addButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
   listSection: {
     padding: 20,
-    paddingTop: 0,
+    paddingTop: 10,
+  },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 16,
+    letterSpacing: 1,
   },
   bankItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-    borderWidth: 1,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#f0f0f0',
   },
   bankInfo: {
     flexDirection: 'row',
@@ -248,35 +501,49 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 16,
   },
   bankName: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
     flex: 1,
   },
   removeButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  removeButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
+    padding: 8,
   },
   emptyState: {
     padding: 40,
     alignItems: 'center',
   },
   emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  emptyHint: {
     fontSize: 14,
+    fontStyle: 'italic',
+  },
+  infoText: {
+    fontSize: 12,
+    marginBottom: 12,
+    lineHeight: 16,
+  },
+  availableList: {
+    gap: 8,
+  },
+  availableItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 8,
+    gap: 12,
+  },
+  availableItemText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  moreText: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    marginTop: 8,
     textAlign: 'center',
-    lineHeight: 20,
   },
 });
 

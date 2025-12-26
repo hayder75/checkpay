@@ -13,10 +13,33 @@
       "backgroundColor": "#ffffff"
     },
     "plugins": [
-      "expo-dev-client"
+      "expo-dev-client",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app accesses your photos to scan text from images.",
+          "cameraPermission": "The app accesses your camera to scan text from images."
+        }
+      ],
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "$(PRODUCT_NAME) needs access to your Camera to scan text from images.",
+          "enableCodeScanner": false
+        }
+      ],
+      "./plugins/withMLKit.js",
+      "./plugins/withSMSReceiver.js",
+      "./plugins/withNetworkSecurityConfig.js"
     ],
+    "scheme": "checkpay",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "This app uses the camera to scan text from images.",
+        "NSPhotoLibraryUsageDescription": "This app accesses your photos to scan text from images."
+      },
+      "bundleIdentifier": "com.checkpay.mobile"
     },
     "android": {
       "adaptiveIcon": {
@@ -28,7 +51,13 @@
       "permissions": [
         "android.permission.READ_SMS",
         "android.permission.RECEIVE_SMS",
-        "android.permission.SEND_SMS"
+        "android.permission.SEND_SMS",
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
       ],
       "package": "com.checkpay.mobile"
     },

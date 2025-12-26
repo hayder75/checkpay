@@ -11,10 +11,11 @@ import {
 } from 'react-native';
 import { storage } from '../services/storage';
 import { ingestTransaction } from '../services/api';
-import { findMatchingPattern, matchPattern } from '../utils/patternMatcher';
+import { findMatchingInstitutionPattern, InstitutionPattern } from '../utils/patternMatcher';
 import { maskPhone } from '../utils/maskPhone';
 import { installationService } from '../services/installation';
 import { Pattern, ParsedSMS } from '../types';
+import { storage } from '../services/storage';
 
 interface Props {
   apiKey?: string | null;
@@ -37,10 +38,44 @@ export default function MainScreen({ apiKey, patterns, onLogout }: Props) {
 
     setProcessing(true);
     try {
-      // Find matching pattern
-      const pattern = findMatchingPattern(smsText, patterns);
+      // Get institution patterns from backend (optional - app works with user patterns only)
+      const countryCode = await storage.getCountryCode();
+      let institutionPatterns: InstitutionPattern[] = [];
       
-      if (!pattern) {
+      if (countryCode) {
+        try {
+          const { institutionPatternsAPI } = await import('../services/api');
+          const response = await institutionPatternsAPI.getCountryPatterns(countryCode);
+          if (response.success && response.data) {
+            institutionPatterns = Array.isArray(response.data) ? response.data : [];
+          }
+        } catch (error) {
+          // Silently fail - app continues with user patterns only
+          // Institution patterns are optional and may not be available for all countries
+        }
+      }
+      
+      // Convert user patterns to InstitutionPattern format
+      const userInstitutionPatterns: InstitutionPattern[] = patterns.map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        institution: p.bank || null,
+        regex: p.regex,
+        extractFields: p.extractFields || p.extraction || {},
+        bank: p.bank || null,
+        currency: p.currency || 'ETB',
+        usageCount: 0,
+        smsExample: null,
+        type: 'institution',
+      }));
+      
+      // Combine all patterns
+      const allPatterns = [...userInstitutionPatterns, ...institutionPatterns];
+      
+      // Find matching pattern
+      const matchResult = findMatchingInstitutionPattern(smsText, allPatterns);
+      
+      if (!matchResult.matched || !matchResult.data) {
         Alert.alert(
           'No Match',
           'No pattern matched this SMS.\n\n' +
@@ -56,7 +91,7 @@ export default function MainScreen({ apiKey, patterns, onLogout }: Props) {
       }
 
       // Extract transaction data
-      const result = matchPattern(smsText, pattern);
+      const result = matchResult;
       
       if (!result.matched || !result.data) {
         Alert.alert('Error', 'Failed to parse transaction from SMS');
@@ -76,7 +111,7 @@ export default function MainScreen({ apiKey, patterns, onLogout }: Props) {
         amount: result.data.amount,
         sender: maskedSender,
         bank: result.data.bank,
-        pattern: result.data.pattern,
+        pattern: result.data.patternName,
         smsText: smsText,
         iccid: simIccid, // Include SIM ICCID
       };

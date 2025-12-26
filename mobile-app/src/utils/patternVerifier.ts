@@ -47,18 +47,7 @@ export async function downloadCountryPatterns(countryCode: string): Promise<Inst
         });
       }
       
-      // Store locally
-      console.log('💾 [Pattern Download] Saving patterns to storage...');
-      await storage.setInstitutionPatterns(mappedPatterns);
-      
-      // Verify patterns were saved
-      const savedPatterns = await storage.getInstitutionPatterns();
-      if (savedPatterns.length === mappedPatterns.length) {
-        console.log(`✅ [Pattern Download] Successfully saved and verified ${savedPatterns.length} patterns`);
-      } else {
-        console.error(`❌ [Pattern Download] Save verification failed: expected ${mappedPatterns.length}, got ${savedPatterns.length}`);
-      }
-      
+      // Patterns are now always fetched from backend, no local storage
       return mappedPatterns;
     }
     
@@ -66,12 +55,7 @@ export async function downloadCountryPatterns(countryCode: string): Promise<Inst
     return [];
   } catch (error) {
     console.error('❌ [Pattern Download] Error downloading patterns:', error);
-    // Return cached patterns if available
-    const cached = await storage.getInstitutionPatterns();
-    if (cached.length > 0) {
-      console.log('📥 [Pattern Download] Using cached patterns:', cached.length);
-      return cached;
-    }
+    // No local caching - always fetch from backend
     return [];
   }
 }
@@ -173,4 +157,7 @@ export async function verifyFinancialSMSBatch(
   
   return results;
 }
+
+
+
 

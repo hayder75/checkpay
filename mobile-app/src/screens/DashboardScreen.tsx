@@ -7,7 +7,10 @@ import {
   FlatList,
   TouchableOpacity,
   Alert,
+  Modal,
+  ScrollView,
 } from 'react-native';
+import { X } from 'lucide-react-native';
 import { storage } from '../services/storage';
 import { smsService, LocalTransaction } from '../services/smsService';
 import { Pattern } from '../types';
@@ -25,6 +28,7 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [transactions, setTransactions] = useState<LocalTransaction[]>([]);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [selectedTransaction, setSelectedTransaction] = useState<LocalTransaction | null>(null);
   
   useEffect(() => {
     checkAuth();
@@ -67,7 +71,58 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
 
   const loadTransactions = async () => {
     try {
-      const txs = await storage.getLocalTransactions();
+      // First load local transactions as fallback
+      let txs = await storage.getLocalTransactions();
+      
+      // Try to fetch from backend if authenticated (backend is source of truth)
+      const token = await storage.getToken();
+      if (token) {
+        try {
+          const { dashboardAPI } = await import('../services/api');
+          const response = await dashboardAPI.getTransactions({ limit: 100 });
+          if (response.success && response.data) {
+            const backendTxs = Array.isArray(response.data) 
+              ? response.data 
+              : response.data.transactions || [];
+            
+            console.log(`📥 [Dashboard] Fetched ${backendTxs.length} transactions from backend`);
+            
+            // Convert backend transactions to LocalTransaction format
+            const convertedTxs: LocalTransaction[] = backendTxs.map((tx: any) => ({
+              id: tx.id || `backend_${tx.txnId}`,
+              txnId: tx.txnId || tx.id,
+              amount: tx.amount || 0,
+              sender: tx.sender || '',
+              sendFrom: tx.sendFrom || null,
+              sendTo: tx.sendTo || null,
+              bank: tx.bank || tx.receiverBank || null,
+              pattern: tx.pattern || 'Backend Pattern',
+              smsText: tx.smsText || '',
+              receivedAt: tx.createdAt || tx.receivedAt || new Date().toISOString(),
+              synced: true,
+              createdAt: tx.createdAt || new Date().toISOString(),
+            }));
+            
+            // Use backend transactions as primary source, merge with local unsynced ones
+            const backendTxnIds = new Set(convertedTxs.map(t => t.txnId));
+            const unsyncedLocalTxs = txs.filter(t => !t.synced && !backendTxnIds.has(t.txnId));
+            txs = [...convertedTxs, ...unsyncedLocalTxs];
+            
+            console.log(`📊 [Dashboard] Total transactions after merge: ${txs.length} (${convertedTxs.length} from backend, ${unsyncedLocalTxs.length} unsynced local)`);
+          } else {
+            console.warn('⚠️ [Dashboard] Backend response not successful:', response);
+          }
+        } catch (error) {
+          console.error('❌ [Dashboard] Error fetching transactions from backend:', error);
+          // Continue with local transactions if backend fetch fails
+        }
+      } else {
+        console.log('ℹ️ [Dashboard] No auth token, using local transactions only');
+      }
+      
+      // Filter out withdrawals - only show deposits (positive amounts)
+      txs = txs.filter(t => t.amount > 0);
+      
       // Sort by most recent first
       txs.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
       setTransactions(txs);
@@ -87,7 +142,46 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
         console.error('Error checking SMS:', error);
       }
     }
+    // Also sync unsynced transactions if authenticated
+    if (isAuthenticated) {
+      try {
+        await syncUnsyncedTransactions();
+      } catch (error) {
+        // Error already handled in syncUnsyncedTransactions
+      }
+    }
     setRefreshing(false);
+  };
+
+  const syncUnsyncedTransactions = async () => {
+    const token = await storage.getToken();
+    if (!token) {
+      Alert.alert('Not Signed In', 'Please sign in to sync transactions');
+      return;
+    }
+
+    try {
+      const unsyncedCount = transactions.filter(t => !t.synced).length;
+      if (unsyncedCount === 0) {
+        return; // Already synced, no need to show alert
+      }
+
+      await smsService.syncAllUnsyncedTransactions();
+      
+      // Wait a moment for backend to process, then refresh
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Force reload transactions from backend
+      await loadTransactions();
+      
+      Alert.alert('Success', `Successfully synced ${unsyncedCount} transaction(s) to the backend!`);
+    } catch (error: any) {
+      console.error('Error syncing transactions:', error);
+      Alert.alert(
+        'Sync Failed',
+        error.response?.data?.error || error.message || 'Failed to sync transactions. Please check your connection and try again.'
+      );
+    }
   };
 
   const formatDate = (dateString: string) => {
@@ -110,15 +204,57 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
     return date.toLocaleDateString();
   };
 
+  // Extract sender name from SMS text if not already captured
+  const extractSenderFromSMS = (smsText: string): string | null => {
+    if (!smsText) return null;
+    
+    const senderPatterns = [
+      // "from NAME (phone)" or "from NAME"
+      /from\s+([A-Za-z\s]+?)(?:\s*\(|\s+on\s+|\s+at\s+|,|\.|$)/i,
+      // "received ... from NAME"
+      /received\s+.*?from\s+([A-Za-z\s]+?)(?:\s*\(|\s+on\s+|\s+at\s+|,|\.|$)/i,
+      // "credited ... from NAME"
+      /credited\s+.*?from\s+([A-Za-z\s]+?)(?:\s*\(|\s+on\s+|\s+at\s+|,|\.|$)/i,
+    ];
+    
+    for (const pattern of senderPatterns) {
+      const match = smsText.match(pattern);
+      if (match && match[1]) {
+        return match[1].trim();
+      }
+    }
+    return null;
+  };
+
+  const getDisplayName = (item: LocalTransaction): string => {
+    // First try to extract sender from SMS text if sender is Unknown or empty
+    if ((!item.sender || item.sender === 'Unknown' || item.sender === '') && item.smsText) {
+      const extractedSender = extractSenderFromSMS(item.smsText);
+      if (extractedSender) return extractedSender;
+    }
+    
+    // Prefer sender name (if valid), then bank name, then sendFrom, then pattern name
+    if (item.sender && item.sender !== 'Unknown' && item.sender !== '') return item.sender;
+    if (item.bank && item.bank !== 'Unknown') return item.bank;
+    if (item.sendFrom) return item.sendFrom;
+    if (item.pattern && item.pattern !== 'Institution Pattern') return item.pattern;
+    return 'Transaction';
+  };
+
   const renderTransaction = ({ item }: { item: LocalTransaction }) => {
     const isIncome = item.amount > 0;
+    const displayName = getDisplayName(item);
     
     return (
-      <View style={[styles.transactionCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <TouchableOpacity
+        style={[styles.transactionCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+        onPress={() => setSelectedTransaction(item)}
+        activeOpacity={0.7}
+      >
         <View style={styles.transactionHeader}>
           <View style={styles.transactionHeaderLeft}>
             <Text style={[styles.transactionBank, { color: colors.text }]}>
-              {item.bank || item.sender || 'Transaction'}
+              {displayName}
             </Text>
             <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>
               {formatDate(item.receivedAt)}
@@ -162,15 +298,32 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
             )}
           </View>
         )}
-      </View>
+      </TouchableOpacity>
     );
   };
+
+  const unsyncedCount = transactions.filter(t => !t.synced).length;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={styles.header}>
-        <Text style={[styles.title, { color: colors.text }]}>Transactions</Text>
+        <View style={styles.headerLeft}>
+          <Text style={[styles.title, { color: colors.text }]}>Transactions</Text>
+          {unsyncedCount > 0 && (
+            <Text style={[styles.unsyncedText, { color: colors.textSecondary }]}>
+              {unsyncedCount} unsynced
+            </Text>
+          )}
+        </View>
         <View style={styles.headerRight}>
+          {isAuthenticated && unsyncedCount > 0 && (
+            <TouchableOpacity
+              onPress={syncUnsyncedTransactions}
+              style={[styles.syncButtonHeader, { backgroundColor: colors.primary }]}
+            >
+              <Text style={styles.syncButtonHeaderText}>Sync</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             onPress={onRefresh}
             style={styles.refreshButton}
@@ -211,13 +364,28 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
                     return;
                   }
                   
+                  // Test connection first
+                  const { testAPIConnection } = await import('../services/api');
+                  const connectionTest = await testAPIConnection();
+                  if (!connectionTest.success) {
+                    Alert.alert(
+                      'Connection Error',
+                      connectionTest.message + '\n\nPlease check:\n- Backend is running\n- Correct API URL in config\n- Network connection'
+                    );
+                    return;
+                  }
+                  
                   Alert.alert('Syncing', 'Syncing unsynced transactions to backend...');
                   await smsService.syncAllUnsyncedTransactions();
                   await loadTransactions();
                   Alert.alert('Success', 'Transactions synced to backend!');
                 } catch (error: any) {
                   console.error('Error syncing transactions:', error);
-                  Alert.alert('Error', error.response?.data?.error || error.message || 'Failed to sync transactions');
+                  const errorMsg = error.response?.data?.error || error.message || 'Failed to sync transactions';
+                  Alert.alert(
+                    'Sync Failed',
+                    errorMsg + '\n\nCheck console logs for details.'
+                  );
                 }
               }}
             >
@@ -261,6 +429,119 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
           }
         />
       )}
+
+      {/* Transaction Detail Modal */}
+      <Modal
+        visible={selectedTransaction !== null}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setSelectedTransaction(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Transaction Details</Text>
+              <TouchableOpacity
+                onPress={() => setSelectedTransaction(null)}
+                style={styles.closeButton}
+              >
+                <X size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            
+            {selectedTransaction && (() => {
+              // Get the best sender name for display
+              const getSenderForDisplay = () => {
+                if (selectedTransaction.sender && selectedTransaction.sender !== 'Unknown' && selectedTransaction.sender !== '') {
+                  return selectedTransaction.sender;
+                }
+                if (selectedTransaction.smsText) {
+                  const extracted = extractSenderFromSMS(selectedTransaction.smsText);
+                  if (extracted) return extracted;
+                }
+                return null;
+              };
+              const displaySender = getSenderForDisplay();
+              
+              return (
+              <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Amount</Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>
+                    ${selectedTransaction.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </Text>
+                </View>
+
+                {selectedTransaction.bank && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Bank/Institution</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.bank}</Text>
+                  </View>
+                )}
+
+                {displaySender && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Sender</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{displaySender}</Text>
+                  </View>
+                )}
+
+                {selectedTransaction.sendFrom && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>From (Phone)</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.sendFrom}</Text>
+                  </View>
+                )}
+
+                {selectedTransaction.sendTo && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>To</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.sendTo}</Text>
+                  </View>
+                )}
+
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Transaction ID</Text>
+                  <Text style={[styles.detailValue, { color: colors.text, fontFamily: 'monospace' }]}>
+                    {selectedTransaction.txnId}
+                  </Text>
+                </View>
+
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Date & Time</Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>
+                    {new Date(selectedTransaction.receivedAt).toLocaleString()}
+                  </Text>
+                </View>
+
+                {selectedTransaction.pattern && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Pattern</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.pattern}</Text>
+                  </View>
+                )}
+
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Status</Text>
+                  <Text style={[styles.detailValue, { color: selectedTransaction.synced ? colors.primary : '#ef4444' }]}>
+                    {selectedTransaction.synced ? 'Synced' : 'Not Synced'}
+                  </Text>
+                </View>
+
+                {selectedTransaction.smsText && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Original SMS</Text>
+                    <View style={[styles.smsTextContainer, { backgroundColor: colors.background }]}>
+                      <Text style={[styles.smsText, { color: colors.text }]}>{selectedTransaction.smsText}</Text>
+                    </View>
+                  </View>
+                )}
+              </ScrollView>
+              );
+            })()}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -278,9 +559,27 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e5e7eb',
   },
+  headerLeft: {
+    flex: 1,
+  },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
+  },
+  unsyncedText: {
+    fontSize: 12,
+    marginTop: 4,
+  },
+  syncButtonHeader: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  syncButtonHeaderText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   headerRight: {
     flexDirection: 'row',
@@ -419,5 +718,57 @@ const styles = StyleSheet.create({
   startButtonText: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '90%',
+    paddingBottom: 40,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  closeButton: {
+    padding: 4,
+  },
+  modalBody: {
+    padding: 20,
+  },
+  detailSection: {
+    marginBottom: 20,
+  },
+  detailLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  detailValue: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  smsTextContainer: {
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  smsText: {
+    fontSize: 14,
+    lineHeight: 20,
   },
 });

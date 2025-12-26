@@ -31,10 +31,11 @@ export default function PatternsScreen({ apiKey, patterns, onRefresh, onNavigate
     setRefreshing(true);
     try {
       setApiKey(apiKey);
-      const response = await fetchPatterns(apiKey);
-      if (response.success && response.data.patterns) {
-        const updatedPatterns = response.data.patterns;
-        await storage.setPatterns(updatedPatterns);
+      // Fetch patterns from backend (no local storage)
+      const { patternsAPI } = await import('../services/api');
+      const response = await patternsAPI.getAll();
+      if (response.success && response.data) {
+        const updatedPatterns = Array.isArray(response.data) ? response.data : [];
         setLocalPatterns(updatedPatterns);
         onRefresh();
       }

@@ -17,14 +17,14 @@ import { useTheme } from '../contexts/ThemeContext';
 
 interface Props {
   apiKey: string;
-  onPatternCreated: () => void;
-  onPatternsRefreshed?: (patterns: any[]) => void;
+  onInstitutionCreated: () => void;
+  onInstitutionsRefreshed?: (institutions: any[]) => void;
 }
 
-export default function PatternBuilderScreen({ apiKey, onPatternCreated, onPatternsRefreshed }: Props) {
+export default function InstitutionBuilderScreen({ apiKey, onInstitutionCreated, onInstitutionsRefreshed }: Props) {
   const { colors } = useTheme();
   const [smsText, setSmsText] = useState('');
-  const [patternName, setPatternName] = useState('');
+  const [institutionName, setInstitutionName] = useState('');
   const [description, setDescription] = useState('');
   const [preview, setPreview] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -33,30 +33,30 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated, onPatte
   const [aiLoading, setAiLoading] = useState(false);
 
   const handleAnalyze = async () => {
-    if (!smsText.trim() || !patternName.trim()) {
-      Alert.alert('Error', 'Please enter SMS text and pattern name');
+    if (!smsText.trim() || !institutionName.trim()) {
+      Alert.alert('Error', 'Please enter SMS text and institution name');
       return;
     }
 
     setLoading(true);
     try {
-      const response = await patternsAPI.validate({ smsText: smsText.trim(), name: patternName.trim(), useAI: false });
+      const response = await patternsAPI.validate({ smsText: smsText.trim(), name: institutionName.trim(), useAI: false });
       if (response.success) {
         setPreview(response.data);
       } else {
-        Alert.alert('Error', response.error || 'Failed to analyze pattern');
+        Alert.alert('Error', response.error || 'Failed to analyze institution');
       }
     } catch (error: any) {
       console.error('Analyze error:', error);
-      Alert.alert('Error', error.response?.data?.error || 'Failed to analyze pattern');
+      Alert.alert('Error', error.response?.data?.error || 'Failed to analyze institution');
     } finally {
       setLoading(false);
     }
   };
 
   const handleUseAI = async () => {
-    if (!smsText.trim() || !patternName.trim()) {
-      Alert.alert('Error', 'Please enter SMS text and pattern name');
+    if (!smsText.trim() || !institutionName.trim()) {
+      Alert.alert('Error', 'Please enter SMS text and institution name');
       return;
     }
 
@@ -64,7 +64,7 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated, onPatte
     try {
       const response = await patternsAPI.createWithAI({ 
         smsText: smsText.trim(), 
-        name: patternName.trim(), 
+        name: institutionName.trim(), 
         description: description.trim() || undefined 
       });
       if (response.success) {
@@ -77,85 +77,83 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated, onPatte
           canUseAI: true,
         });
         setUseAI(true);
-        Alert.alert('Success', 'Pattern created using AI! Review and save.');
+        Alert.alert('Success', 'Institution created using AI! Review and save.');
       } else {
-        Alert.alert('Error', response.error || 'Failed to create pattern with AI');
+        Alert.alert('Error', response.error || 'Failed to create institution with AI');
       }
     } catch (error: any) {
       console.error('AI error:', error);
-      Alert.alert('Error', error.response?.data?.error || 'Failed to create pattern with AI');
+      Alert.alert('Error', error.response?.data?.error || 'Failed to create institution with AI');
     } finally {
       setAiLoading(false);
     }
   };
 
   const handleSave = async () => {
-    if (!smsText.trim() || !patternName.trim()) {
-      Alert.alert('Error', 'Please enter SMS text and pattern name');
+    if (!smsText.trim() || !institutionName.trim()) {
+      Alert.alert('Error', 'Please enter SMS text and institution name');
       return;
     }
 
     if (preview && !preview.validation?.valid) {
-      Alert.alert('Warning', 'Pattern validation failed. Please fix the issues before saving.');
+      Alert.alert('Warning', 'Institution validation failed. Please fix the issues before saving.');
       return;
     }
 
     setSaving(true);
     try {
-      let createdPattern = null;
-      
       // Always create pattern via API (preview is just for validation)
       const response = await patternsAPI.create({
         smsText: smsText.trim(),
-        name: patternName.trim(),
+        name: institutionName.trim(),
         description: description.trim() || undefined,
         useAI: useAI,
       });
       
-      let createdPattern = null;
+      let createdInstitution = null;
       let method = 'rule-based';
       
       if (response.success) {
-        createdPattern = response.data;
+        createdInstitution = response.data;
         method = response.method || (useAI ? 'ai' : 'rule-based');
-        console.log('✅ Pattern created successfully:', { id: createdPattern.id, name: createdPattern.name, method });
+        console.log('✅ Institution created successfully:', { id: createdInstitution.id, name: createdInstitution.name, method });
       } else {
-        Alert.alert('Error', response.error || 'Failed to save pattern');
+        Alert.alert('Error', response.error || 'Failed to save institution');
         return;
       }
       
       // Refresh patterns from backend after creation
       try {
-        console.log('🔄 Refreshing patterns from backend...');
+        console.log('🔄 Refreshing institutions from backend...');
         const patternsResponse = await patternsAPI.getAll();
         if (patternsResponse.success && patternsResponse.data) {
-          const updatedPatterns = Array.isArray(patternsResponse.data) 
+          const updatedInstitutions = Array.isArray(patternsResponse.data) 
             ? patternsResponse.data 
             : [];
           
           // Patterns are now always fetched from backend, no local storage
-          console.log(`✅ Refreshed ${updatedPatterns.length} patterns from backend`);
+          console.log(`✅ Refreshed ${updatedInstitutions.length} institutions from backend`);
           
-          // Notify parent component to update patterns state
-          if (onPatternsRefreshed) {
-            onPatternsRefreshed(updatedPatterns);
+          // Notify parent component to update institutions state
+          if (onInstitutionsRefreshed) {
+            onInstitutionsRefreshed(updatedInstitutions);
           }
         }
       } catch (refreshError) {
-        console.error('Error refreshing patterns:', refreshError);
-        // Continue anyway - pattern was created successfully
+        console.error('Error refreshing institutions:', refreshError);
+        // Continue anyway - institution was created successfully
       }
       
-      Alert.alert('Success', `Pattern created successfully using ${method} extraction!`, [
-        { text: 'OK', onPress: onPatternCreated },
+      Alert.alert('Success', `Institution created successfully using ${method} extraction!`, [
+        { text: 'OK', onPress: onInstitutionCreated },
       ]);
     } catch (error: any) {
       console.error('Save error:', error);
       // If error suggests AI, show that
       if (error.response?.data?.canUseAI) {
-        Alert.alert('Pattern Creation Failed', error.response.data.suggestion || 'Try using AI for better accuracy');
+        Alert.alert('Institution Creation Failed', error.response.data.suggestion || 'Try using AI for better accuracy');
       } else {
-        Alert.alert('Error', error.response?.data?.error || 'Failed to save pattern');
+        Alert.alert('Error', error.response?.data?.error || 'Failed to save institution');
       }
     } finally {
       setSaving(false);
@@ -173,9 +171,9 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated, onPatte
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.text }]}>Pattern Builder</Text>
+          <Text style={[styles.title, { color: colors.text }]}>Institution Builder</Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            Paste an SMS and let AI build your parser pattern
+            Paste an SMS and let AI build your parser institution
           </Text>
         </View>
 
@@ -198,13 +196,13 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated, onPatte
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={[styles.label, { color: colors.text }]}>Pattern Name</Text>
+            <Text style={[styles.label, { color: colors.text }]}>Institution Name</Text>
             <TextInput
               style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
               placeholder="mpesa_receive"
               placeholderTextColor={colors.textSecondary}
-              value={patternName}
-              onChangeText={setPatternName}
+              value={institutionName}
+              onChangeText={setInstitutionName}
               autoCapitalize="none"
             />
           </View>
@@ -224,7 +222,7 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated, onPatte
           <View style={[styles.inputGroup, { marginBottom: 12 }]}>
             <View style={[styles.toggleContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <Text style={[styles.toggleLabel, { color: colors.text }]}>
-                🤖 Use AI for Pattern Creation
+                🤖 Use AI for Institution Creation
               </Text>
               <TouchableOpacity
                 style={[styles.toggle, useAI && { backgroundColor: colors.primary }]}
@@ -235,15 +233,15 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated, onPatte
             </View>
             <Text style={[styles.toggleHint, { color: colors.textSecondary }]}>
               {useAI 
-                ? 'AI will be used to create the pattern (may take longer)'
+                ? 'AI will be used to create the institution (may take longer)'
                 : 'Rule-based extraction will be tried first, AI used if needed'}
             </Text>
           </View>
 
           <TouchableOpacity
-            style={[styles.button, { backgroundColor: colors.primary }, (loading || aiLoading || !smsText || !patternName) && styles.buttonDisabled]}
+            style={[styles.button, { backgroundColor: colors.primary }, (loading || aiLoading || !smsText || !institutionName) && styles.buttonDisabled]}
             onPress={handleAnalyze}
-            disabled={loading || aiLoading || !smsText || !patternName}
+            disabled={loading || aiLoading || !smsText || !institutionName}
           >
             {loading ? (
               <ActivityIndicator color={colors.primaryText} />
@@ -256,15 +254,15 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated, onPatte
 
           {preview?.aiSuggested && preview?.canUseAI && !useAI && (
             <TouchableOpacity
-              style={[styles.button, { backgroundColor: '#9333ea', marginTop: 8 }, (aiLoading || loading || !smsText || !patternName) && styles.buttonDisabled]}
+              style={[styles.button, { backgroundColor: '#9333ea', marginTop: 8 }, (aiLoading || loading || !smsText || !institutionName) && styles.buttonDisabled]}
               onPress={handleUseAI}
-              disabled={aiLoading || loading || !smsText || !patternName}
+              disabled={aiLoading || loading || !smsText || !institutionName}
             >
               {aiLoading ? (
                 <ActivityIndicator color="#fff" />
               ) : (
                 <Text style={[styles.buttonText, { color: '#fff' }]}>
-                  🤖 Use AI to Create Pattern
+                  🤖 Use AI to Create Institution
                 </Text>
               )}
             </TouchableOpacity>
@@ -282,7 +280,7 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated, onPatte
                 {preview.validation?.valid ? (
                   <>
                     <Text style={styles.checkIcon}>✓</Text>
-                    <Text style={[styles.validationText, { color: '#10b981' }]}>Pattern Valid</Text>
+                    <Text style={[styles.validationText, { color: '#10b981' }]}>Institution Valid</Text>
                   </>
                 ) : (
                   <>
@@ -357,7 +355,7 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated, onPatte
                 <ActivityIndicator color={colors.primaryText} />
               ) : (
                 <Text style={[styles.buttonText, { color: colors.primaryText }]}>
-                  Save Pattern
+                  Save Institution
                 </Text>
               )}
             </TouchableOpacity>
@@ -552,6 +550,4 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
 });
-
-
 

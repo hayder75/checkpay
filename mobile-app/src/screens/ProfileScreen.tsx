@@ -8,16 +8,19 @@ import {
   Switch,
   Alert,
 } from 'react-native';
+import { Building2, ChevronRight } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { storage } from '../services/storage';
 import { installationService } from '../services/installation';
+import { authAPI } from '../services/api';
 
 interface Props {
   apiKey?: string | null;
   onLogout: () => void;
+  onNavigateToBanks?: () => void;
 }
 
-export default function ProfileScreen({ apiKey, onLogout }: Props) {
+export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: Props) {
   const { colors, theme, toggleTheme } = useTheme();
   const [user, setUser] = useState<any>(null);
   const [installationDate, setInstallationDate] = useState<Date | null>(null);
@@ -29,11 +32,34 @@ export default function ProfileScreen({ apiKey, onLogout }: Props) {
 
   const loadProfile = async () => {
     try {
+      // First load from storage for immediate display
       const storedUser = await storage.getUser();
       setUser(storedUser);
       if (storedUser?.plan) {
         setPlan(storedUser.plan);
       }
+      
+      // Then fetch fresh data from backend
+      const token = await storage.getToken();
+      if (token) {
+        try {
+          const response = await authAPI.getMe();
+          if (response.success && response.data) {
+            const freshUser = response.data;
+            setUser(freshUser);
+            if (freshUser.plan) {
+              setPlan(freshUser.plan);
+            }
+            // Update stored user
+            await storage.setUser(freshUser);
+            console.log('✅ [Profile] Loaded fresh user data from backend');
+          }
+        } catch (error) {
+          console.error('Error fetching user data from backend:', error);
+          // Continue with stored user data
+        }
+      }
+      
       const date = await installationService.getInstallationDate();
       setInstallationDate(date);
     } catch (error) {
@@ -78,7 +104,7 @@ export default function ProfileScreen({ apiKey, onLogout }: Props) {
       </View>
 
       {/* Profile Details Section */}
-      <View style={[styles.section, { borderTopColor: colors.border }]}>
+      <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Profile Details</Text>
         
         <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -103,8 +129,28 @@ export default function ProfileScreen({ apiKey, onLogout }: Props) {
         </View>
       </View>
 
+      {/* Management Section */}
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Management</Text>
+        
+        <View style={[styles.menuCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <TouchableOpacity 
+            style={styles.menuItem}
+            onPress={onNavigateToBanks}
+          >
+            <View style={styles.menuItemLeft}>
+              <View style={[styles.menuIconContainer, { backgroundColor: colors.primary + '15' }]}>
+                <Building2 size={20} color={colors.primary} />
+              </View>
+              <Text style={[styles.menuItemText, { color: colors.text }]}>My Banks</Text>
+            </View>
+            <ChevronRight size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
+        </View>
+      </View>
+
       {/* Subscription Section */}
-      <View style={[styles.section, { borderTopColor: colors.border }]}>
+      <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Subscription</Text>
         
         <View style={[styles.subscriptionCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -141,7 +187,7 @@ export default function ProfileScreen({ apiKey, onLogout }: Props) {
       </View>
 
       {/* Settings Section */}
-      <View style={[styles.section, { borderTopColor: colors.border }]}>
+      <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Settings</Text>
         
         <View style={[styles.settingsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -163,7 +209,7 @@ export default function ProfileScreen({ apiKey, onLogout }: Props) {
       </View>
 
       {/* App Information */}
-      <View style={[styles.section, { borderTopColor: colors.border }]}>
+      <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>App Information</Text>
         
         <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -200,24 +246,31 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    padding: 20,
+    paddingHorizontal: 24,
     paddingTop: 60,
+    paddingBottom: 20,
     borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.05)',
   },
   profileHeader: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   avatar: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
   },
   avatarText: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
   },
   profileInfo: {
@@ -226,22 +279,25 @@ const styles = StyleSheet.create({
   name: {
     fontSize: 24,
     fontWeight: 'bold',
-    marginBottom: 4,
+    marginBottom: 2,
+    letterSpacing: -0.5,
   },
   phone: {
     fontSize: 14,
+    opacity: 0.6,
   },
   section: {
-    padding: 20,
-    borderTopWidth: 1,
+    paddingHorizontal: 24,
+    paddingTop: 20,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 16,
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 12,
+    letterSpacing: -0.3,
   },
   infoCard: {
-    borderRadius: 16,
+    borderRadius: 20,
     borderWidth: 1,
     overflow: 'hidden',
   },
@@ -253,13 +309,14 @@ const styles = StyleSheet.create({
   },
   infoLabel: {
     fontSize: 14,
+    opacity: 0.7,
   },
   infoValue: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   subscriptionCard: {
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 20,
     borderWidth: 1,
   },
@@ -275,7 +332,8 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   planDescription: {
-    fontSize: 14,
+    fontSize: 13,
+    opacity: 0.7,
   },
   planBadge: {
     paddingHorizontal: 12,
@@ -284,19 +342,19 @@ const styles = StyleSheet.create({
   },
   planBadgeText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   upgradeButton: {
-    paddingVertical: 12,
-    borderRadius: 12,
+    paddingVertical: 14,
+    borderRadius: 14,
     alignItems: 'center',
   },
   upgradeButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
   },
   settingsCard: {
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 16,
     borderWidth: 1,
   },
@@ -311,24 +369,53 @@ const styles = StyleSheet.create({
   },
   settingLabel: {
     fontSize: 16,
-    marginBottom: 4,
+    fontWeight: '500',
+    marginBottom: 2,
   },
   settingHint: {
     fontSize: 12,
+    opacity: 0.6,
   },
   logoutSection: {
-    padding: 20,
+    padding: 24,
     paddingBottom: 40,
   },
   logoutButton: {
     paddingVertical: 16,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: 'center',
     borderWidth: 1,
   },
   logoutText: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  menuCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+  },
+  menuItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  menuIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  menuItemText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
   },
 });
 

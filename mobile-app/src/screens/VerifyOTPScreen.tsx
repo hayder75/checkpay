@@ -11,11 +11,11 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { authAPI } from '../services/api';
 import { storage } from '../services/storage';
-import { fetchPatterns } from '../services/api';
 import { useTheme } from '../contexts/ThemeContext';
 import { Pattern } from '../types';
+import { authAPI } from '../services/api';
+import { patternsAPI } from '../services/api';
 
 interface Props {
   phone: string;
@@ -52,6 +52,7 @@ export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResend
 
     setLoading(true);
     try {
+      // Use real API authentication
       const response = await authAPI.verifyOTP({
         phone: phone.trim(),
         code: code.trim(),
@@ -61,21 +62,48 @@ export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResend
       if (response.success) {
         const { token, user } = response.data;
         
+        if (!token) {
+          Alert.alert('Error', 'No token received from server');
+          return;
+        }
+        
         // Store token and user
+        console.log('💾 [VerifyOTP] Saving authentication data...');
         await storage.setToken(token);
         await storage.setUser(user);
+        
+        // Verify token was saved
+        const savedToken = await storage.getToken();
+        if (!savedToken || savedToken !== token) {
+          console.error('❌ [VerifyOTP] Token was not saved correctly');
+          Alert.alert('Error', 'Failed to save authentication token');
+          return;
+        }
         
         // Get API key from user
         const apiKey = user.apiKey;
         if (apiKey) {
           await storage.setApiKey(apiKey);
           
-          // Fetch patterns
+          // Verify API key was saved
+          const savedApiKey = await storage.getApiKey();
+          if (!savedApiKey || savedApiKey !== apiKey) {
+            console.error('❌ [VerifyOTP] API key was not saved correctly');
+            Alert.alert('Error', 'Failed to save API key');
+            return;
+          }
+          
+          console.log('✅ [VerifyOTP] Authentication data saved successfully (token + API key)');
+          
+          // Fetch patterns from real API
           try {
-            const patternsResponse = await fetchPatterns(apiKey);
-            if (patternsResponse.success && patternsResponse.data.patterns) {
-              await storage.setPatterns(patternsResponse.data.patterns);
-              onVerificationSuccess(user, apiKey, patternsResponse.data.patterns);
+            const patternsResponse = await patternsAPI.getAll();
+            if (patternsResponse.success && patternsResponse.data) {
+              const patterns = Array.isArray(patternsResponse.data) 
+                ? patternsResponse.data 
+                : [];
+              // Patterns are now always fetched from backend, no local storage
+              onVerificationSuccess(user, apiKey, patterns);
             } else {
               onVerificationSuccess(user, apiKey, []);
             }
@@ -84,15 +112,15 @@ export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResend
             onVerificationSuccess(user, apiKey, []);
           }
         } else {
-          Alert.alert('Error', 'No API key found for this account');
+          console.error('❌ [VerifyOTP] No API key in user object:', user);
+          Alert.alert('Error', 'No API key found for this account. Please contact support.');
         }
       } else {
-        Alert.alert('Error', response.error || 'OTP verification failed');
+        Alert.alert('Error', response.message || 'OTP verification failed');
       }
     } catch (error: any) {
       console.error('Verify OTP error:', error);
-      const errorMessage = error.response?.data?.error || error.message || 'OTP verification failed';
-      Alert.alert('Error', errorMessage);
+      Alert.alert('Error', error.message || 'OTP verification failed');
     } finally {
       setLoading(false);
     }
@@ -101,23 +129,23 @@ export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResend
   const handleResend = async () => {
     setResending(true);
     try {
+      // Use real API authentication
       const response = await authAPI.resendOTP({ phone: phone.trim() });
       if (response.success) {
-        // Log OTP to console for testing
-        if (response.data?.debug?.otp) {
-          console.log(`\n🔐 ==========================================`);
-          console.log(`📱 OTP Code: ${response.data.debug.otp}`);
-          console.log(`⏰ Use this code to verify your account`);
-          console.log(`🔐 ==========================================\n`);
+        // Show OTP code if in debug mode
+        const otpCode = response.data?.debug?.otp;
+        if (otpCode) {
+          Alert.alert('Success', `OTP resent! Check console for OTP code: ${otpCode}`);
+        } else {
+          Alert.alert('Success', 'OTP resent! Please check your phone or email.');
         }
-        Alert.alert('Success', 'OTP resent! Check console (F12) for OTP code.');
         setCountdown(60);
       } else {
-        Alert.alert('Error', response.error || 'Failed to resend OTP');
+        Alert.alert('Error', response.message || 'Failed to resend OTP');
       }
     } catch (error: any) {
       console.error('Resend OTP error:', error);
-      Alert.alert('Error', error.response?.data?.error || 'Failed to resend OTP');
+      Alert.alert('Error', error.message || 'Failed to resend OTP');
     } finally {
       setResending(false);
     }

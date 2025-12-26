@@ -1,5 +1,3 @@
-import { Pattern } from '../types';
-
 /**
  * Institution Pattern interface (from backend)
  */
@@ -14,177 +12,6 @@ export interface InstitutionPattern {
   usageCount: number;
   smsExample?: string | null;
   type: 'institution' | 'country';
-}
-
-/**
- * Match SMS text against a pattern and extract transaction data
- */
-export function matchPattern(smsText: string, pattern: Pattern): {
-  matched: boolean;
-  data?: {
-    txnId: string;
-    amount: number;
-    sender: string;
-    bank: string;
-    pattern: string;
-  };
-} {
-  try {
-    // Try to match the regex first
-    // Remove (?i) flag if present (JavaScript doesn't support inline flags)
-    // Backend generates regex with (?i) prefix, but we use 'i' flag in constructor
-    let regexStr = pattern.regex;
-    if (regexStr.startsWith('(?i)')) {
-      regexStr = regexStr.substring(4); // Remove (?i) prefix
-    }
-    // Also handle (?i) in the middle (shouldn't happen, but just in case)
-    regexStr = regexStr.replace(/\(\?i\)/g, '');
-    
-    const regex = new RegExp(regexStr, 'i');
-    const match = smsText.match(regex);
-
-    // If regex doesn't match, try keyword-based extraction (fallback)
-    if (!match) {
-      // Fallback: Use keyword-based extraction (like backend's flexibleExtract)
-      return extractWithKeywords(smsText, pattern);
-    }
-    
-    // Even if regex matches, validate that we got meaningful data
-    // If regex matched but extracted wrong values, use keyword fallback
-    const extraction = (pattern.extraction || pattern.extractFields) as Record<string, any>;
-    const txnIdFromRegex = extraction.txnId ? (match[extraction.txnId] || '').trim() : '';
-    const amountFromRegex = extraction.amount ? (match[extraction.amount] || '').trim() : '';
-    
-    // If regex matched but got invalid data (like "is" for txnId), use keyword fallback
-    if (txnIdFromRegex && txnIdFromRegex.length < 6) {
-      // Transaction ID is too short (probably matched "is" or similar)
-      console.log('[PATTERN] Regex extracted invalid txnId:', txnIdFromRegex, '- using keyword fallback');
-      return extractWithKeywords(smsText, pattern);
-    }
-    
-    if (amountFromRegex && !amountFromRegex.match(/^\d/)) {
-      // Amount doesn't start with digit, probably wrong
-      console.log('[PATTERN] Regex extracted invalid amount:', amountFromRegex, '- using keyword fallback');
-      return extractWithKeywords(smsText, pattern);
-    }
-    
-    // Also check if txnId looks like a common word (is, the, etc.)
-    const commonWords = ['is', 'the', 'and', 'or', 'to', 'from', 'by', 'on', 'at', 'in'];
-    if (txnIdFromRegex && commonWords.includes(txnIdFromRegex.toLowerCase())) {
-      console.log('[PATTERN] Regex extracted common word as txnId:', txnIdFromRegex, '- using keyword fallback');
-      return extractWithKeywords(smsText, pattern);
-    }
-
-    // Extract data based on pattern extraction rules
-    // Backend uses extractFields, but we'll support both
-    
-    // Try multiple field name variations and positions
-    let txnId = '';
-    if (extraction.txnId) {
-      txnId = match[extraction.txnId] || '';
-    }
-    // Fallback: try all possible positions
-    if (!txnId) {
-      for (let i = 1; i < match.length; i++) {
-        const value = match[i];
-        // Check if it looks like a transaction ID (alphanumeric, 6+ chars, not a phone number)
-        if (value && value.match(/^[A-Z0-9]{6,}$/) && !value.match(/^\d{10,}$/)) {
-          txnId = value;
-          break;
-        }
-      }
-    }
-    
-    let amountStr = '';
-    if (extraction.amount) {
-      amountStr = match[extraction.amount] || '';
-    }
-    // Fallback: find first number that looks like money (with or without commas)
-    if (!amountStr) {
-      for (let i = 1; i < match.length; i++) {
-        const value = match[i];
-        // Match numbers with or without commas: 1,000.00 or 1000.00
-        if (value && (value.match(/^\d{1,3}(?:,\d{3})*\.\d{2}$/) || value.match(/^\d+\.\d{2}$/))) {
-          amountStr = value;
-          break;
-        }
-      }
-    }
-    
-    let sender = '';
-    if (extraction.sender) {
-      sender = match[extraction.sender] || '';
-    }
-    // Fallback: try to find sender
-    if (!sender && extraction.sender) {
-      for (let i = 1; i < match.length; i++) {
-        const value = match[i];
-        if (value && value.length > 3 && !value.match(/^\d+/) && value !== txnId && value !== amountStr) {
-          sender = value;
-          break;
-        }
-      }
-    }
-    
-    const bank = extraction.bank || pattern.bank || pattern.name || 'Unknown';
-
-    // Parse amount (remove currency symbols and commas)
-    const amount = parseFloat(amountStr.replace(/[^\d.]/g, '')) || 0;
-
-    // Require at least transaction ID OR amount
-    if (!txnId && !amount) {
-      return { matched: false };
-    }
-    
-    // If we have amount but no txnId, try to extract txnId from text directly
-    if (amount && !txnId) {
-      const txnIdMatch = smsText.match(/(?:transaction\s+number|txn|ref|id)\s*[: ]?\s*([A-Z0-9]+)/i);
-      if (txnIdMatch && txnIdMatch[1]) {
-        txnId = txnIdMatch[1];
-      }
-    }
-    
-    // If we have txnId but no amount, try to extract amount from text directly (with commas)
-    if (txnId && !amount) {
-      // Match amounts with or without commas: 1,000.00 or 1000.00
-      const amountMatch = smsText.match(/(?:received|credited|transferred|deposited|amount)\s*(?:ETB|KES|NGN|GHS)?\s*(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})/i);
-      if (amountMatch && amountMatch[1]) {
-        amountStr = amountMatch[1];
-        // Remove commas before parsing
-        const parsedAmount = parseFloat(amountStr.replace(/,/g, ''));
-        if (parsedAmount) {
-          return {
-            matched: true,
-            data: {
-              txnId: txnId.trim(),
-              amount: parsedAmount,
-              sender: sender.trim() || '',
-              bank: bank.trim(),
-              pattern: pattern.name,
-            },
-          };
-        }
-      }
-    }
-    
-    if (!txnId || !amount) {
-      return { matched: false };
-    }
-
-    return {
-      matched: true,
-      data: {
-        txnId: txnId.trim(),
-        amount,
-        sender: sender.trim(),
-        bank: bank.trim(),
-        pattern: pattern.name,
-      },
-    };
-  } catch (error) {
-    console.error('Pattern matching error:', error);
-    return { matched: false };
-  }
 }
 
 /**
@@ -206,67 +33,338 @@ export function matchInstitutionPattern(smsText: string, pattern: InstitutionPat
   };
 } {
   try {
-    // Clean regex string
+    // Clean regex string - remove PCRE case-insensitive flag (we use 'i' flag in JS)
     let regexStr = pattern.regex;
     if (regexStr.startsWith('(?i)')) {
       regexStr = regexStr.substring(4);
     }
     regexStr = regexStr.replace(/\(\?i\)/g, '');
     
-    const regex = new RegExp(regexStr, 'i');
+    // Use 's' flag (dotall) if available to match newlines with .
+    const flags = 'is'; // 'i' for case-insensitive, 's' for dotall (match newlines)
+    let regex: RegExp;
+    
+    // Check if regex contains patterns that suggest incorrectly escaped capture groups
+    // Patterns like \([ or \(\[ (escaped paren followed by bracket) or \([A-Z are likely capture groups that were incorrectly escaped
+    // Use string-based check to avoid regex escaping issues
+    const hasIncorrectlyEscapedGroups = regexStr.includes('\\(') && (
+      regexStr.includes('\\([') || 
+      regexStr.includes('\\(\\[') ||
+      /\\\([A-Z0-9]/.test(regexStr)
+    );
+    
+    // STEP 1: Try the regex AS-IS first (most patterns from backend are already valid JS regex)
+    // But if we detect incorrectly escaped groups, apply conversion first
+    let shouldConvert = hasIncorrectlyEscapedGroups;
+    let convertedRegexStr = regexStr;
+    
+    if (!shouldConvert) {
+      try {
+        regex = new RegExp(regexStr, flags);
+      } catch (directError) {
+        // STEP 2: If direct regex fails, apply PCRE-to-JS conversion
+        console.log('[Pattern Matcher] Direct regex failed, applying PCRE conversion:', directError);
+        shouldConvert = true;
+      }
+    }
+    
+    if (shouldConvert) {
+      // Apply PCRE-to-JS conversion
+      // The backend may store regex in PCRE format where:
+      // - \( and \) are literal parentheses (we need capturing groups, so convert to ( and ))
+      // - \+ is literal + (we need + as quantifier, so convert to +)
+      // - \[ and \] are literal brackets (we need character classes, so convert to [ and ])
+      // - \\s inside character classes should become \s (whitespace)
+      
+      // Step 1: Convert escaped brackets to character class brackets
+      convertedRegexStr = convertedRegexStr.replace(/\\\[/g, '[');
+      convertedRegexStr = convertedRegexStr.replace(/\\\]/g, ']');
+      
+      // Step 2: Convert double backslashes to single for escape sequences
+      // \\s -> \s, \\d -> \d, etc.
+      convertedRegexStr = convertedRegexStr.replace(/\\\\s/g, '\\s');
+      convertedRegexStr = convertedRegexStr.replace(/\\\\d/g, '\\d');
+      convertedRegexStr = convertedRegexStr.replace(/\\\\w/g, '\\w');
+      convertedRegexStr = convertedRegexStr.replace(/\\\\S/g, '\\S');
+      convertedRegexStr = convertedRegexStr.replace(/\\\\D/g, '\\D');
+      convertedRegexStr = convertedRegexStr.replace(/\\\\W/g, '\\W');
+      
+      // Step 3: Convert \( to ( for capturing groups
+      // More comprehensive: convert \( when followed by regex patterns (not non-capturing indicators)
+      // Pattern: \( followed by [ or A-Z0-9\{ or \\ (not followed by ?=!:<)
+      convertedRegexStr = convertedRegexStr.replace(/\\\((?![?=!:<'`])/g, '(');
+      
+      // Step 4: Convert \) to ) for closing capturing groups
+      // Convert \) when not followed by quantifiers or when preceded by regex patterns
+      // More permissive: convert \) that's not followed by quantifier symbols
+      convertedRegexStr = convertedRegexStr.replace(/\\\)(?![\*\+\?\{])/g, ')');
+      
+      // Step 5: Convert \+ to + for quantifiers (after group/class)
+      // Note: \\\+ matches backslash followed by + (the \+ escapes + to be literal)
+      convertedRegexStr = convertedRegexStr.replace(/([)\]])\\\+/g, '$1+');
+      
+      // Step 6: Convert \{ and \} for quantifiers like {6,} or {6,10}
+      convertedRegexStr = convertedRegexStr.replace(/\\\{/g, '{');
+      convertedRegexStr = convertedRegexStr.replace(/\\\}/g, '}');
+      
+      // Step 7: Keep \* as literal asterisk (for phone numbers like 2519****3729)
+      
+      // Step 8: Convert \? to ? for quantifiers (after group/class or quantifiers like * +)
+      // But NOT when it's part of \?: (non-capturing group) or \?= (lookahead) etc.
+      // First handle \*\? -> *? (quantifier) and \+\? -> +? (quantifier)
+      convertedRegexStr = convertedRegexStr.replace(/\\\*\\\?(?![:=!<])/g, '*?');
+      convertedRegexStr = convertedRegexStr.replace(/\\\+\\\?(?![:=!<])/g, '+?');
+      // Then handle \? after ) or ] (no space between)
+      convertedRegexStr = convertedRegexStr.replace(/([)\]]) \\\?(?![:=!<])/g, '$1?');
+      
+      // Step 9: Handle double-escaped dots - \\. -> \.
+      convertedRegexStr = convertedRegexStr.replace(/\\\\\./g, '\\.');
+      
+      try {
+        regex = new RegExp(convertedRegexStr, flags);
+      } catch (convertedError) {
+        console.warn('[Pattern Matcher] Converted regex failed, trying multiline fallback:', convertedError);
+        
+        // STEP 3: If 's' flag not supported, replace .*? and .+? with [\s\S]*? and [\s\S]+?
+        const fallbackRegexStr = convertedRegexStr
+          .replace(/\.\*\?/g, '[\\s\\S]*?')
+          .replace(/\.\+\?/g, '[\\s\\S]+?')
+          .replace(/\.\*/g, '[\\s\\S]*')
+          .replace(/\.\+/g, '[\\s\\S]+');
+          
+        try {
+          regex = new RegExp(fallbackRegexStr, 'i');
+        } catch (fallbackError) {
+          console.error('[Pattern Matcher] ❌ Failed to create regex even with fallback:', {
+            original: pattern.regex,
+            converted: convertedRegexStr,
+            fallback: fallbackRegexStr,
+            error: fallbackError,
+          });
+          return { matched: false, confidence: 0 };
+        }
+      }
+    }
+    
+    // Debug: Log the regex for troubleshooting
+    console.log('[Pattern Matcher] Testing regex:', {
+      patternName: pattern.name,
+      regexPreview: regexStr.substring(0, 150),
+      smsPreview: smsText.substring(0, 200),
+    });
+    
     const match = smsText.match(regex);
 
     if (!match) {
-      // Debug: Log why regex didn't match
-      console.log(`🔍 [Pattern Matcher] Regex didn't match for pattern ${pattern.id?.substring(0, 8)}:`, {
+      console.log('[Pattern Matcher] Regex did not match:', {
         patternName: pattern.name,
+        patternId: pattern.id,
         institution: pattern.institution,
-        regexPreview: regexStr.substring(0, 100),
-        smsPreview: smsText.substring(0, 100),
+        fullRegex: regexStr,
+        regexPreview: regexStr.substring(0, 150),
+        smsPreview: smsText.substring(0, 200),
+        extractFields: pattern.extractFields,
       });
       return { matched: false, confidence: 0 };
     }
     
-    console.log(`✅ [Pattern Matcher] Regex matched for pattern ${pattern.id?.substring(0, 8)}:`, {
+    console.log('[Pattern Matcher] Regex matched!', {
       patternName: pattern.name,
       matchGroups: match.length,
+      matchPreview: match.slice(0, 5),
     });
 
     // Extract fields using extractFields mapping
-    const extraction = pattern.extractFields as Record<string, number>;
-    console.log(`🔍 [Pattern Matcher] ExtractFields:`, extraction);
-    console.log(`🔍 [Pattern Matcher] Match groups:`, match.slice(0, 10).map((m, i) => `[${i}]: ${m?.substring(0, 50)}`));
+    // Backend format: { txnId: { group: 1, type: 'string' }, amount: { group: 2, type: 'number' } }
+    const extraction = pattern.extractFields as Record<string, { group: number; type: string } | number>;
     
-    const txnId = extraction.txnId ? (match[extraction.txnId] || '').trim() : '';
-    const amountStr = extraction.amount ? (match[extraction.amount] || '').trim() : '';
-    const sender = extraction.sender ? (match[extraction.sender] || '').trim() : '';
-    const sendFrom = extraction.sendFrom ? (match[extraction.sendFrom] || '').trim() : null;
-    const sendTo = extraction.sendTo ? (match[extraction.sendTo] || '').trim() : null;
+    // Helper to get group number (handles both old format { group: N } and new format N)
+    // Also handles altGroup for combined patterns (e.g., "received" vs "Credited" formats)
+    const getGroupNumber = (field: any): number | null => {
+      if (typeof field === 'number') return field;
+      if (field && typeof field === 'object' && 'group' in field) return field.group;
+      return null;
+    };
+    
+    // Helper to get value from group, trying altGroup if primary group is empty
+    const getGroupValue = (field: any, match: RegExpMatchArray): string => {
+      const primaryGroup = getGroupNumber(field);
+      const altGroup = field && typeof field === 'object' && 'altGroup' in field ? field.altGroup : null;
+      
+      if (primaryGroup && match[primaryGroup]) {
+        return (match[primaryGroup] || '').trim();
+      }
+      if (altGroup && match[altGroup]) {
+        return (match[altGroup] || '').trim();
+      }
+      return '';
+    };
+    
+    const txnIdGroup = getGroupNumber(extraction.txnId);
+    const amountGroup = getGroupNumber(extraction.amount);
+    const senderGroup = getGroupNumber(extraction.sender);
+    const sendFromGroup = getGroupNumber(extraction.sendFrom);
+    const sendToGroup = getGroupNumber(extraction.sendTo);
+    
+    console.log('[Pattern Matcher] Extracting fields:', {
+      txnIdGroup,
+      amountGroup,
+      senderGroup,
+      matchLength: match.length,
+      extraction,
+      extractFields: pattern.extractFields,
+    });
+    
+    // Use getGroupValue to handle altGroup fallback
+    const txnId = getGroupValue(extraction.txnId, match);
+    const amountStr = getGroupValue(extraction.amount, match);
+    const sender = getGroupValue(extraction.sender, match);
+    const sendFrom = sendFromGroup ? (match[sendFromGroup] || '').trim() : null;
+    const sendTo = sendToGroup ? (match[sendToGroup] || '').trim() : null;
 
-    console.log(`🔍 [Pattern Matcher] Extracted values:`, {
+    console.log('[Pattern Matcher] Extracted values:', {
       txnId,
       amountStr,
-      sender: sender.substring(0, 30),
+      sender,
       sendFrom,
       sendTo,
     });
 
     // Validate extracted data
     if (txnId && txnId.length < 6) {
-      console.log(`❌ [Pattern Matcher] Transaction ID too short: ${txnId}`);
+      console.log('[Pattern Matcher] ❌ txnId too short:', txnId);
       return { matched: false, confidence: 0 };
     }
 
-    const amount = parseFloat(amountStr.replace(/[^\d.]/g, '')) || 0;
+    let amount = parseFloat(amountStr.replace(/[^\d.]/g, '')) || 0;
     if (amount <= 0) {
-      console.log(`❌ [Pattern Matcher] Invalid amount: ${amountStr} -> ${amount}`);
+      console.log('[Pattern Matcher] ❌ Invalid amount:', amountStr, '->', amount);
       return { matched: false, confidence: 0 };
+    }
+    
+    // Fallback: Extract sender name from SMS text if not captured by regex
+    let extractedSender = sender;
+    let extractedSendFrom = sendFrom;
+    
+    if (!extractedSender || extractedSender === '') {
+      // Try to extract sender name from common SMS patterns
+      const senderPatterns = [
+        // "from NAME (phone)" or "from NAME"
+        /from\s+([A-Za-z\s]+?)(?:\s*\(|\s+on\s+|\s+at\s+|,|\.|$)/i,
+        // "received ... from NAME"
+        /received\s+.*?from\s+([A-Za-z\s]+?)(?:\s*\(|\s+on\s+|\s+at\s+|,|\.|$)/i,
+        // "credited ... from NAME" 
+        /credited\s+.*?from\s+([A-Za-z\s]+?)(?:\s*\(|\s+on\s+|\s+at\s+|,|\.|$)/i,
+        // "Dear NAME" at start
+        /^dear\s+([A-Za-z\s]+?)(?:\s+your\s+|,|$)/i,
+      ];
+      
+      for (const namePattern of senderPatterns) {
+        const nameMatch = smsText.match(namePattern);
+        if (nameMatch && nameMatch[1]) {
+          extractedSender = nameMatch[1].trim();
+          console.log('[Pattern Matcher] 📝 Extracted sender from SMS text:', extractedSender);
+          break;
+        }
+      }
+    }
+    
+    // Extract phone number as sendFrom if not already extracted
+    if (!extractedSendFrom || extractedSendFrom === '') {
+      // Look for phone numbers in parentheses like (2519****4345) or (0912345678)
+      const phonePatterns = [
+        /\((\d[\d*]+)\)/,  // (2519****4345)
+        /\((\+?\d[\d\s-]+)\)/,  // (+251912345678)
+      ];
+      
+      for (const phonePattern of phonePatterns) {
+        const phoneMatch = smsText.match(phonePattern);
+        if (phoneMatch && phoneMatch[1]) {
+          extractedSendFrom = phoneMatch[1].trim();
+          console.log('[Pattern Matcher] 📞 Extracted phone from SMS text:', extractedSendFrom);
+          break;
+        }
+      }
+    }
+
+    // Detect transaction direction: "transferred" = outgoing (negative), "received" = incoming (positive)
+    // Check the actual SMS text, not the pattern
+    const upperSms = smsText.toUpperCase();
+    
+    // More comprehensive outgoing patterns - check for "transferred" or "sent" keywords
+    const outgoingPatterns = [
+      /YOU\s+HAVE\s+TRANSFERRED/i,
+      /YOU\s+TRANSFERRED/i,
+      /TRANSFERRED\s+TO/i,
+      /SENT\s+TO/i,
+      /DEBITED/i,
+      /WITHDRAWN/i,
+      /PAID\s+OUT/i,
+      /TRANSFER\s+OF/i, // "Transfer of ETB"
+    ];
+    
+    // More comprehensive incoming patterns
+    const incomingPatterns = [
+      /YOU\s+HAVE\s+RECEIVED/i,
+      /YOU\s+RECEIVED/i,
+      /RECEIVED\s+FROM/i,
+      /CREDITED/i,
+      /DEPOSITED/i,
+      /CREDIT\s+OF/i, // "Credit of ETB"
+    ];
+    
+    let isOutgoing = false;
+    let isIncoming = false;
+    
+    for (const pattern of outgoingPatterns) {
+      if (pattern.test(upperSms)) {
+        isOutgoing = true;
+        break;
+      }
+    }
+    
+    for (const pattern of incomingPatterns) {
+      if (pattern.test(upperSms)) {
+        isIncoming = true;
+        break;
+      }
+    }
+    
+    // Debug logging
+    console.log('[Pattern Matcher] Direction detection:', {
+      smsPreview: smsText.substring(0, 150),
+      isOutgoing,
+      isIncoming,
+      originalAmount: amount,
+      hasTransferred: /transferred/i.test(smsText),
+      hasReceived: /received/i.test(smsText),
+    });
+    
+    // If it's an outgoing transaction, make amount negative
+    if (isOutgoing && !isIncoming && amount > 0) {
+      amount = -Math.abs(amount);
+      console.log('[Pattern Matcher] ✅ Made amount negative for outgoing transaction:', amount);
+    } else if (isIncoming && !isOutgoing) {
+      amount = Math.abs(amount);
+      console.log('[Pattern Matcher] ✅ Keeping amount positive for incoming transaction:', amount);
+    } else {
+      // If both or neither, default based on which keyword appears first
+      const transferredIndex = upperSms.indexOf('TRANSFERRED');
+      const receivedIndex = upperSms.indexOf('RECEIVED');
+      
+      if (transferredIndex !== -1 && (receivedIndex === -1 || transferredIndex < receivedIndex)) {
+        amount = -Math.abs(amount);
+        console.log('[Pattern Matcher] ✅ Made amount negative (transferred found first):', amount);
+      } else if (receivedIndex !== -1) {
+        amount = Math.abs(amount);
+        console.log('[Pattern Matcher] ✅ Keeping amount positive (received found):', amount);
+      }
     }
 
     // Calculate confidence based on what we extracted
     let confidence = 0.7; // Base confidence for regex match
     if (txnId) confidence += 0.15;
-    if (amount > 0) confidence += 0.1;
+    if (Math.abs(amount) > 0) confidence += 0.1;
     if (sender) confidence += 0.05;
     confidence = Math.min(confidence, 0.95);
 
@@ -276,10 +374,10 @@ export function matchInstitutionPattern(smsText: string, pattern: InstitutionPat
       data: {
         txnId: txnId || 'N/A',
         amount,
-        sender: sender || '',
-        sendFrom: sendFrom || null,
+        sender: extractedSender || '',
+        sendFrom: extractedSendFrom || null,
         sendTo: sendTo || null,
-        bank: pattern.bank || 'Unknown',
+        bank: pattern.bank || pattern.institution || pattern.name || 'Unknown',
         currency: pattern.currency || 'ETB',
         patternId: pattern.id,
         patternName: pattern.name,
@@ -311,7 +409,11 @@ export function findMatchingInstitutionPattern(
     data: any;
   } | null = null;
 
+  console.log(`[Pattern Matcher] Trying ${patterns.length} patterns against SMS`);
+  
   for (const pattern of patterns) {
+    console.log(`[Pattern Matcher] Trying pattern: ${pattern.name} (${pattern.id})`);
+    
     // If we have sender address, prioritize patterns for that institution
     if (senderAddress && pattern.institution) {
       // Check if sender matches institution (could be phone number or name)
@@ -322,6 +424,7 @@ export function findMatchingInstitutionPattern(
       if (normalizedSender === normalizedInstitution) {
         const result = matchInstitutionPattern(smsText, pattern);
         if (result.matched && (!bestMatch || result.confidence > bestMatch.confidence)) {
+          console.log(`[Pattern Matcher] ✅ Matched with sender priority: ${pattern.name}`);
           bestMatch = {
             confidence: result.confidence + 0.1, // Bonus for sender match
             pattern,
@@ -334,11 +437,14 @@ export function findMatchingInstitutionPattern(
     // Try matching regardless of sender
     const result = matchInstitutionPattern(smsText, pattern);
     if (result.matched && (!bestMatch || result.confidence > bestMatch.confidence)) {
+      console.log(`[Pattern Matcher] ✅ Matched: ${pattern.name}`);
       bestMatch = {
         confidence: result.confidence,
         pattern,
         data: result.data,
       };
+    } else {
+      console.log(`[Pattern Matcher] ❌ No match for: ${pattern.name}`);
     }
   }
 
@@ -354,138 +460,3 @@ export function findMatchingInstitutionPattern(
   return { matched: false, confidence: 0 };
 }
 
-/**
- * Keyword-based extraction fallback (when regex doesn't match)
- * This allows patterns to work even if the SMS structure varies slightly
- */
-function extractWithKeywords(smsText: string, pattern: Pattern): {
-  matched: boolean;
-  data?: {
-    txnId: string;
-    amount: number;
-    sender: string;
-    bank: string;
-    pattern: string;
-  };
-} {
-  // Extract transaction ID (require 6+ chars to avoid matching "is", "the", etc.)
-  const txnIdPatterns = [
-    /transaction\s+number\s+is\s+([A-Z0-9]{6,})/i, // "transaction number is CK660DRZ8I"
-    /transaction\s+number\s+([A-Z0-9]{6,})/i, // "transaction number CK660DRZ8I"
-    /by\s+transaction\s+number\s+([A-Z0-9]{6,})/i,
-    /transaction\s+id\s*[: ]+\s*([A-Z0-9]{6,})/i,
-    /txn\s*[: ]+\s*([A-Z0-9]{6,})/i,
-    /ref\s*[: ]+\s*([A-Z0-9]{6,})/i,
-    /reference\s*[: ]+\s*([A-Z0-9]{6,})/i,
-    /id\s*[: ]+\s*([A-Z0-9]{6,})/i,
-  ];
-  
-  let txnId = '';
-  for (const p of txnIdPatterns) {
-    const m = smsText.match(p);
-    if (m && m[1] && m[1].length >= 6) {
-      txnId = m[1].trim();
-      break;
-    }
-  }
-  
-  // Fallback: look for alphanumeric codes (6+ chars)
-  if (!txnId) {
-    const fallback = smsText.match(/\b([A-Z0-9]{6,})\b/);
-    if (fallback && !fallback[1].match(/^\d{10,}$/) && !fallback[1].match(/^\d{4}-\d{2}-\d{2}/)) {
-      txnId = fallback[1];
-    }
-  }
-  
-  // Extract amount (with comma support)
-  const commaNumberPattern = '\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?';
-  const currency = pattern.currency || 'ETB|KES|NGN|GHS';
-  const amountPatterns = [
-    new RegExp(`${currency}\\s*(${commaNumberPattern})`, 'i'),
-    new RegExp(`(${commaNumberPattern})\\s*${currency}`, 'i'),
-    new RegExp(`received\\s+(?:${currency})?\\s*(${commaNumberPattern})`, 'i'),
-    new RegExp(`credited\\s+(?:${currency})?\\s*(${commaNumberPattern})`, 'i'),
-    new RegExp(`transferred\\s+(?:${currency})?\\s*(${commaNumberPattern})`, 'i'),
-    new RegExp(`deposited\\s+(?:${currency})?\\s*(${commaNumberPattern})`, 'i'),
-  ];
-  
-  let amount = 0;
-  for (const p of amountPatterns) {
-    const m = smsText.match(p);
-    if (m && m[1]) {
-      const beforeMatch = smsText.substring(0, m.index || 0);
-      if (!beforeMatch.match(/balance\s+is/i)) {
-        const amountStr = m[1].replace(/,/g, '');
-        amount = parseFloat(amountStr) || 0;
-        if (amount > 0) break;
-      }
-    }
-  }
-  
-  // Extract sender
-  const senderPatterns = [
-    /from\s+([^\n\.]+?)(?:\s+to|\s+on|\.|$)/i,
-    /by\s+([^\n\.]+?)(?:\s+to|\s+on|\.|$)/i,
-    /sent\s+by\s+([^\n\.]+?)(?:\s+to|\s+on|\.|$)/i,
-  ];
-  
-  let sender = '';
-  for (const p of senderPatterns) {
-    const m = smsText.match(p);
-    if (m && m[1]) {
-      const value = m[1].trim();
-      if (value && !value.match(/^(transaction|amount|date|time|ref|id)$/i)) {
-        sender = value;
-        break;
-      }
-    }
-  }
-  
-  // Detect bank from SMS if pattern has a bank
-  let detectedBank = '';
-  const bankKeywords = ['Telebirr', 'Commercial Bank of Ethiopia', 'CBE', 'M-Pesa', 'MTN', 'Airtel'];
-  const upperSms = smsText.toUpperCase();
-  for (const keyword of bankKeywords) {
-    if (upperSms.includes(keyword.toUpperCase())) {
-      detectedBank = keyword;
-      break;
-    }
-  }
-  
-  // If pattern has a specific bank, check if it matches
-  if (pattern.bank && detectedBank && pattern.bank.toUpperCase() !== detectedBank.toUpperCase()) {
-    // Bank doesn't match, but still allow if we have txnId and amount
-    // (some patterns might be generic)
-  }
-  
-  const bank = pattern.bank || detectedBank || pattern.name || 'Unknown';
-  
-  // Require at least transaction ID OR amount
-  if (!txnId && !amount) {
-    return { matched: false };
-  }
-  
-  return {
-    matched: true,
-    data: {
-      txnId: txnId || 'N/A',
-      amount: amount || 0,
-      sender: sender || '',
-      bank: bank.trim(),
-      pattern: pattern.name,
-    },
-  };
-}
-
-/**
- * Find matching pattern for SMS text
- */
-export function findMatchingPattern(smsText: string, patterns: Pattern[]): Pattern | null {
-  for (const pattern of patterns) {
-    const result = matchPattern(smsText, pattern);
-    if (result.matched) {
-      return pattern;
-    }
-  }
-  return null;
-}

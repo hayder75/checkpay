@@ -5,29 +5,74 @@ import { Pattern } from '../types';
 export const storage = {
   // JWT Token
   async getToken(): Promise<string | null> {
-    return await AsyncStorage.getItem('checkpay_token');
+    try {
+      const token = await AsyncStorage.getItem(STORAGE_KEYS.TOKEN);
+      if (token) {
+        console.log('🔑 [Storage] Token retrieved:', token.substring(0, 20) + '...');
+      } else {
+        console.warn('⚠️ [Storage] No token found in storage');
+      }
+      return token;
+    } catch (error) {
+      console.error('❌ [Storage] Error getting token:', error);
+      return null;
+    }
   },
 
   async setToken(token: string): Promise<void> {
-    await AsyncStorage.setItem('checkpay_token', token);
+    try {
+      await AsyncStorage.setItem(STORAGE_KEYS.TOKEN, token);
+      console.log('✅ [Storage] Token saved:', token.substring(0, 20) + '...');
+    } catch (error) {
+      console.error('❌ [Storage] Error saving token:', error);
+      throw error;
+    }
   },
 
   async removeToken(): Promise<void> {
-    await AsyncStorage.removeItem('checkpay_token');
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEYS.TOKEN);
+      console.log('🗑️ [Storage] Token removed');
+    } catch (error) {
+      console.error('❌ [Storage] Error removing token:', error);
+    }
   },
 
   // User Data
   async getUser(): Promise<any | null> {
-    const data = await AsyncStorage.getItem('checkpay_user');
-    return data ? JSON.parse(data) : null;
+    try {
+      const data = await AsyncStorage.getItem(STORAGE_KEYS.USER);
+      if (data) {
+        const user = JSON.parse(data);
+        console.log('👤 [Storage] User retrieved:', user.username || user.phone || 'Unknown');
+        return user;
+      } else {
+        console.warn('⚠️ [Storage] No user found in storage');
+        return null;
+      }
+    } catch (error) {
+      console.error('❌ [Storage] Error getting user:', error);
+      return null;
+    }
   },
 
   async setUser(user: any): Promise<void> {
-    await AsyncStorage.setItem('checkpay_user', JSON.stringify(user));
+    try {
+      await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
+      console.log('✅ [Storage] User saved:', user.username || user.phone || 'Unknown');
+    } catch (error) {
+      console.error('❌ [Storage] Error saving user:', error);
+      throw error;
+    }
   },
 
   async removeUser(): Promise<void> {
-    await AsyncStorage.removeItem('checkpay_user');
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEYS.USER);
+      console.log('🗑️ [Storage] User removed');
+    } catch (error) {
+      console.error('❌ [Storage] Error removing user:', error);
+    }
   },
 
   // API Key
@@ -187,18 +232,119 @@ export const storage = {
     await AsyncStorage.removeItem('institution_patterns');
   },
 
+  // Last Processed SMS Timestamp (for resuming after restart)
+  async getLastProcessedSMSTimestamp(): Promise<number | null> {
+    const timestamp = await AsyncStorage.getItem('last_processed_sms_timestamp');
+    return timestamp ? parseInt(timestamp, 10) : null;
+  },
+
+  async setLastProcessedSMSTimestamp(timestamp: number): Promise<void> {
+    await AsyncStorage.setItem('last_processed_sms_timestamp', timestamp.toString());
+  },
+
+  // Processed SMS IDs (to avoid reprocessing)
+  async getProcessedSMSIds(): Promise<string[]> {
+    const data = await AsyncStorage.getItem('processed_sms_ids');
+    return data ? JSON.parse(data) : [];
+  },
+
+  async setProcessedSMSIds(ids: string[]): Promise<void> {
+    // Keep only last 100 IDs to avoid memory issues
+    const limitedIds = ids.slice(-100);
+    await AsyncStorage.setItem('processed_sms_ids', JSON.stringify(limitedIds));
+  },
+
+  // Business ID
+  async getBusinessId(): Promise<string | null> {
+    return await AsyncStorage.getItem('checkpay_business_id');
+  },
+
+  async setBusinessId(businessId: string): Promise<void> {
+    await AsyncStorage.setItem('checkpay_business_id', businessId);
+  },
+
+  async removeBusinessId(): Promise<void> {
+    await AsyncStorage.removeItem('checkpay_business_id');
+  },
+
+  // Validate token exists and is not empty
+  async hasValidToken(): Promise<boolean> {
+    try {
+      const token = await this.getToken();
+      return !!token && token.trim().length > 0;
+    } catch (error) {
+      console.error('❌ [Storage] Error checking token:', error);
+      return false;
+    }
+  },
+
+  // Generic storage methods for arbitrary keys
+  async getItem(key: string): Promise<string | null> {
+    return await AsyncStorage.getItem(key);
+  },
+
+  async setItem(key: string, value: string): Promise<void> {
+    await AsyncStorage.setItem(key, value);
+  },
+
+  async removeItem(key: string): Promise<void> {
+    await AsyncStorage.removeItem(key);
+  },
+
+  // Get all auth data for debugging
+  async getAuthData(): Promise<{
+    hasToken: boolean;
+    hasUser: boolean;
+    hasApiKey: boolean;
+    tokenPreview?: string;
+    userPreview?: string;
+  }> {
+    try {
+      const token = await this.getToken();
+      const user = await this.getUser();
+      const apiKey = await this.getApiKey();
+      
+      return {
+        hasToken: !!token,
+        hasUser: !!user,
+        hasApiKey: !!apiKey,
+        tokenPreview: token ? token.substring(0, 20) + '...' : undefined,
+        userPreview: user ? (user.username || user.phone || 'Unknown') : undefined,
+      };
+    } catch (error) {
+      console.error('❌ [Storage] Error getting auth data:', error);
+      return {
+        hasToken: false,
+        hasUser: false,
+        hasApiKey: false,
+      };
+    }
+  },
+
   // Clear all data (logout)
   async clearAll(): Promise<void> {
-    await AsyncStorage.multiRemove([
-      'checkpay_token',
-      'checkpay_user',
-      STORAGE_KEYS.API_KEY,
-      STORAGE_KEYS.PATTERNS,
-      'sim_iccid',
-      'onboarding_completed',
-      'user_country',
-      'selected_banks',
-      'institution_patterns',
-    ]);
+    try {
+      console.log('🗑️ [Storage] Clearing all data...');
+      await AsyncStorage.multiRemove([
+        STORAGE_KEYS.TOKEN,
+        STORAGE_KEYS.USER,
+        STORAGE_KEYS.API_KEY,
+        STORAGE_KEYS.PATTERNS,
+        'sim_iccid',
+        'onboarding_completed',
+        'user_country',
+        'selected_banks',
+        'institution_patterns',
+        'checkpay_business_id',
+        'country_code',
+        'processed_sms_ids',
+        'last_processed_sms_timestamp',
+        'pending_background_sms',
+      ]);
+      console.log('✅ [Storage] All data cleared');
+    } catch (error) {
+      console.error('❌ [Storage] Error clearing data:', error);
+      throw error;
+    }
   },
 };

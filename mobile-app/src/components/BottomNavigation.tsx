@@ -1,28 +1,43 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { Home, Building2, CreditCard, User } from 'lucide-react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { Home, Building2, History, User, ScanLine, CheckCircle2 } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
 
-export type Tab = 'home' | 'banks' | 'transactions' | 'profile';
+export type Tab = 'home' | 'banks' | 'transactions' | 'ocr' | 'profile' | 'verify';
 
 interface Props {
   currentTab: Tab;
   onTabChange: (tab: Tab) => void;
+  isEmployee?: boolean;
 }
 
-export default function BottomNavigation({ currentTab, onTabChange }: Props) {
+export default function BottomNavigation({ currentTab, onTabChange, isEmployee = false }: Props) {
   const { colors } = useTheme();
 
-  const tabs: { id: Tab; label: string; Icon: any }[] = [
+  const allTabs: { id: Tab; label: string; Icon: any }[] = [
     { id: 'home', label: 'Home', Icon: Home },
-    { id: 'banks', label: 'Banks', Icon: Building2 },
-    { id: 'transactions', label: 'Transactions', Icon: CreditCard },
-    { id: 'profile', label: 'Profile', Icon: User },
+    { id: 'transactions', label: 'History', Icon: History },
+    { id: 'verify', label: 'Verify', Icon: CheckCircle2 },
+    { id: 'ocr', label: 'Scan', Icon: ScanLine },
   ];
 
+  // For employees, only show OCR tab
+  const tabs = isEmployee 
+    ? allTabs.filter(tab => tab.id === 'ocr')
+    : allTabs;
+
+  const handleTabChange = (tab: Tab) => {
+    // If employee tries to access non-OCR tab, force OCR
+    if (isEmployee && tab !== 'ocr') {
+      onTabChange('ocr');
+    } else {
+      onTabChange(tab);
+    }
+  };
+
   return (
-    <View style={styles.wrapper}>
-      <View style={[styles.container, { backgroundColor: colors.surface }]}>
+    <View style={[styles.wrapper, { backgroundColor: colors.background }]}>
+      <View style={[styles.container, { backgroundColor: colors.surface, shadowColor: colors.text }]}>
         {tabs.map((tab) => {
           const isActive = currentTab === tab.id;
           const IconComponent = tab.Icon;
@@ -31,20 +46,22 @@ export default function BottomNavigation({ currentTab, onTabChange }: Props) {
             <TouchableOpacity
               key={tab.id}
               style={styles.tab}
-              onPress={() => onTabChange(tab.id)}
+              onPress={() => handleTabChange(tab.id)}
               activeOpacity={0.7}
             >
-              <IconComponent
-                size={24}
-                color={isActive ? '#000000' : colors.textSecondary}
-                strokeWidth={isActive ? 2.5 : 2}
-              />
+              <View style={[styles.iconContainer, isActive && { backgroundColor: colors.primary + '15' }]}>
+                <IconComponent
+                  size={24}
+                  color={isActive ? colors.primary : colors.textSecondary}
+                  strokeWidth={isActive ? 2.5 : 2}
+                />
+              </View>
               <Text
                 style={[
                   styles.label,
                   {
-                    color: isActive ? '#000000' : colors.textSecondary,
-                    fontWeight: isActive ? '600' : '400',
+                    color: isActive ? colors.primary : colors.textSecondary,
+                    fontWeight: isActive ? '600' : '500',
                   },
                 ]}
               >
@@ -61,35 +78,38 @@ export default function BottomNavigation({ currentTab, onTabChange }: Props) {
 const styles = StyleSheet.create({
   wrapper: {
     alignItems: 'center',
-    paddingBottom: 20,
+    paddingBottom: Platform.OS === 'ios' ? 20 : 10,
     paddingHorizontal: 20,
   },
   container: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
-    borderRadius: 24,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    minHeight: 70,
+    borderRadius: 30,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
     width: '100%',
     maxWidth: 400,
-    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
     shadowRadius: 12,
     elevation: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.05)',
   },
   tab: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    minWidth: 60,
+    gap: 2,
+  },
+  iconContainer: {
+    padding: 6,
+    borderRadius: 20,
   },
   label: {
-    fontSize: 11,
-    marginTop: 2,
+    fontSize: 10,
+    marginTop: 0,
   },
 });
 

@@ -5,15 +5,8 @@ let SmsAndroid: any = null;
 let smsModuleLoadError: any = null;
 try {
   SmsAndroid = require('react-native-get-sms-android');
-  console.log('✅ [SMS Reader] react-native-get-sms-android module loaded successfully');
 } catch (error) {
   smsModuleLoadError = error;
-  console.warn('⚠️ [SMS Reader] react-native-get-sms-android not available');
-  console.warn('⚠️ [SMS Reader] Error loading module:', error instanceof Error ? error.message : String(error));
-  console.warn('⚠️ [SMS Reader] This is normal if:');
-  console.warn('   1. App is running in Expo Go (native modules not supported)');
-  console.warn('   2. APK was built before installing react-native-get-sms-android');
-  console.warn('   3. App needs to be rebuilt with: npx expo run:android');
 }
 
 export interface SMSMessage {
@@ -85,23 +78,17 @@ export async function requestSMSPermission(): Promise<boolean> {
  * Note: Requires READ_SMS permission and app must be default SMS handler
  */
 export async function readSMSMessages(limit: number = 100): Promise<SMSMessage[]> {
-  console.log('📱 [SMS Reader] Starting SMS read operation...');
-  console.log('📱 [SMS Reader] Platform:', Platform.OS);
-  console.log('📱 [SMS Reader] Requested limit:', limit);
-  
   if (Platform.OS !== 'android') {
-    console.warn('📱 [SMS Reader] Not Android platform, returning empty array');
+    console.warn('⚠️ [SMS Reader] Not Android platform, cannot read SMS');
     return [];
   }
 
   try {
     // Check permission first
-    console.log('📱 [SMS Reader] Checking SMS permission...');
     const hasPermission = await requestSMSPermission();
-    console.log('📱 [SMS Reader] Permission check result:', hasPermission);
     
     if (!hasPermission) {
-      console.warn('❌ [SMS Reader] Permission not granted, showing alert');
+      console.warn('❌ [SMS Reader] SMS permission not granted');
       Alert.alert(
         'Permission Required',
         'SMS permission is required to scan for financial messages. ' +
@@ -114,70 +101,58 @@ export async function readSMSMessages(limit: number = 100): Promise<SMSMessage[]
           },
         ]
       );
-      console.warn('📱 [SMS Reader] Returning empty array due to missing permission');
       return [];
     }
-    
-    console.log('✅ [SMS Reader] Permission granted, proceeding to read SMS...');
+
+    console.log('✅ [SMS Reader] Permission granted, attempting to read SMS...');
+    console.log('📦 [SMS Reader] SmsAndroid module available:', !!SmsAndroid);
+    if (smsModuleLoadError) {
+      console.error('❌ [SMS Reader] Error loading react-native-get-sms-android:', smsModuleLoadError);
+    }
 
     try {
       // Try to use react-native-get-sms-android first
       if (SmsAndroid) {
-        console.log('📱 [SMS Reader] Using react-native-get-sms-android...');
-        
+        console.log('📱 [SMS Reader] Using react-native-get-sms-android to read SMS...');
         return new Promise((resolve, reject) => {
           const filter = {
             box: 'inbox', // 'inbox' (default), 'sent', 'draft', 'outbox', 'failed', 'queued', and 'all'
             maxCount: limit, // Limit the number of messages returned
           };
-
-          console.log('📱 [SMS Reader] Calling SmsAndroid.list() with filter:', filter);
+          
+          console.log('📋 [SMS Reader] Reading SMS with filter:', JSON.stringify(filter));
           
           SmsAndroid.list(
             JSON.stringify(filter),
             (fail: any) => {
-              console.error('❌ [SMS Reader] SmsAndroid.list() failed:', fail);
+              console.error('❌ [SMS Reader] Error from SmsAndroid.list:', fail);
               reject(new Error(fail));
             },
             (count: number, smsList: string) => {
               try {
-                console.log(`📱 [SMS Reader] SmsAndroid.list() returned: count=${count}`);
-                
+                console.log(`📥 [SMS Reader] Received ${count} SMS messages from native module`);
                 const messages = JSON.parse(smsList);
-                console.log(`📱 [SMS Reader] Parsed ${messages.length} SMS messages`);
                 
                 if (!Array.isArray(messages)) {
-                  console.warn('⚠️ [SMS Reader] SmsAndroid returned non-array:', typeof messages);
+                  console.warn('⚠️ [SMS Reader] SMS list is not an array:', typeof messages);
                   resolve([]);
                   return;
                 }
 
-                const formattedMessages = messages.map((msg: any, index: number) => {
-                  const formatted = {
+                console.log(`✅ [SMS Reader] Successfully parsed ${messages.length} SMS messages`);
+                const formattedMessages = messages.map((msg: any) => {
+                  return {
                     id: msg._id || msg.id || String(msg.date || Date.now()),
                     body: msg.body || msg.message || '',
                     address: msg.address || msg.phoneNumber || '',
                     date: msg.date || msg.dateSent || Date.now(),
                   };
-                  
-                  if (index < 3) {
-                    console.log(`📱 [SMS Reader] Sample message ${index + 1}:`, {
-                      id: formatted.id,
-                      address: formatted.address,
-                      bodyLength: formatted.body.length,
-                      bodyPreview: formatted.body.substring(0, 50) + '...',
-                      date: new Date(formatted.date).toISOString(),
-                    });
-                  }
-                  
-                  return formatted;
                 });
                 
-                console.log(`✅ [SMS Reader] Successfully read ${formattedMessages.length} SMS messages`);
                 resolve(formattedMessages);
-              } catch (parseError) {
+              } catch (parseError: any) {
                 console.error('❌ [SMS Reader] Error parsing SMS list:', parseError);
-                console.error('❌ [SMS Reader] Raw SMS list:', smsList);
+                console.error('📄 [SMS Reader] Raw SMS list (first 500 chars):', smsList?.substring(0, 500));
                 reject(parseError);
               }
             }
@@ -185,14 +160,9 @@ export async function readSMSMessages(limit: number = 100): Promise<SMSMessage[]
         });
       }
       
-      // Fallback: Try to find native module in NativeModules
-      console.log('📱 [SMS Reader] react-native-get-sms-android not available');
-      if (smsModuleLoadError) {
-        console.warn('📱 [SMS Reader] Module load error:', smsModuleLoadError instanceof Error ? smsModuleLoadError.message : String(smsModuleLoadError));
-      }
-      console.log('📱 [SMS Reader] Checking NativeModules as fallback...');
-      console.log('📱 [SMS Reader] Available NativeModules:', Object.keys(NativeModules).length > 0 ? Object.keys(NativeModules) : 'NONE (this indicates native modules are not linked)');
+      console.warn('⚠️ [SMS Reader] react-native-get-sms-android not available, trying fallback...');
       
+      // Fallback: Try to find native module in NativeModules
       const possibleModules = [
         'SMSModule',
         'GetSMS',
@@ -204,31 +174,25 @@ export async function readSMSMessages(limit: number = 100): Promise<SMSMessage[]
       
       for (const moduleName of possibleModules) {
         if (NativeModules[moduleName]) {
+          console.log(`✅ [SMS Reader] Found native module: ${moduleName}`);
           nativeModule = NativeModules[moduleName];
-          console.log(`✅ [SMS Reader] Found native SMS module: ${moduleName}`);
           break;
         }
       }
       
       if (!nativeModule) {
-        console.warn('⚠️ [SMS Reader] No native SMS module found');
-        console.warn(
-          '⚠️ [SMS Reader] SMS reading requires native module implementation.\n' +
-          'Current status: No native SMS module found.\n' +
-          'To enable SMS reading, you need to:\n' +
-          '1. Ensure react-native-get-sms-android is properly linked\n' +
-          '2. Rebuild the app (npx expo run:android or build a new APK)\n' +
-          '3. Make sure the app is not in Expo Go (requires development build)'
-        );
+        console.error('❌ [SMS Reader] No native SMS module found. Available modules:', Object.keys(NativeModules));
+        console.error('❌ [SMS Reader] react-native-get-sms-android may not be properly linked.');
+        console.error('❌ [SMS Reader] Make sure you have rebuilt the app after installing the package.');
         return [];
       }
       
       if (nativeModule && typeof nativeModule.getAll === 'function') {
-        console.log(`📱 [SMS Reader] Calling native module getAll() with limit: ${limit}`);
+        console.log('📱 [SMS Reader] Using fallback native module to read SMS...');
         const messages = await nativeModule.getAll({ limit: limit });
         
         if (messages && Array.isArray(messages)) {
-          console.log(`✅ [SMS Reader] Successfully read ${messages.length} SMS messages`);
+          console.log(`✅ [SMS Reader] Successfully read ${messages.length} SMS messages from fallback module`);
           return messages.map((msg: any) => ({
             id: msg._id || msg.id || String(msg.date || Date.now()),
             body: msg.body || msg.message || '',
@@ -238,23 +202,68 @@ export async function readSMSMessages(limit: number = 100): Promise<SMSMessage[]
         }
       }
       
-      console.warn('📱 [SMS Reader] Returning empty array - no working SMS module available');
+      console.warn('⚠️ [SMS Reader] Native module found but getAll method not available');
       return [];
-    } catch (error) {
-      console.error('❌ [SMS Reader] Error reading SMS:', error);
+    } catch (error: any) {
+      console.error('❌ [SMS Reader] Error reading SMS messages:', error);
       console.error('❌ [SMS Reader] Error details:', {
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
       });
       return [];
     }
-  } catch (error) {
-    console.error('❌ [SMS Reader] Error reading SMS messages:', error);
+  } catch (error: any) {
+    console.error('❌ [SMS Reader] Fatal error in readSMSMessages:', error);
     console.error('❌ [SMS Reader] Error details:', {
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
     });
     return [];
+  }
+}
+
+/**
+ * Check if SMS reading is available and properly configured
+ * This helps diagnose issues with SMS reading
+ */
+export async function checkSMSReadingCapability(): Promise<{
+  available: boolean;
+  hasPermission: boolean;
+  hasNativeModule: boolean;
+  error?: string;
+}> {
+  if (Platform.OS !== 'android') {
+    return {
+      available: false,
+      hasPermission: false,
+      hasNativeModule: false,
+      error: 'SMS reading is only available on Android',
+    };
+  }
+
+  try {
+    const hasPermission = await PermissionsAndroid.check(
+      PermissionsAndroid.PERMISSIONS.READ_SMS
+    );
+
+    const hasNativeModule = !!SmsAndroid;
+    const moduleError = smsModuleLoadError ? smsModuleLoadError.message : null;
+
+    return {
+      available: hasPermission && hasNativeModule,
+      hasPermission,
+      hasNativeModule,
+      error: moduleError || (!hasNativeModule ? 'react-native-get-sms-android not available. Make sure the app has been rebuilt after installing the package.' : undefined),
+    };
+  } catch (error: any) {
+    return {
+      available: false,
+      hasPermission: false,
+      hasNativeModule: false,
+      error: error.message || 'Unknown error checking SMS capability',
+    };
   }
 }
 

@@ -20,22 +20,27 @@ const api = axios.create({
   timeout: 30000, // 30 second timeout (increased for mobile networks)
 });
 
-// Request interceptor - Add JWT token for most endpoints, API key only for verify endpoint
+// Request interceptor - Add JWT token for most endpoints, API key for verify and ingest endpoints
 api.interceptors.request.use(
   async (config) => {
     const token = await storage.getToken();
     const apiKey = await storage.getApiKey();
     
-    // Use API key only for verify endpoint, JWT token for everything else
-    if (config.url?.includes('/verify')) {
+    // Use API key for verify and ingest endpoints (they require API key authentication)
+    // But allow JWT fallback for authenticated users
+    if (config.url?.includes('/verify') || config.url?.includes('/ingest')) {
       if (apiKey) {
         config.headers['X-API-Key'] = apiKey;
-        console.log('🔑 [API] Using API key for verification endpoint');
+        console.log(`🔑 [API] Using API key for ${config.url?.includes('/verify') ? 'verification' : 'ingest'} endpoint`);
+      } else if (token) {
+        // Fallback to JWT token if no API key (for authenticated users)
+        console.log(`🔑 [API] No API key found, using JWT token for ${config.url?.includes('/verify') ? 'verification' : 'ingest'} endpoint`);
+        config.headers.Authorization = `Bearer ${token}`;
       } else {
-        console.warn('⚠️ [API] No API key found for verify endpoint');
+        console.warn(`⚠️ [API] No API key or JWT token found for ${config.url} endpoint`);
       }
     } else {
-      // Use JWT token for all other endpoints (including ingest)
+      // Use JWT token for all other endpoints
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
         console.log('🔑 [API] Using JWT token for authentication');
@@ -116,9 +121,26 @@ api.interceptors.response.use(
     }
     
     if (error.response?.status === 401) {
-      // Clear token and API key on unauthorized
-      await storage.removeToken();
-      await storage.removeApiKey();
+      const errorMessage = error.response?.data?.error || '';
+      const url = error.config?.url || '';
+      
+      // Only clear JWT token if it's a JWT authentication error (not API key error)
+      // Don't clear token for /ingest or /verify endpoints - they use API keys
+      if (url.includes('/ingest') || url.includes('/verify')) {
+        // API key authentication failed - don't clear JWT token
+        console.warn(`🔒 [API] 401 Unauthorized for ${url} - API key authentication failed: ${errorMessage}`);
+        // Only clear API key if it's invalid
+        if (errorMessage.includes('Invalid API key') || errorMessage.includes('API key required')) {
+          console.warn('⚠️ [API] API key may be invalid, but keeping it for retry');
+        }
+      } else {
+        // JWT authentication failed - clear token
+        console.warn('🔒 [API] 401 Unauthorized - JWT token authentication failed, clearing token');
+        await storage.removeToken();
+        await storage.removeUser();
+        console.log('✅ [API] JWT token cleared due to 401 error');
+        // Keep API key as it might still be valid
+      }
     }
     return Promise.reject(error);
   }
@@ -136,7 +158,7 @@ export const removeApiKey = () => {
 
 // Auth API
 export const authAPI = {
-  register: async (data: { username?: string; phone?: string; country?: string }) => {
+  register: async (data: { username?: string; phone?: string; country?: string; password: string; role?: string }) => {
     const response = await api.post('/auth/register', data);
     return response.data;
   },
@@ -165,7 +187,8 @@ export const patternsAPI = {
     return response.data;
   },
   createWithAI: async (data: { smsText: string; name: string; description?: string }) => {
-    const response = await api.post('/patterns/create-with-ai', data);
+    // Backend uses the same endpoint with useAI flag
+    const response = await api.post('/patterns', { ...data, useAI: true });
     return response.data;
   },
   getAll: async () => {
@@ -186,6 +209,22 @@ export const premiumAPI = {
   },
   upgrade: async (txnId: string) => {
     const response = await api.post('/premium/upgrade', { txnId });
+    return response.data;
+  },
+};
+
+// Business API
+export const businessAPI = {
+  getAll: async () => {
+    const response = await api.get('/businesses');
+    return response.data;
+  },
+  getOne: async (id: string) => {
+    const response = await api.get(`/businesses/${id}`);
+    return response.data;
+  },
+  create: async (data: { name: string; description?: string; primaryInstitution?: string }) => {
+    const response = await api.post('/businesses', data);
     return response.data;
   },
 };
@@ -282,6 +321,53 @@ export const checkSimRegistration = async (iccid: string | null) => {
   }
 };
 
+// Test API connection
+export const testAPIConnection = async (): Promise<{ success: boolean; message: string; details?: any }> => {
+  try {
+    const token = await storage.getToken();
+    console.log('🔍 [API] Testing connection to:', API_BASE_URL);
+    
+    // Try a simple authenticated endpoint
+    const response = await api.get('/auth/me');
+    
+    return {
+      success: true,
+      message: 'Connection successful',
+      details: {
+        baseURL: API_BASE_URL,
+        hasToken: !!token,
+        user: response.data?.data,
+      },
+    };
+  } catch (error: any) {
+    const errorDetails = {
+      baseURL: API_BASE_URL,
+      error: error.message,
+      code: error.code,
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      data: error.response?.data,
+    };
+    
+    console.error('❌ [API] Connection test failed:', errorDetails);
+    
+    let message = 'Connection failed';
+    if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
+      message = `Cannot reach backend at ${API_BASE_URL}. Check if backend is running.`;
+    } else if (error.response?.status === 401) {
+      message = 'Authentication failed. Please sign in again.';
+    } else if (error.response?.status === 404) {
+      message = `Endpoint not found. Check if backend route /api/ingest exists.`;
+    }
+    
+    return {
+      success: false,
+      message,
+      details: errorDetails,
+    };
+  }
+};
+
 // Send transaction to backend
 export const ingestTransaction = async (transaction: {
   txnId: string;
@@ -293,25 +379,62 @@ export const ingestTransaction = async (transaction: {
   iccid?: string | null; // SIM card ICCID
   sendFrom?: string | null;
   sendTo?: string | null;
+  source?: 'SMS' | 'OCR' | 'MANUAL'; // Transaction source
 }) => {
+  // Get or fetch business ID (optional - backend will handle if not provided)
+  let businessId = await storage.getBusinessId();
+  
+  // If no business ID stored, try to fetch user's businesses
+  if (!businessId) {
+    try {
+      const businessesResponse = await businessAPI.getAll();
+      if (businessesResponse.success && businessesResponse.data) {
+        const businesses = Array.isArray(businessesResponse.data) ? businessesResponse.data : [];
+        if (businesses.length > 0) {
+          businessId = businesses[0].id;
+          await storage.setBusinessId(businessId);
+          console.log('✅ [API] Using business ID:', businessId);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching businesses:', error);
+      // Continue without businessId - backend will handle it
+    }
+  }
+  
+  // Ensure sender is not empty (required field)
+  const sender = transaction.sender?.trim() || transaction.bank || 'Unknown';
+  
   // Backend expects these fields
-  const payload = {
+  const payload: any = {
     txnId: transaction.txnId,
     amount: transaction.amount,
-    sender: transaction.sender,
-    bank: transaction.bank,
-    pattern: transaction.pattern,
+    sender: sender, // Required - must not be empty
+    bank: transaction.bank || '',
+    pattern: transaction.pattern || '',
     smsText: transaction.smsText,
+    source: transaction.source || 'SMS', // Default to SMS if not specified
+    ...(businessId && { businessId }), // Only include if we have one
     ...(transaction.iccid && { iccid: transaction.iccid }),
     ...(transaction.sendFrom && { sendFrom: transaction.sendFrom }),
     ...(transaction.sendTo && { sendTo: transaction.sendTo }),
   };
   
   const token = await storage.getToken();
+  const apiKey = await storage.getApiKey();
   console.log('📤 [API] Sending transaction to backend:', {
     endpoint: '/ingest',
-    payload: { ...payload, smsText: payload.smsText?.substring(0, 50) + '...' },
+    baseURL: API_BASE_URL,
+    fullURL: `${API_BASE_URL}/ingest`,
+    payload: { 
+      ...payload, 
+      smsText: payload.smsText?.substring(0, 50) + '...',
+      sender: payload.sender || 'Unknown',
+    },
     hasToken: !!token,
+    hasApiKey: !!apiKey,
+    authMethod: 'API-Key (required for /ingest)',
+    apiKeyPreview: apiKey ? apiKey.substring(0, 20) + '...' : 'none',
   });
   
   try {
@@ -321,16 +444,42 @@ export const ingestTransaction = async (transaction: {
       success: response.data.success,
       txnId: transaction.txnId,
       transactionId: response.data.data?.id,
+      status: response.status,
     });
     
     return response.data;
   } catch (error: any) {
-    console.error('❌ [API] Failed to send transaction:', {
+    const errorDetails = {
       txnId: transaction.txnId,
       error: error.message,
+      code: error.code,
       status: error.response?.status,
+      statusText: error.response?.statusText,
       data: error.response?.data,
-    });
+      fullURL: `${API_BASE_URL}/ingest`,
+      hasToken: !!token,
+    };
+    
+    console.error('❌ [API] Failed to send transaction:', errorDetails);
+    
+    // Log specific error types
+    if (error.response?.status === 401) {
+      const errorMsg = error.response?.data?.error || '';
+      if (errorMsg.includes('API key')) {
+        console.error('🔒 [API] Authentication failed - API key required for /ingest endpoint');
+        console.error('   Make sure API key is stored and being sent in X-API-Key header');
+      } else {
+        console.error('🔒 [API] Authentication failed - token may be expired or invalid');
+      }
+    } else if (error.response?.status === 400) {
+      console.error('📋 [API] Validation error - check payload format:', error.response?.data);
+    } else if (error.response?.status === 403) {
+      console.error('🚫 [API] Forbidden - check business access permissions');
+    } else if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
+      console.error('🌐 [API] Network error - cannot reach backend server');
+      console.error('   Check if backend is running and API_BASE_URL is correct:', API_BASE_URL);
+    }
+    
     throw error;
   }
 };

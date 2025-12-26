@@ -6,15 +6,18 @@ import {
   StyleSheet,
   RefreshControl,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native';
-import { api, dashboardAPI } from '../services/api';
+import { LineChart } from 'react-native-chart-kit';
+import api, { dashboardAPI } from '../services/api';
 import { useTheme } from '../contexts/ThemeContext';
 import { storage } from '../services/storage';
-import { smsService } from '../services/smsService';
 
 interface Props {
   apiKey?: string | null;
 }
+
+const { width } = Dimensions.get('window');
 
 export default function AnalyticsScreen({ apiKey }: Props) {
   const { colors } = useTheme();
@@ -109,114 +112,128 @@ export default function AnalyticsScreen({ apiKey }: Props) {
   };
 
   // Generate weekly spending data for chart
-  const getWeeklySpending = () => {
-    const days = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-    const weekData = days.map(() => 0);
+  const getWeeklySpendingData = () => {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const weekData = new Array(7).fill(0);
     
     transactions.forEach(tx => {
       const date = new Date(tx.receivedAt);
       const dayOfWeek = date.getDay();
       weekData[dayOfWeek] += Math.abs(tx.amount);
     });
-    
-    const max = Math.max(...weekData, 1);
-    return weekData.map(amount => ({
-      value: amount,
-      height: (amount / max) * 100, // Percentage for bar height
-    }));
+
+    // If no data, show a flat line with 0s
+    if (weekData.every(val => val === 0)) {
+        return {
+            labels: days,
+            datasets: [{ data: [0, 0, 0, 0, 0, 0, 0] }]
+        };
+    }
+
+    return {
+      labels: days,
+      datasets: [
+        {
+          data: weekData,
+          color: (opacity = 1) => colors.primary, // optional
+          strokeWidth: 2 // optional
+        }
+      ],
+    };
   };
 
-  const weeklyData = getWeeklySpending();
+  const chartData = getWeeklySpendingData();
   const categories = getExpenseCategories();
 
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: colors.background }]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+      showsVerticalScrollIndicator={false}
     >
-      <View style={styles.header}>
-        <Text style={[styles.title, { color: colors.text }]}>Analytics</Text>
-      </View>
-
-      {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={[styles.loadingText, { color: colors.text }]}>Loading...</Text>
-        </View>
-      ) : (
-        <>
-          {/* My Spending Section */}
-          <View style={styles.section}>
-            <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>My Spending</Text>
-            <Text style={[styles.spendingAmount, { color: colors.text }]}>
-              ${(stats?.spending?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </Text>
-            {stats?.spending?.change && (
-              <View style={styles.changeRow}>
-                <Text style={[styles.changeText, { color: colors.primary }]}>
-                  ▲ {Math.abs(stats.spending.change).toFixed(1)}% From last week
-                </Text>
-              </View>
-            )}
-            
-            {/* Weekly Chart */}
-            <View style={styles.chartContainer}>
-              <View style={styles.chart}>
-                {weeklyData.map((day, index) => (
-                  <View key={index} style={styles.chartBarContainer}>
-                    <View
-                      style={[
-                        styles.chartBar,
-                        {
-                          height: `${day.height}%`,
-                          backgroundColor: colors.primary,
-                          minHeight: day.value > 0 ? 8 : 0,
-                        },
-                      ]}
-                    />
-                    <Text style={[styles.chartLabel, { color: colors.textSecondary }]}>
-                      {['S', 'M', 'T', 'W', 'T', 'F', 'S'][index]}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            </View>
+          {/* Header (Separate) */}
+          <View style={styles.header}>
+            <Text style={[styles.title, { color: colors.text }]}>Analytics</Text>
           </View>
 
-          {/* Expense Section */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Expense</Text>
-              <View style={styles.monthSelector}>
-                <Text style={[styles.monthText, { color: colors.text }]}>
-                  {new Date().toLocaleString('default', { month: 'short', year: 'numeric' })}
-                </Text>
-                <Text style={styles.dropdownIcon}>▼</Text>
-              </View>
+          {/* Unified Card (Spending + Graph) */}
+          <View style={styles.unifiedCard}>
+            {/* Background Pattern */}
+            <View style={styles.cardPattern} />
+            <View style={styles.cardPattern2} />
+
+            <View style={styles.spendingSection}>
+              <Text style={styles.spendingLabel}>My Spending</Text>
+              <Text style={styles.spendingAmount}>
+                ${(stats?.spending?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </Text>
+              {stats?.spending?.change !== undefined && (
+                <View style={styles.changeRow}>
+                  <Text style={styles.changeText}>
+                    {stats.spending.change >= 0 ? '▲' : '▼'} {Math.abs(stats.spending.change).toFixed(1)}% From last week
+                  </Text>
+                </View>
+              )}
             </View>
-            <Text style={[styles.expenseAmount, { color: colors.text }]}>
-              -${(stats?.spending?.thisWeek || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </Text>
             
-            {/* Simple line chart representation */}
-            <View style={styles.lineChartContainer}>
-              <View style={styles.lineChart}>
-                <View style={[styles.lineChartLine, { borderColor: colors.primary }]} />
-                <View style={[styles.lineChartPoint, { backgroundColor: colors.primary }]} />
-              </View>
+            {/* Continuous Line Chart */}
+            <View style={styles.chartContainer}>
+                <LineChart
+                    data={chartData}
+                    width={width - 48} // Width minus margins
+                    height={160}
+                    yAxisLabel=""
+                    yAxisSuffix=""
+                    withHorizontalLabels={false}
+                    withVerticalLabels={false}
+                    chartConfig={{
+                        backgroundColor: '#1C1C1E',
+                        backgroundGradientFrom: '#1C1C1E',
+                        backgroundGradientTo: '#1C1C1E',
+                        decimalPlaces: 0,
+                        color: (opacity = 1) => `rgba(255, 107, 0, ${opacity})`, // Orange accent
+                        labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                        style: {
+                            borderRadius: 0
+                        },
+                        propsForDots: {
+                            r: "0",
+                        },
+                        propsForBackgroundLines: {
+                            strokeWidth: 0,
+                        },
+                        fillShadowGradientFrom: '#FF6B00',
+                        fillShadowGradientTo: '#FF6B00',
+                        fillShadowGradientFromOpacity: 0.2,
+                        fillShadowGradientToOpacity: 0,
+                    }}
+                    bezier
+                    style={{
+                        marginVertical: 0,
+                        paddingRight: 0,
+                        paddingLeft: 0,
+                    }}
+                    withInnerLines={false}
+                    withOuterLines={false}
+                    withVerticalLines={false}
+                    withHorizontalLines={false}
+                    withDots={false}
+                />
             </View>
           </View>
 
           {/* Expense Categories */}
           <View style={styles.section}>
-            <Text style={[styles.sectionLabel, { color: colors.textSecondary, marginBottom: 16 }]}>Expense Categories</Text>
+            <Text style={[styles.sectionLabel, { color: colors.textSecondary, marginBottom: 20 }]}>Expense Categories</Text>
             {categories.length === 0 ? (
               <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No expense data yet</Text>
             ) : (
               categories.map((category, index) => (
-                <View key={index} style={styles.categoryItem}>
-                  <View style={[styles.categoryDot, { backgroundColor: colors.primary }]} />
-                  <Text style={[styles.categoryName, { color: colors.text }]}>{category.name}</Text>
+                <View key={index} style={[styles.categoryItem, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <View style={styles.categoryLeft}>
+                      <View style={[styles.categoryDot, { backgroundColor: colors.primary }]} />
+                      <Text style={[styles.categoryName, { color: colors.text }]}>{category.name}</Text>
+                  </View>
                   <Text style={[styles.categoryAmount, { color: colors.text }]}>
                     ${category.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </Text>
@@ -233,136 +250,133 @@ export default function AnalyticsScreen({ apiKey }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#ffffff',
   },
   header: {
-    padding: 20,
+    paddingHorizontal: 24,
     paddingTop: 60,
+    paddingBottom: 20,
   },
   title: {
     fontSize: 28,
-    fontWeight: 'bold',
+    fontWeight: '700',
+    letterSpacing: -0.5,
+  },
+  unifiedCard: {
+    marginHorizontal: 24,
+    marginBottom: 24,
+    borderRadius: 32,
+    paddingTop: 24,
+    paddingBottom: 0,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 10,
+    overflow: 'hidden',
+    backgroundColor: '#1C1C1E', // Dark background
+  },
+  cardPattern: {
+    position: 'absolute',
+    top: -50,
+    right: -50,
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: '#FF6B00', // Orange accent
+    opacity: 0.05, // Subtle pattern
+  },
+  cardPattern2: {
+    position: 'absolute',
+    bottom: -30,
+    left: -30,
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    backgroundColor: '#FF6B00',
+    opacity: 0.03,
   },
   center: {
     padding: 40,
     alignItems: 'center',
   },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-  },
   section: {
-    padding: 20,
-    paddingTop: 0,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
+    paddingHorizontal: 24,
+    marginBottom: 20,
   },
   sectionLabel: {
-    fontSize: 14,
-    marginBottom: 8,
+    fontSize: 13,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  spendingSection: {
+    paddingHorizontal: 24,
+    marginBottom: 4, // Reduced gap
+  },
+  spendingLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    opacity: 0.8,
+    color: '#fff',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 4,
   },
   spendingAmount: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    marginBottom: 8,
+    fontSize: 36,
+    fontWeight: '700',
+    marginBottom: 6,
+    letterSpacing: -1,
+    color: '#fff',
   },
   changeRow: {
-    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   changeText: {
-    fontSize: 14,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fff',
+    opacity: 0.9,
   },
   chartContainer: {
-    marginTop: 16,
-  },
-  chart: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    height: 120,
-    paddingHorizontal: 8,
-  },
-  chartBarContainer: {
-    flex: 1,
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    height: '100%',
-  },
-  chartBar: {
-    width: '80%',
-    borderRadius: 4,
-    marginBottom: 8,
-  },
-  chartLabel: {
-    fontSize: 12,
-  },
-  expenseAmount: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    marginBottom: 16,
-  },
-  monthSelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  monthText: {
-    fontSize: 14,
-  },
-  dropdownIcon: {
-    fontSize: 10,
-    color: '#6b7280',
-  },
-  lineChartContainer: {
-    height: 100,
-    marginTop: 16,
-  },
-  lineChart: {
-    flex: 1,
-    position: 'relative',
-  },
-  lineChartLine: {
-    position: 'absolute',
-    top: '50%',
-    left: 0,
-    right: 0,
-    height: 2,
-    borderTopWidth: 2,
-  },
-  lineChartPoint: {
-    position: 'absolute',
-    right: '30%',
-    top: '45%',
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    marginTop: 10,
+    marginBottom: 0,
   },
   categoryItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
-    gap: 12,
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  categoryLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
   },
   categoryDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
   categoryName: {
-    flex: 1,
-    fontSize: 14,
+    fontSize: 15,
+    fontWeight: '600',
   },
   categoryAmount: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
   },
   emptyText: {
     fontSize: 14,
     textAlign: 'center',
     padding: 20,
+    fontStyle: 'italic',
   },
 });
