@@ -10,7 +10,13 @@ export interface OCRResult {
   confidence: number;
   blocks?: Array<{
     text: string;
-    boundingBox: any;
+    boundingBox: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    };
+    confidence?: number;
   }>;
 }
 
@@ -114,10 +120,20 @@ export async function performOCR(imageUri: string): Promise<OCRResult | null> {
 
     // Extract text and blocks
     const fullText = result.text.trim();
-    const blocks = result.blocks?.map((block) => ({
-      text: block.text,
-      boundingBox: block.frame,
-    })) || [];
+    const blocks = result.blocks?.map((block) => {
+      // Normalize bounding box format (ML Kit uses frame with x, y, width, height)
+      const frame = block.frame || {};
+      return {
+        text: block.text,
+        boundingBox: {
+          x: frame.x || frame.left || 0,
+          y: frame.y || frame.top || 0,
+          width: frame.width || (frame.right ? frame.right - (frame.left || 0) : 0),
+          height: frame.height || (frame.bottom ? frame.bottom - (frame.top || 0) : 0),
+        },
+        confidence: block.confidence,
+      };
+    }) || [];
 
     // Calculate average confidence from blocks
     const confidences = result.blocks

@@ -33,7 +33,8 @@ const getBaseURL = () => {
   
   // Production: Use checkpay.live/api
   // return 'https://checkpay.live/api';
-  return 'http://10.55.132.87:3000/api';
+  return 'http://172.20.10.2:3000/api';
+  // return 'http://192.168.43.160:3000/api';
   
   // Use ngrok if enabled (works for both dev and production builds)
   // if (USE_NGROK && NGROK_URL && !NGROK_URL.includes('your-ngrok-url')) {

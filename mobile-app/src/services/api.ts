@@ -26,9 +26,18 @@ api.interceptors.request.use(
     const token = await storage.getToken();
     const apiKey = await storage.getApiKey();
     
+    // OCR verify endpoint requires JWT token (not API key)
+    if (config.url?.includes('/ocr/verify')) {
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+        console.log('🔑 [API] Using JWT token for OCR verify endpoint');
+      } else {
+        console.warn('⚠️ [API] No JWT token found for OCR verify endpoint');
+      }
+    }
     // Use API key for verify and ingest endpoints (they require API key authentication)
     // But allow JWT fallback for authenticated users
-    if (config.url?.includes('/verify') || config.url?.includes('/ingest')) {
+    else if (config.url?.includes('/verify') || config.url?.includes('/ingest')) {
       if (apiKey) {
         config.headers['X-API-Key'] = apiKey;
         console.log(`🔑 [API] Using API key for ${config.url?.includes('/verify') ? 'verification' : 'ingest'} endpoint`);
@@ -61,7 +70,13 @@ api.interceptors.request.use(
       baseURL: config.baseURL,
       fullURL: `${config.baseURL}${config.url}`,
       hasAuth: !!(token || apiKey),
-      authType: config.url?.includes('/verify') ? 'API-Key' : 'JWT',
+      hasToken: !!token,
+      hasApiKey: !!apiKey,
+      authType: config.url?.includes('/ocr/verify')
+        ? 'JWT'
+        : (config.url?.includes('/verify') || config.url?.includes('/ingest'))
+        ? (apiKey ? 'API-Key' : 'JWT')
+        : 'JWT',
     });
     
     return config;
@@ -229,6 +244,26 @@ export const businessAPI = {
   },
 };
 
+// Employee API
+export const employeeAPI = {
+  register: async (data: { 
+    code?: string; 
+    qrData?: string; 
+    name: string;
+    username?: string;
+    phone?: string;
+    password?: string;
+    country?: string;
+  }) => {
+    const response = await api.post('/employees/register', data);
+    return response.data;
+  },
+  validateAccessCode: async (code: string) => {
+    const response = await api.post('/access-codes/validate', { code });
+    return response.data;
+  },
+};
+
 // Dashboard API
 export const dashboardAPI = {
   getTransactions: async (params?: { page?: number; limit?: number }) => {
@@ -292,6 +327,69 @@ export const institutionPatternsAPI = {
   // Get all patterns for a country (for local matching)
   getCountryPatterns: async (countryCode: string) => {
     const response = await api.get(`/patterns/country/${countryCode}`);
+    return response.data;
+  },
+};
+
+// OCR API
+export const ocrAPI = {
+  // Extract transaction data from OCR text using dynamic patterns
+  extract: async (data: {
+    ocrText: string;
+    blocks?: Array<{
+      text: string;
+      boundingBox: { x: number; y: number; width: number; height: number };
+      confidence?: number;
+    }>;
+    countryCode?: string;
+    institution?: string;
+  }) => {
+    const response = await api.post('/ocr/extract', data);
+    return response.data;
+  },
+  // Get all OCR patterns
+  getPatterns: async (params?: {
+    countryCode?: string;
+    institution?: string;
+  }) => {
+    const response = await api.get('/ocr/patterns', { params });
+    return response.data;
+  },
+  // Verify OCR-extracted transaction
+  verify: async (data: {
+    txnId: string;
+    amount: number;
+    sender?: string;
+    receiver?: string;
+    bank?: string;
+    institution?: string;
+    currency?: string;
+    ocrText?: string;
+    patternId?: string;
+    businessId?: string;
+    employeeId?: string;
+    sendFrom?: string | null;
+    sendTo?: string | null;
+  }) => {
+    const response = await api.post('/ocr/verify', data);
+    return response.data;
+  },
+  // Create OCR pattern request (user submits sample image)
+  createPatternRequest: async (data: {
+    institution: string;
+    countryCode: string;
+    name?: string;
+    description?: string;
+    ocrText?: string;
+    imageBase64?: string;
+    imageType?: 'png' | 'jpg';
+  }) => {
+    const response = await api.post('/ocr/patterns/request', data);
+    return response.data;
+  },
+  // Get user's OCR pattern requests
+  getMyPatternRequests: async () => {
+    const response = await api.get('/ocr/patterns/requests');
     return response.data;
   },
 };

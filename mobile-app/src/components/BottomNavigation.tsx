@@ -90,12 +90,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     width: '100%',
     maxWidth: 400,
-    shadowOffset: { width: 0, height: 4 },
+    backgroundColor: 'rgba(255, 255, 255, 0.7)', // Glassy effect
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.1,
-    shadowRadius: 12,
+    shadowRadius: 16,
     elevation: 8,
     borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.05)',
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   tab: {
     flex: 1,

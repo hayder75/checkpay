@@ -9,6 +9,7 @@ import {
   Modal,
   AppState,
   AppStateStatus,
+  Image,
 } from 'react-native';
 import { ArrowDown, ArrowUp, ChevronDown, User } from 'lucide-react-native';
 import { LineChart } from 'react-native-chart-kit';
@@ -294,9 +295,16 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
     <ScrollView style={[styles.container, { backgroundColor: colors.background }]} showsVerticalScrollIndicator={false}>
       {/* Header (Separate) */}
       <View style={styles.header}>
-        <View>
-          <Text style={[styles.greeting, { color: colors.textSecondary }]}>Welcome Back</Text>
-          <Text style={[styles.title, { color: colors.text }]}>{getUserName()}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <Image 
+            source={require('../../assets/logo/logo - Asset 8.png')} 
+            style={styles.headerLogo}
+            resizeMode="contain"
+          />
+          <View>
+            <Text style={[styles.greeting, { color: colors.textSecondary }]}>Welcome Back</Text>
+            <Text style={[styles.title, { color: colors.text }]}>{getUserName()}</Text>
+          </View>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <View style={[styles.statusBadge, { backgroundColor: isMonitoring ? colors.lightGreen : '#fee2e2' }]}>
@@ -496,6 +504,10 @@ const styles = StyleSheet.create({
     opacity: 0.6,
     // textTransform: 'uppercase',
     letterSpacing: 0.5,
+  },
+  headerLogo: {
+    width: 40,
+    height: 40,
   },
   title: {
     fontSize: 24,

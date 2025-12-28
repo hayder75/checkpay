@@ -4,11 +4,11 @@
     "slug": "mobile-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/logo/logo - Asset 8.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/logo/logo - Asset 9.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -24,8 +24,8 @@
       [
         "react-native-vision-camera",
         {
-          "cameraPermissionText": "$(PRODUCT_NAME) needs access to your Camera to scan text from images.",
-          "enableCodeScanner": false
+          "cameraPermissionText": "$(PRODUCT_NAME) needs access to your Camera to scan text from images and QR codes.",
+          "enableCodeScanner": true
         }
       ],
       "./plugins/withMLKit.js",
@@ -43,7 +43,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/logo/logo - Asset 8.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,

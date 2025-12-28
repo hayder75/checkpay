@@ -9,6 +9,11 @@ import {
   Alert,
   Modal,
   Platform,
+  TextInput,
+  KeyboardAvoidingView,
+  Image,
+  Animated,
+  Dimensions,
 } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { scanImageFromGallery, OCRResult } from '../services/ocrService';
@@ -21,14 +26,12 @@ import { getBuiltInPatterns } from '../services/builtInPatterns';
 import { 
   Camera, 
   Image as ImageIcon, 
-  ChevronDown, 
-  ChevronUp, 
   CheckCircle, 
   AlertTriangle,
-  Copy,
-  Maximize2
+  Keyboard,
+  X,
+  ChevronLeft,
 } from 'lucide-react-native';
-import * as Clipboard from 'expo-clipboard';
 
 interface OCRScreenProps {
   patterns?: Pattern[];
@@ -41,7 +44,12 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
   const [result, setResult] = useState<OCRResult | null>(null);
   const [extractedTransaction, setExtractedTransaction] = useState<any>(null);
   const [patterns, setPatterns] = useState<Pattern[]>(propsPatterns);
-  const [showFullTextModal, setShowFullTextModal] = useState(false);
+  const [showManualInput, setShowManualInput] = useState(false);
+  const [manualTxnId, setManualTxnId] = useState('');
+  const [selectedInstitution, setSelectedInstitution] = useState<Pattern | null>(null);
+  const [showInstitutionPicker, setShowInstitutionPicker] = useState(true);
+  const [fadeAnim] = useState(new Animated.Value(1));
+  const [slideAnim] = useState(new Animated.Value(0));
 
   // Load patterns from backend if not provided
   useEffect(() => {
@@ -104,206 +112,196 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
   };
 
   const processOCRResult = async (ocrResult: OCRResult) => {
-    // Try to match against patterns (built-in patterns first, then user patterns)
-    let matchedPattern: Pattern | InstitutionPattern | null = null;
-    let transactionData: any = null;
+    if (!selectedInstitution) {
+      Alert.alert('Error', 'Please select an institution first');
+      return;
+    }
 
-    // First, try built-in patterns (Telebirr, CBE, etc.)
-    // Convert built-in patterns to InstitutionPattern format for better field extraction
-    const builtInPatterns = getBuiltInPatterns();
-    console.log(`🔍 [OCR] Checking ${builtInPatterns.length} built-in patterns...`);
-    
-    for (const pattern of builtInPatterns) {
-      // Convert Pattern to InstitutionPattern format
-      const institutionPattern: InstitutionPattern = {
-        id: pattern.id,
-        name: pattern.name,
-        institution: pattern.bank || null,
-        regex: pattern.regex,
-        extractFields: pattern.extractFields || pattern.extraction || {},
-        bank: pattern.bank || null,
-        currency: pattern.currency || 'ETB',
-        usageCount: 0,
-        smsExample: null,
-        type: 'institution',
-      };
+    setLoading(true);
+    let txnId: string | null = null;
+    let confidence = 0;
+
+    try {
+      // Clean regex string (remove (?i) flag as JavaScript uses 'i' flag in constructor)
+      let regexStr = selectedInstitution.regex;
+      if (regexStr.startsWith('(?i)')) {
+        regexStr = regexStr.substring(4);
+      }
+      regexStr = regexStr.replace(/\(\?i\)/g, '');
       
-      const match = matchInstitutionPattern(ocrResult.text, institutionPattern);
-      if (match.matched && match.data) {
-        matchedPattern = pattern;
-        transactionData = {
-          txnId: match.data.txnId,
-          amount: match.data.amount,
-          sender: match.data.sender,
-          bank: match.data.bank,
-          sendFrom: match.data.sendFrom,
-          sendTo: match.data.sendTo,
-          pattern: match.data.patternName,
-          currency: match.data.currency || 'ETB',
-        };
+      const regex = new RegExp(regexStr, 'i');
+      const match = ocrResult.text.match(regex);
+      
+      if (match) {
+        // Find the txnId group index
+        const extraction = selectedInstitution.extraction || selectedInstitution.extractFields || {};
+        const txnIdGroup = extraction.txnId;
         
-        // For CBE debit pattern, extract receiver name from regex match
-        if (pattern.id === 'builtin-cbe-002') {
-          try {
-            let regexStr = pattern.regex;
-            if (regexStr.startsWith('(?i)')) {
-              regexStr = regexStr.substring(4);
-            }
-            regexStr = regexStr.replace(/\(\?i\)/g, '');
-            const regex = new RegExp(regexStr, 'i');
-            const fullMatch = ocrResult.text.match(regex);
-            if (fullMatch && fullMatch[3]) {
-              // Group 3 is the receiver name
-              transactionData.receiver = fullMatch[3].trim();
-              // Combine receiver name with account for sendTo display
-              if (transactionData.sendTo) {
-                transactionData.sendTo = `${transactionData.receiver} - ${transactionData.sendTo}`;
-              }
-            }
-          } catch (error) {
-            console.error('Error extracting receiver name:', error);
-          }
+        if (txnIdGroup && match[txnIdGroup]) {
+          txnId = match[txnIdGroup].trim();
+          confidence = ocrResult.confidence;
+          console.log(`✅ [OCR] Extracted txnId: ${txnId} using ${selectedInstitution.name}`);
         }
-        
-        // For Telebirr transfer pattern, extract receiver and txnId from jumbled OCR text
-        if (pattern.id === 'builtin-telebirr-002') {
-          // Extract receiver name: find all proper names and pick the one that appears after "Transaction To:"
-          // Look for standalone words that are proper names (capital + lowercase, 3+ chars)
-          const lines = ocrResult.text.split('\n');
-          const transactionToIndex = lines.findIndex(line => line.match(/transaction\s+to:?/i));
-          const transactionNumberIndex = lines.findIndex(line => line.match(/transaction\s+number:?/i));
-          
-          if (transactionToIndex >= 0) {
-            // Look for a proper name between "Transaction To:" and end of text
-            // Proper name: starts with capital, rest lowercase, 3+ chars, not a label
-            const invalidWords = ['transaction', 'number', 'time', 'type', 'successful', 'above', 'prizes', 'finished', 'transfer', 'money', 'text', 'message', 'lte', 'qr', 'code'];
-            for (let i = transactionToIndex + 1; i < lines.length; i++) {
-              const line = lines[i].trim();
-              // Check if line is a proper name (capital letter + lowercase letters, 3+ chars)
-              if (line.match(/^[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*$/) && 
-                  !invalidWords.some(word => line.toLowerCase().includes(word.toLowerCase()))) {
-                transactionData.receiver = line;
-                transactionData.sendTo = line;
-                break;
-              }
-            }
-          }
-          
-          // Extract transaction ID: alphanumeric code 6+ chars after "Transaction Number:"
-          if (!transactionData.txnId || transactionData.txnId === 'N/A') {
-            // First try after "Transaction Number:" label
-            const txnMatch = ocrResult.text.match(/transaction\s+number:?[\s\S]*?([A-Z0-9]{6,})/i);
-            if (txnMatch && txnMatch[1]) {
-              const txnId = txnMatch[1].trim();
-              // Filter out invalid matches (like "Prizes" if it happens to match)
-              if (txnId.length >= 6 && !txnId.match(/^(PRIZES|ABOVE|FINISHED)$/i)) {
-                transactionData.txnId = txnId;
-              }
-            }
-            
-            // If still not found, look for alphanumeric codes in the text
-            if (!transactionData.txnId || transactionData.txnId === 'N/A') {
-              const allTxnMatches = ocrResult.text.match(/\b([A-Z0-9]{6,})\b/g);
-              if (allTxnMatches) {
-                // Filter to find the one that looks like a transaction ID (mix of letters and numbers)
-                for (const match of allTxnMatches) {
-                  if (match.match(/[A-Z]/) && match.match(/[0-9]/) && match.length >= 6) {
-                    transactionData.txnId = match;
-                    break;
-                  }
-                }
-              }
+      }
+
+      // Fallback: if regex didn't match perfectly, look for alphanumeric codes that look like txnIds
+      if (!txnId) {
+        const allTxnMatches = ocrResult.text.match(/\b([A-Z0-9]{6,})\b/g);
+        if (allTxnMatches) {
+          for (const match of allTxnMatches) {
+            // Mix of letters and numbers usually indicates a txnId
+            if (match.match(/[A-Z]/) && match.match(/[0-9]/) && match.length >= 6) {
+              txnId = match;
+              confidence = ocrResult.confidence * 0.8; // Lower confidence for fallback
+              console.log(`⚠️ [OCR] Extracted txnId via fallback: ${txnId}`);
+              break;
             }
           }
         }
-        
-        console.log(`✅ [OCR] Matched built-in pattern: ${pattern.name}`, transactionData);
-        break;
       }
+    } catch (error) {
+      console.error('Error processing OCR result:', error);
     }
 
-    // If no built-in pattern matched, try user patterns (convert to InstitutionPattern format)
-    if (!transactionData && patterns.length > 0) {
-      console.log(`🔍 [OCR] Checking ${patterns.length} user patterns...`);
-      const institutionPatterns: InstitutionPattern[] = patterns.map((p: any) => ({
-        id: p.id,
-        name: p.name,
-        institution: p.bank || null,
-        regex: p.regex,
-        extractFields: p.extractFields || p.extraction || {},
-        bank: p.bank || null,
-        currency: p.currency || 'ETB',
-        usageCount: 0,
-        smsExample: null,
-        type: 'institution',
-      }));
-      
-      const matchResult = findMatchingInstitutionPattern(ocrResult.text, institutionPatterns);
-      if (matchResult.matched && matchResult.data) {
-        matchedPattern = patterns.find((p: any) => p.id === matchResult.pattern?.id) || null;
-        transactionData = {
-          txnId: matchResult.data.txnId,
-          amount: matchResult.data.amount,
-          sender: matchResult.data.sender,
-          bank: matchResult.data.bank,
-          sendFrom: matchResult.data.sendFrom,
-          sendTo: matchResult.data.sendTo,
-          pattern: matchResult.data.patternName,
-          currency: matchResult.data.currency || 'ETB',
-        };
-        console.log(`✅ [OCR] Matched user pattern: ${matchResult.pattern?.name}`);
-      }
-    }
-
-    if (transactionData) {
+    if (txnId) {
       setExtractedTransaction({
-        ...transactionData,
-        pattern: matchedPattern?.name || 'Unknown',
+        txnId,
+        institution: selectedInstitution.bank || selectedInstitution.name,
+        patternId: selectedInstitution.id,
+        confidence,
         source: 'OCR',
         ocrText: ocrResult.text,
-        confidence: ocrResult.confidence,
       });
-
-      // Ingest transaction to backend using real API
-      try {
-        const token = await storage.getToken();
-        if (token) {
-          console.log('📤 [OCR] Sending transaction to backend...');
-          await ingestTransaction({
-            txnId: transactionData.txnId,
-            amount: transactionData.amount,
-            sender: transactionData.sender || '',
-            bank: transactionData.bank || '',
-            pattern: transactionData.pattern || matchedPattern?.name || 'OCR Pattern',
-            smsText: ocrResult.text,
-            source: 'OCR',
-            sendFrom: transactionData.sendFrom || null,
-            sendTo: transactionData.sendTo || null,
-          });
-          console.log('✅ [OCR] Transaction sent to backend successfully');
-          Alert.alert('Success', 'Transaction extracted and saved!');
-        } else {
-          console.warn('⚠️ [OCR] No authentication token - transaction not synced');
-          Alert.alert('Warning', 'Transaction extracted but not synced. Please login to sync.');
-        }
-      } catch (error: any) {
-        console.error('❌ [OCR] Error sending transaction to backend:', error);
-        Alert.alert('Error', error.response?.data?.error || error.message || 'Failed to save transaction');
-      }
     } else {
-      console.log(`⚠️ [OCR] No pattern matched for scanned text`);
       setExtractedTransaction({
+        txnId: null,
+        institution: selectedInstitution.bank || selectedInstitution.name,
+        confidence: ocrResult.confidence,
         source: 'OCR',
         ocrText: ocrResult.text,
-        confidence: ocrResult.confidence,
-        matched: false,
       });
+    }
+    setLoading(false);
+  };
+
+  const handleConfirmTransaction = async () => {
+    if (!extractedTransaction?.txnId) return;
+
+    setLoading(true);
+    try {
+      const token = await storage.getToken();
+      if (!token) {
+        Alert.alert('Error', 'Authentication required. Please log in again.');
+        setLoading(false);
+        return;
+      }
+
+      // Send only txnId and institution/patternId
+      await ingestTransaction({
+        txnId: extractedTransaction.txnId,
+        amount: 0,
+        sender: 'Unknown',
+        bank: extractedTransaction.institution || '',
+        pattern: extractedTransaction.institution || 'OCR Pattern',
+        source: 'OCR',
+        smsText: extractedTransaction.ocrText || '', // Still send OCR text for backend verification if needed
+      });
+
+      console.log('✅ [OCR] Transaction sent to backend successfully');
+      
+      // Success Animation/Feedback
+      Alert.alert('Success', 'Transaction ID submitted successfully!');
+      
+      // Reset state with animation
+      animateTransition(() => {
+        setExtractedTransaction(null);
+        setResult(null);
+        setSelectedInstitution(null);
+        setShowInstitutionPicker(true);
+      });
+    } catch (error: any) {
+      console.error('❌ [OCR] Error sending transaction to backend:', error);
+      Alert.alert('Error', error.response?.data?.error || error.message || 'Failed to save transaction');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const copyToClipboard = async (text: string) => {
-    await Clipboard.setStringAsync(text);
-    Alert.alert('Copied', 'Text copied to clipboard');
+  const animateTransition = (callback: () => void) => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: 20,
+        duration: 200,
+        useNativeDriver: true,
+      })
+    ]).start(() => {
+      callback();
+      fadeAnim.setValue(0);
+      slideAnim.setValue(-20);
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 300,
+          useNativeDriver: true,
+        })
+      ]).start();
+    });
+  };
+
+  const selectInstitution = (pattern: Pattern) => {
+    animateTransition(() => {
+      setSelectedInstitution(pattern);
+      setShowInstitutionPicker(false);
+    });
+  };
+
+  const goBackToPicker = () => {
+    animateTransition(() => {
+      setSelectedInstitution(null);
+      setShowInstitutionPicker(true);
+      setExtractedTransaction(null);
+    });
+  };
+
+  const handleRejectTransaction = () => {
+    // Reset state to allow scanning again
+    setExtractedTransaction(null);
+    setResult(null);
+    setShowManualInput(false);
+    setManualTxnId('');
+  };
+
+  const handleManualInput = () => {
+    const trimmedTxnId = manualTxnId.trim();
+    if (!trimmedTxnId) {
+      Alert.alert('Error', 'Please enter a transaction ID');
+      return;
+    }
+
+    if (trimmedTxnId.length < 6) {
+      Alert.alert('Error', 'Transaction ID must be at least 6 characters');
+      return;
+    }
+
+    // Set extracted transaction from manual input
+    setExtractedTransaction({
+      txnId: trimmedTxnId,
+      source: 'MANUAL',
+      pattern: 'Manual Entry',
+      confidence: 1.0,
+    });
+    setShowManualInput(false);
+    setManualTxnId('');
   };
 
   if (showCamera) {
@@ -320,318 +318,614 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
       flex: 1,
       backgroundColor: colors.background,
     },
+    scrollView: {
+      flex: 1,
+    },
     contentContainer: {
-      padding: 20,
+      padding: 24,
       paddingBottom: 40,
     },
     header: {
-      marginBottom: 24,
+      marginBottom: 32,
+      paddingTop: Platform.OS === 'ios' ? 20 : 10,
     },
     title: {
-      fontSize: 28,
-      fontWeight: 'bold',
+      fontSize: 34,
+      fontWeight: '800',
       color: colors.text,
       marginBottom: 8,
+      letterSpacing: -1,
     },
     subtitle: {
       fontSize: 16,
       color: colors.textSecondary,
-      lineHeight: 22,
+      lineHeight: 24,
+      fontWeight: '400',
     },
-    actionButtons: {
-      flexDirection: 'row',
-      gap: 12,
+    // Main Action Cards
+    actionCardsContainer: {
+      gap: 16,
       marginBottom: 32,
     },
+    actionCard: {
+      backgroundColor: colors.surface,
+      borderRadius: 24,
+      padding: 20,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.05,
+      shadowRadius: 12,
+      elevation: 3,
+    },
+    institutionGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 12,
+      justifyContent: 'space-between',
+    },
+    institutionCard: {
+      width: (Dimensions.get('window').width - 60) / 2,
+      backgroundColor: colors.surface,
+      borderRadius: 20,
+      padding: 16,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+      marginBottom: 4,
+    },
+    institutionIconContainer: {
+      width: 48,
+      height: 48,
+      borderRadius: 16,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    institutionName: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: colors.text,
+      textAlign: 'center',
+    },
+    institutionType: {
+      fontSize: 11,
+      color: colors.textSecondary,
+      marginTop: 2,
+      textAlign: 'center',
+    },
+    headerLogo: {
+      width: 120,
+      height: 40,
+      marginBottom: 12,
+    },
+    actionCardIconContainer: {
+      width: 64,
+      height: 64,
+      borderRadius: 20,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: 20,
+    },
+    actionCardContent: {
+      flex: 1,
+    },
+    actionCardTitle: {
+      fontSize: 18,
+      fontWeight: '700',
+      color: colors.text,
+      marginBottom: 4,
+    },
+    actionCardSubtext: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      lineHeight: 20,
+    },
+    // Receipt Design
+    receiptContainer: {
+      backgroundColor: colors.surface,
+      borderRadius: 24,
+      padding: 24,
+      borderWidth: 1,
+      borderColor: colors.border,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: 0.1,
+      shadowRadius: 20,
+      elevation: 10,
+      position: 'relative',
+      overflow: 'hidden',
+    },
+    receiptHeader: {
+      alignItems: 'center',
+      marginBottom: 24,
+      paddingBottom: 24,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      borderStyle: 'dashed',
+    },
+    receiptIconContainer: {
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: colors.primary + '15',
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    receiptTitle: {
+      fontSize: 20,
+      fontWeight: '700',
+      color: colors.text,
+      marginBottom: 4,
+    },
+    receiptSubtitle: {
+      fontSize: 14,
+      color: colors.textSecondary,
+    },
+    receiptBody: {
+      marginBottom: 24,
+    },
+    receiptRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginBottom: 16,
+    },
+    receiptLabel: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      fontWeight: '500',
+    },
+    receiptValue: {
+      fontSize: 14,
+      color: colors.text,
+      fontWeight: '600',
+      textAlign: 'right',
+      flex: 1,
+      marginLeft: 20,
+    },
+    receiptAmountContainer: {
+      alignItems: 'center',
+      marginVertical: 24,
+      padding: 20,
+      backgroundColor: colors.background,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    receiptAmountLabel: {
+      fontSize: 13,
+      color: colors.textSecondary,
+      textTransform: 'uppercase',
+      letterSpacing: 1,
+      marginBottom: 8,
+    },
+    receiptAmount: {
+      fontSize: 36,
+      fontWeight: '800',
+      color: colors.primary,
+      letterSpacing: 1,
+    },
+    receiptDivider: {
+      height: 1,
+      backgroundColor: colors.border,
+      marginVertical: 20,
+      borderStyle: 'dashed',
+      borderRadius: 1,
+    },
+    receiptBadge: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 12,
+      alignSelf: 'center',
+      marginBottom: 16,
+    },
+    receiptBadgeText: {
+      fontSize: 12,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+    },
+    receiptFooter: {
+      flexDirection: 'row',
+      gap: 12,
+    },
+    // Buttons
     primaryButton: {
       flex: 1,
       backgroundColor: colors.primary,
       borderRadius: 16,
-      padding: 16,
+      padding: 18,
+      flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      shadowColor: colors.primary,
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.2,
-      shadowRadius: 8,
-      elevation: 4,
+      gap: 8,
+    },
+    primaryButtonText: {
+      color: '#fff',
+      fontSize: 16,
+      fontWeight: '600',
     },
     secondaryButton: {
       flex: 1,
-      backgroundColor: colors.card,
+      backgroundColor: colors.background,
       borderRadius: 16,
-      padding: 16,
+      padding: 18,
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
       borderColor: colors.border,
     },
-    buttonText: {
+    secondaryButtonText: {
+      color: colors.text,
       fontSize: 16,
       fontWeight: '600',
-      marginTop: 8,
     },
-    sectionTitle: {
-      fontSize: 18,
-      fontWeight: '600',
-      color: colors.text,
-      marginBottom: 16,
-      marginTop: 8,
-    },
-    card: {
-      backgroundColor: colors.card,
-      borderRadius: 16,
-      padding: 20,
-      marginBottom: 20,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.05,
-      shadowRadius: 8,
-      elevation: 2,
-    },
-    textPreview: {
-      fontSize: 14,
-      color: colors.textSecondary,
-      lineHeight: 20,
-      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    },
-    cardHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
+    // Error Card
+    errorCard: {
+      backgroundColor: colors.surface,
+      borderRadius: 24,
+      padding: 32,
       alignItems: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    errorIconContainer: {
+      width: 64,
+      height: 64,
+      borderRadius: 32,
+      backgroundColor: '#FF980015',
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: 20,
+    },
+    errorTitle: {
+      fontSize: 20,
+      fontWeight: '700',
+      color: colors.text,
       marginBottom: 12,
     },
-    cardAction: {
-      flexDirection: 'row',
-      gap: 16,
-    },
-    transactionRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      paddingVertical: 12,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-    },
-    transactionLabel: {
-      fontSize: 14,
+    errorText: {
+      fontSize: 15,
       color: colors.textSecondary,
+      textAlign: 'center',
+      lineHeight: 22,
+      marginBottom: 24,
     },
-    transactionValue: {
-      fontSize: 14,
-      fontWeight: '600',
-      color: colors.text,
-    },
-    statusBadge: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      paddingVertical: 6,
-      paddingHorizontal: 12,
-      borderRadius: 20,
-      alignSelf: 'flex-start',
-      marginBottom: 16,
-    },
-    successBadge: {
-      backgroundColor: 'rgba(76, 175, 80, 0.1)',
-    },
-    warningBadge: {
-      backgroundColor: 'rgba(255, 152, 0, 0.1)',
-    },
-    statusText: {
-      fontSize: 14,
-      fontWeight: '600',
-    },
-    modalContainer: {
+    // Manual Input Modal
+    modalOverlay: {
       flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.5)',
+      justifyContent: 'flex-end',
+    },
+    modalContent: {
       backgroundColor: colors.background,
-      padding: 20,
-      paddingTop: Platform.OS === 'ios' ? 60 : 20,
+      borderTopLeftRadius: 32,
+      borderTopRightRadius: 32,
+      padding: 24,
+      paddingBottom: Platform.OS === 'ios' ? 40 : 24,
     },
     modalHeader: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      marginBottom: 20,
+      marginBottom: 24,
     },
     modalTitle: {
-      fontSize: 20,
-      fontWeight: 'bold',
+      fontSize: 22,
+      fontWeight: '700',
       color: colors.text,
     },
-    modalContent: {
-      flex: 1,
-      backgroundColor: colors.card,
-      borderRadius: 12,
-      padding: 16,
+    inputContainer: {
+      marginBottom: 24,
     },
-    modalText: {
+    inputLabel: {
       fontSize: 14,
+      fontWeight: '600',
+      color: colors.textSecondary,
+      marginBottom: 8,
+      marginLeft: 4,
+    },
+    input: {
+      backgroundColor: colors.surface,
+      borderRadius: 16,
+      padding: 16,
+      fontSize: 18,
       color: colors.text,
-      lineHeight: 22,
-      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    loadingOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0,0,0,0.3)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 1000,
+    },
+    buttonDisabled: {
+      opacity: 0.6,
+    },
+    sectionTitle: {
+      fontSize: 18,
+      fontWeight: '700',
+      color: colors.text,
+      marginBottom: 16,
+      marginTop: 8,
     },
   });
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Scan Document</Text>
-        <Text style={styles.subtitle}>
-          Instantly extract transaction details from receipts and statements.
-        </Text>
-      </View>
+    <View style={styles.container}>
+      {loading && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      )}
 
-      <View style={styles.actionButtons}>
-        <TouchableOpacity 
-          style={styles.primaryButton}
-          onPress={() => setShowCamera(true)}
-        >
-          <Camera color="#fff" size={28} />
-          <Text style={[styles.buttonText, { color: '#fff' }]}>Live Scan</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={styles.secondaryButton}
-          onPress={handleScanFromGallery}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color={colors.primary} />
-          ) : (
-            <ImageIcon color={colors.primary} size={28} />
-          )}
-          <Text style={[styles.buttonText, { color: colors.primary }]}>Gallery</Text>
-        </TouchableOpacity>
-      </View>
-
-      {extractedTransaction && (
-        <>
-          <Text style={styles.sectionTitle}>Extraction Result</Text>
-          <View style={styles.card}>
-            {extractedTransaction.matched !== false ? (
-              <>
-                <View style={[styles.statusBadge, styles.successBadge]}>
-                  <CheckCircle size={16} color="#4CAF50" />
-                  <Text style={[styles.statusText, { color: '#4CAF50' }]}>
-                    Pattern Matched
-                  </Text>
-                </View>
-
-                <View style={styles.transactionRow}>
-                  <Text style={styles.transactionLabel}>Amount</Text>
-                  <Text style={styles.transactionValue}>
-                    {extractedTransaction.amount ? `${extractedTransaction.amount} ${extractedTransaction.currency || 'ETB'}` : 'N/A'}
-                  </Text>
-                </View>
-                <View style={styles.transactionRow}>
-                  <Text style={styles.transactionLabel}>Transaction ID</Text>
-                  <Text style={styles.transactionValue}>{extractedTransaction.txnId}</Text>
-                </View>
-                {extractedTransaction.sender && (
-                  <View style={styles.transactionRow}>
-                    <Text style={styles.transactionLabel}>Sender</Text>
-                    <Text style={styles.transactionValue}>{extractedTransaction.sender}</Text>
-                  </View>
-                )}
-                {extractedTransaction.receiver && (
-                  <View style={styles.transactionRow}>
-                    <Text style={styles.transactionLabel}>Receiver</Text>
-                    <Text style={styles.transactionValue}>{extractedTransaction.receiver}</Text>
-                  </View>
-                )}
-                {extractedTransaction.sendFrom && (
-                  <View style={styles.transactionRow}>
-                    <Text style={styles.transactionLabel}>From</Text>
-                    <Text style={styles.transactionValue}>{extractedTransaction.sendFrom}</Text>
-                  </View>
-                )}
-                {extractedTransaction.sendTo && (
-                  <View style={styles.transactionRow}>
-                    <Text style={styles.transactionLabel}>To Account</Text>
-                    <Text style={styles.transactionValue}>{extractedTransaction.sendTo}</Text>
-                  </View>
-                )}
-                {extractedTransaction.bank && (
-                  <View style={styles.transactionRow}>
-                    <Text style={styles.transactionLabel}>Bank</Text>
-                    <Text style={styles.transactionValue}>{extractedTransaction.bank}</Text>
-                  </View>
-                )}
-                <View style={[styles.transactionRow, { borderBottomWidth: 0 }]}>
-                  <Text style={styles.transactionLabel}>Pattern</Text>
-                  <Text style={styles.transactionValue}>{extractedTransaction.pattern}</Text>
-                </View>
-              </>
-            ) : (
-              <>
-                <View style={[styles.statusBadge, styles.warningBadge]}>
-                  <AlertTriangle size={16} color="#FF9800" />
-                  <Text style={[styles.statusText, { color: '#FF9800' }]}>
-                    No Pattern Match
-                  </Text>
-                </View>
-                <Text style={{ color: colors.textSecondary, lineHeight: 20 }}>
-                  We couldn't match the scanned text to any of your saved patterns. 
-                  Try creating a new pattern for this document type.
-                </Text>
-              </>
+      <ScrollView 
+        style={styles.scrollView}
+        contentContainerStyle={styles.contentContainer}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.header}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+            <Image 
+              source={require('../../assets/logo/logo - Asset 2.png')} 
+              style={styles.headerLogo}
+              resizeMode="contain"
+            />
+            {!showInstitutionPicker && !extractedTransaction && (
+              <TouchableOpacity onPress={goBackToPicker} style={{ padding: 8 }}>
+                <X color={colors.textSecondary} size={24} />
+              </TouchableOpacity>
             )}
           </View>
-        </>
-      )}
+          <Text style={styles.title}>Scan & Save</Text>
+          <Text style={styles.subtitle}>
+            {selectedInstitution 
+              ? `Scanning for ${selectedInstitution.bank || selectedInstitution.name}`
+              : 'Select an institution to start scanning.'}
+          </Text>
+        </View>
 
-      {result && (
-        <>
-          <Text style={styles.sectionTitle}>Detected Text</Text>
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
-                Confidence: {(result.confidence * 100).toFixed(1)}%
-              </Text>
-              <View style={styles.cardAction}>
-                <TouchableOpacity onPress={() => copyToClipboard(result.text)}>
-                  <Copy size={20} color={colors.primary} />
+        <Animated.View style={{ 
+          opacity: fadeAnim,
+          transform: [{ translateY: slideAnim }]
+        }}>
+        {showInstitutionPicker && !extractedTransaction ? (
+          <View style={styles.actionCardsContainer}>
+            <Text style={styles.sectionTitle}>Select Institution</Text>
+            <View style={styles.institutionGrid}>
+              {getBuiltInPatterns().map((pattern) => (
+                <TouchableOpacity 
+                  key={pattern.id}
+                  style={[
+                    styles.institutionCard,
+                    selectedInstitution?.id === pattern.id && { borderColor: colors.primary, borderWidth: 2 }
+                  ]}
+                  onPress={() => selectInstitution(pattern)}
+                >
+                  <View style={[styles.institutionIconContainer, { backgroundColor: colors.primary + '15' }]}>
+                    <ImageIcon color={colors.primary} size={24} />
+                  </View>
+                  <Text style={styles.institutionName} numberOfLines={1}>{pattern.bank || pattern.name}</Text>
+                  <Text style={styles.institutionType}>{pattern.name.split(' ')[0]}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => setShowFullTextModal(true)}>
-                  <Maximize2 size={20} color={colors.primary} />
+              ))}
+              
+              {patterns.filter(p => !getBuiltInPatterns().some(bp => bp.id === p.id)).map((pattern) => (
+                <TouchableOpacity 
+                  key={pattern.id}
+                  style={[
+                    styles.institutionCard,
+                    selectedInstitution?.id === pattern.id && { borderColor: colors.primary, borderWidth: 2 }
+                  ]}
+                  onPress={() => selectInstitution(pattern)}
+                >
+                  <View style={[styles.institutionIconContainer, { backgroundColor: colors.primary + '15' }]}>
+                    <ImageIcon color={colors.primary} size={24} />
+                  </View>
+                  <Text style={styles.institutionName} numberOfLines={1}>{pattern.bank || pattern.name}</Text>
+                  <Text style={styles.institutionType}>Custom</Text>
                 </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        ) : !extractedTransaction ? (
+          <View style={styles.actionCardsContainer}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 8 }}>
+              <TouchableOpacity 
+                onPress={goBackToPicker}
+                style={{ padding: 4 }}
+              >
+                <ChevronLeft color={colors.primary} size={24} />
+              </TouchableOpacity>
+              <Text style={[styles.sectionTitle, { marginBottom: 0, marginTop: 0 }]}>Choose Method</Text>
+            </View>
+
+            <TouchableOpacity 
+              style={styles.actionCard}
+              onPress={() => setShowCamera(true)}
+            >
+              <View style={[styles.actionCardIconContainer, { backgroundColor: colors.primary + '15' }]}>
+                <Camera color={colors.primary} size={32} />
+              </View>
+              <View style={styles.actionCardContent}>
+                <Text style={styles.actionCardTitle}>Use Camera</Text>
+                <Text style={styles.actionCardSubtext}>Scan physical receipts or documents</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.actionCard}
+              onPress={handleScanFromGallery}
+            >
+              <View style={[styles.actionCardIconContainer, { backgroundColor: '#4CAF5015' }]}>
+                <ImageIcon color="#4CAF50" size={32} />
+              </View>
+              <View style={styles.actionCardContent}>
+                <Text style={styles.actionCardTitle}>From Gallery</Text>
+                <Text style={styles.actionCardSubtext}>Import screenshots or saved images</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.actionCard}
+              onPress={() => setShowManualInput(true)}
+            >
+              <View style={[styles.actionCardIconContainer, { backgroundColor: '#2196F315' }]}>
+                <Keyboard color="#2196F3" size={32} />
+              </View>
+              <View style={styles.actionCardContent}>
+                <Text style={styles.actionCardTitle}>Manual Entry</Text>
+                <Text style={styles.actionCardSubtext}>Type in the transaction ID manually</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+        ) : extractedTransaction.txnId ? (
+          <View style={styles.receiptContainer}>
+            <View style={styles.receiptHeader}>
+              <View style={[styles.receiptBadge, { backgroundColor: colors.primary + '15' }]}>
+                <Text style={[styles.receiptBadgeText, { color: colors.primary }]}>Digital Receipt</Text>
+              </View>
+              <View style={styles.receiptIconContainer}>
+                <CheckCircle color={colors.primary} size={32} />
+              </View>
+              <Text style={styles.receiptTitle}>Transaction Detected</Text>
+              <Text style={styles.receiptSubtitle}>Extracted from {extractedTransaction.source}</Text>
+            </View>
+
+            <View style={styles.receiptAmountContainer}>
+              <Text style={styles.receiptAmountLabel}>Transaction ID</Text>
+              <Text style={styles.receiptAmount}>{extractedTransaction.txnId}</Text>
+            </View>
+
+            <View style={styles.receiptDivider} />
+
+            <View style={styles.receiptBody}>
+              <View style={styles.receiptRow}>
+                <Text style={styles.receiptLabel}>Institution</Text>
+                <Text style={styles.receiptValue}>{extractedTransaction.institution}</Text>
+              </View>
+
+              <View style={styles.receiptRow}>
+                <Text style={styles.receiptLabel}>Confidence Score</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <View style={{ 
+                    width: 60, 
+                    height: 6, 
+                    backgroundColor: colors.border, 
+                    borderRadius: 3,
+                    overflow: 'hidden'
+                  }}>
+                    <View style={{ 
+                      width: `${Math.round((extractedTransaction.confidence || 0) * 100)}%`, 
+                      height: '100%', 
+                      backgroundColor: (extractedTransaction.confidence || 0) > 0.8 ? '#4CAF50' : '#FF9800' 
+                    }} />
+                  </View>
+                  <Text style={[
+                    styles.receiptValue, 
+                    { marginLeft: 0, color: (extractedTransaction.confidence || 0) > 0.8 ? '#4CAF50' : '#FF9800' }
+                  ]}>
+                    {Math.round((extractedTransaction.confidence || 0) * 100)}%
+                  </Text>
+                </View>
               </View>
             </View>
-            
-            <TouchableOpacity onPress={() => setShowFullTextModal(true)}>
-              <Text style={styles.textPreview} numberOfLines={8}>
-                {result.text}
-              </Text>
-              <Text style={{ color: colors.primary, marginTop: 8, fontSize: 12, fontWeight: '600' }}>
-                Tap to view full text
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </>
-      )}
 
-      {/* Full Text Modal */}
+            <View style={styles.receiptFooter}>
+              <TouchableOpacity 
+                style={styles.secondaryButton}
+                onPress={handleRejectTransaction}
+              >
+                <Text style={styles.secondaryButtonText}>Discard</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.primaryButton}
+                onPress={handleConfirmTransaction}
+              >
+                <CheckCircle color="#fff" size={20} />
+                <Text style={styles.primaryButtonText}>Confirm</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.errorCard}>
+            <View style={styles.errorIconContainer}>
+              <AlertTriangle color="#FF9800" size={32} />
+            </View>
+            <Text style={styles.errorTitle}>No Transaction Found</Text>
+            <Text style={styles.errorText}>
+              We couldn't find a valid transaction ID for {extractedTransaction.institution}. Please try again with a clearer image or enter it manually.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity 
+                style={styles.secondaryButton}
+                onPress={handleRejectTransaction}
+              >
+                <Text style={styles.secondaryButtonText}>Try Again</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.primaryButton, { backgroundColor: '#2196F3' }]}
+                onPress={() => {
+                  setExtractedTransaction(null);
+                  setShowManualInput(true);
+                }}
+              >
+                <Keyboard color="#fff" size={20} />
+                <Text style={styles.primaryButtonText}>Manual</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+        </Animated.View>
+      </ScrollView>
+
+      {/* Manual Input Modal */}
       <Modal
-        visible={showFullTextModal}
+        visible={showManualInput}
+        transparent
         animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowFullTextModal(false)}
+        onRequestClose={() => setShowManualInput(false)}
       >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Full Detected Text</Text>
-            <TouchableOpacity onPress={() => setShowFullTextModal(false)}>
-              <Text style={{ color: colors.primary, fontSize: 16, fontWeight: '600' }}>Done</Text>
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Manual Entry</Text>
+              <TouchableOpacity onPress={() => setShowManualInput(false)}>
+                <X color={colors.text} size={24} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Transaction ID</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter ID (e.g. 09A1B2C3)"
+                placeholderTextColor={colors.textSecondary}
+                value={manualTxnId}
+                onChangeText={setManualTxnId}
+                autoCapitalize="characters"
+                autoCorrect={false}
+              />
+            </View>
+
+            <TouchableOpacity 
+              style={[styles.primaryButton, !manualTxnId.trim() && { opacity: 0.5 }]}
+              onPress={handleManualInput}
+              disabled={!manualTxnId.trim()}
+            >
+              <Text style={styles.primaryButtonText}>Continue</Text>
             </TouchableOpacity>
           </View>
-          <ScrollView style={styles.modalContent}>
-            <Text style={styles.modalText} selectable>
-              {result?.text}
-            </Text>
-            <View style={{ height: 40 }} />
-          </ScrollView>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
-    </ScrollView>
+    </View>
   );
 }

@@ -9,6 +9,7 @@ import { matchInstitutionPattern, InstitutionPattern } from '../utils/patternMat
 import { maskPhone } from '../utils/maskPhone';
 import { ingestTransaction } from './api';
 import { installationService } from './installation';
+import { log } from '../utils/logger';
 // Patterns are now always fetched from backend, no local caching
 
 export interface LocalTransaction {
@@ -50,10 +51,12 @@ class SMSService {
       // Load installation date
       this.installationDate = await installationService.getInstallationDate();
       
-      console.log(`📦 [SMS Service] Loaded persisted state: ${persistedIds.length} processed IDs, install date: ${this.installationDate?.toISOString()}`);
+      log.info('SMS Service', `Loaded ${persistedIds.length} processed IDs`, {
+        installDate: this.installationDate?.toISOString(),
+      });
       this.stateLoaded = true;
     } catch (error) {
-      console.error('❌ [SMS Service] Error loading persisted state:', error);
+      log.error('SMS Service', 'Error loading persisted state', error);
     }
   }
 
@@ -95,33 +98,27 @@ class SMSService {
       const { checkSMSReadingCapability } = await import('../utils/smsReader');
       const capability = await checkSMSReadingCapability();
       
-      console.log('🔍 [SMS Service] SMS Reading Capability Check:', {
+      log.debug('SMS Service', 'SMS Reading Capability Check', {
         available: capability.available,
         hasPermission: capability.hasPermission,
         hasNativeModule: capability.hasNativeModule,
-        error: capability.error,
       });
 
       if (!capability.available) {
-        console.error('❌ [SMS Service] Cannot start SMS monitoring:', capability.error);
-        if (!capability.hasPermission) {
-          console.error('   → SMS permission not granted. User needs to grant READ_SMS permission.');
-        }
-        if (!capability.hasNativeModule) {
-          console.error('   → Native SMS module not available. Make sure:');
-          console.error('     1. react-native-get-sms-android is installed');
-          console.error('     2. App has been rebuilt (not just reloaded)');
-          console.error('     3. Native modules are properly linked');
-        }
+        log.error('SMS Service', 'Cannot start SMS monitoring', {
+          error: capability.error,
+          hasPermission: capability.hasPermission,
+          hasNativeModule: capability.hasNativeModule,
+        });
         return;
       }
     } catch (error: any) {
-      console.error('❌ [SMS Service] Error checking SMS capability:', error);
+      log.error('SMS Service', 'Error checking SMS capability', error);
       // Continue anyway - the actual read will fail gracefully
     }
 
     this.isMonitoring = true;
-    console.log('🚀 [SMS Service] Starting SMS monitoring...');
+      log.info('SMS Service', 'Starting SMS monitoring');
 
     // Load persisted state (processed IDs, installation date)
     await this.loadPersistedState();
@@ -416,7 +413,10 @@ class SMSService {
         // Don't return - continue to read SMS even without patterns so we can see what's happening
       }
       
-      console.log(`📋 [SMS Service] Loaded ${patterns.length} patterns (${userInstitutionPatterns.length} user, ${institutionPatterns.length} institution)`);
+      log.info('SMS Service', `Loaded ${patterns.length} patterns`, {
+        user: userInstitutionPatterns.length,
+        institution: institutionPatterns.length,
+      });
       
       // Log pattern details for debugging
       // console.log(`📋 [SMS Service] Using ${patterns.length} patterns for matching:`, 
@@ -431,24 +431,21 @@ class SMSService {
       // Read recent SMS (last 20 messages to catch more)
       try {
         const { readSMSMessages } = await import('../utils/smsReader');
-        console.log('📱 [SMS Service] Attempting to read SMS messages...');
-        console.log('📱 [SMS Service] Processed SMS IDs count:', this.processedSMSIds.size);
-        console.log('📱 [SMS Service] Last processed SMS ID:', this.lastProcessedSMSId);
+        log.debug('SMS Service', 'Reading SMS messages', {
+          processedCount: this.processedSMSIds.size,
+          lastProcessedId: this.lastProcessedSMSId,
+        });
         
         const smsMessages = await readSMSMessages(20);
         
-        console.log(`📱 [SMS Service] Read ${smsMessages?.length || 0} SMS messages`);
+        log.info('SMS Service', `Read ${smsMessages?.length || 0} SMS messages`);
         
         if (!smsMessages || smsMessages.length === 0) {
-          console.warn('⚠️ [SMS Service] No SMS messages found. This could mean:');
-          console.warn('   1. No SMS messages in inbox');
-          console.warn('   2. Permission not granted');
-          console.warn('   3. Native module not properly linked');
-          console.warn('   4. Error reading SMS (check logs above)');
+          log.warn('SMS Service', 'No SMS messages found');
           return;
         }
         
-        console.log(`📱 [SMS Service] Checking ${smsMessages.length} SMS messages against ${patterns.length} patterns`);
+        log.info('SMS Service', `Checking ${smsMessages.length} SMS against ${patterns.length} patterns`);
 
         // Process each SMS - try to match against patterns
         let processedCount = 0;
@@ -473,8 +470,8 @@ class SMSService {
             }
           }
 
-          console.log(`🔍 [SMS Service] Checking SMS ${sms.id}:`, {
-            preview: sms.body.substring(0, 100),
+          log.debug('SMS Service', `Checking SMS ${sms.id}`, {
+            preview: sms.body.substring(0, 150),
             address: sms.address,
             date: new Date(sms.date).toISOString(),
             patternsCount: patterns.length,
@@ -483,7 +480,10 @@ class SMSService {
           const result = await this.processSMS(sms, patterns);
           if (result) {
             processedCount++;
-            console.log(`✅ [SMS Service] Successfully processed SMS ${sms.id} as transaction`);
+            log.success('SMS Service', `✅ Processed SMS ${sms.id} as transaction`, {
+              txnId: result.txnId,
+              amount: result.amount,
+            });
             // Mark as processed
             this.processedSMSIds.add(sms.id);
             // Keep set size manageable (last 100)
@@ -492,7 +492,9 @@ class SMSService {
               this.processedSMSIds.delete(firstId);
             }
           } else {
-            console.log(`⏭️ [SMS Service] SMS ${sms.id} did not match any pattern`);
+            log.debug('SMS Service', `⏭️ SMS ${sms.id} did not match any pattern`, {
+              preview: sms.body.substring(0, 100),
+            });
           }
           this.lastProcessedSMSId = sms.id;
         }
@@ -501,15 +503,15 @@ class SMSService {
         await this.saveProcessedIds();
         
         if (skippedOld > 0) {
-          console.log(`⏭️ [SMS Service] Skipped ${skippedOld} SMS from before installation`);
+          log.debug('SMS Service', `Skipped ${skippedOld} SMS from before installation`);
         }
         if (skippedAlreadyProcessed > 0) {
-          console.log(`⏭️ [SMS Service] Skipped ${skippedAlreadyProcessed} already processed SMS`);
+          log.debug('SMS Service', `Skipped ${skippedAlreadyProcessed} already processed SMS`);
         }
         if (processedCount > 0) {
-          console.log(`✅ [SMS Service] Processed ${processedCount} new transaction(s)`);
+          log.success('SMS Service', `Processed ${processedCount} new transaction(s)`);
         } else {
-          console.log(`ℹ️ [SMS Service] No new transactions found in this check`);
+          log.info('SMS Service', 'No new transactions found in this check');
         }
       } catch (importError: any) {
         console.error('❌ [SMS Service] Error importing or using SMS reader:', importError);
@@ -536,34 +538,26 @@ class SMSService {
   private async processSMS(sms: any, patterns: InstitutionPattern[]): Promise<boolean> {
     try {
       // Find matching pattern
-      console.log(`🔍 [SMS Service] Attempting to match SMS against ${patterns.length} patterns...`);
       const matchResult = this.findMatchingPattern(sms.body, patterns, sms.address);
       if (!matchResult.matched || !matchResult.data) {
-        console.log('❌ [SMS Service] No pattern matched for SMS:', {
-          preview: sms.body.substring(0, 150),
+        log.warn('SMS Service', 'No pattern matched', {
+          preview: sms.body.substring(0, 200),
           patternsCount: patterns.length,
-          hasPatterns: patterns.length > 0,
-          patternNames: patterns.map(p => p.name).slice(0, 5),
+          patternNames: patterns.map(p => p.name).slice(0, 3),
         });
         return false;
       }
       
-      console.log('✅ [SMS Service] Pattern matched!', {
-        patternName: matchResult.data.patternName,
+      log.success('SMS Service', 'Pattern matched!', {
+        pattern: matchResult.data.patternName,
         txnId: matchResult.data.txnId,
         amount: matchResult.data.amount,
         sender: matchResult.data.sender,
       });
       
-      console.log('✅ [SMS Service] Pattern matched!', {
-        txnId: matchResult.data.txnId,
-        amount: matchResult.data.amount,
-        pattern: matchResult.data.patternName,
-      });
-      
       // Only track deposits (positive amounts), skip withdrawals
       if (matchResult.data.amount <= 0) {
-        console.log('⏭️ [SMS Service] Skipping withdrawal transaction (only tracking deposits):', {
+        log.debug('SMS Service', 'Skipping withdrawal', {
           amount: matchResult.data.amount,
           txnId: matchResult.data.txnId,
         });

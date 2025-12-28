@@ -5,6 +5,7 @@ import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import BottomNavigation, { Tab } from './src/components/BottomNavigation';
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
+import EmployeeRegisterScreen from './src/screens/EmployeeRegisterScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import BanksScreen from './src/screens/BanksScreen';
 import TransactionsScreen from './src/screens/TransactionsScreen';
@@ -13,6 +14,7 @@ import ProfileScreen from './src/screens/ProfileScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import OCRScreen from './src/screens/OCRScreen';
 import InstitutionBuilderScreen from './src/screens/InstitutionBuilderScreen';
+import EmployeeScreen from './src/screens/EmployeeScreen';
 import { storage } from './src/services/storage';
 import { smsService } from './src/services/smsService';
 import { Pattern } from './src/types';
@@ -31,7 +33,7 @@ function AppContent() {
   const [sampleSMSInstitution, setSampleSMSInstitution] = useState<string>('');
   const [sampleSMSCountry, setSampleSMSCountry] = useState<string>('');
   const [currentTab, setCurrentTab] = useState<Tab>('home');
-  const [authScreen, setAuthScreen] = useState<'login' | 'register' | null>(null);
+  const [authScreen, setAuthScreen] = useState<'login' | 'register' | 'employee-register' | null>(null);
   const [showInstitutionBuilder, setShowInstitutionBuilder] = useState(false);
   const [cameFromOnboarding, setCameFromOnboarding] = useState(false);
 
@@ -427,6 +429,11 @@ function AppContent() {
       );
     }
 
+    // For employees, show employee screen (no bottom nav)
+    if (isEmployee) {
+      return <EmployeeScreen onLogout={handleLogout} />;
+    }
+
     switch (currentTab) {
       case 'home':
         return (
@@ -634,6 +641,17 @@ function AppContent() {
     setShowOnboarding(true);
   };
 
+  const handleEmployeeRegisterSuccess = async () => {
+    // After employee registration, refresh auth to get updated user role
+    console.log('🔄 [App] Refreshing auth after employee registration...');
+    await checkAuth();
+    setAuthScreen(null);
+    // Force a small delay to ensure state is updated
+    setTimeout(() => {
+      console.log('✅ [App] Auth refresh complete');
+    }, 500);
+  };
+
   const renderAuthScreen = () => {
     switch (authScreen) {
       case 'register':
@@ -643,12 +661,20 @@ function AppContent() {
             onSwitchToLogin={() => setAuthScreen('login')}
           />
         );
+      case 'employee-register':
+        return (
+          <EmployeeRegisterScreen
+            onRegistrationSuccess={handleEmployeeRegisterSuccess}
+            onCancel={() => setAuthScreen('login')}
+          />
+        );
       case 'login':
       default:
         return (
           <LoginScreen
             onLoginSuccess={handleLoginSuccess}
             onSwitchToRegister={() => setAuthScreen('register')}
+            onSwitchToEmployeeRegister={() => setAuthScreen('employee-register')}
           />
         );
     }
@@ -677,7 +703,7 @@ function AppContent() {
           <View style={{ flex: 1 }}>
             {renderScreen()}
           </View>
-          {!showInstitutionBuilder && (
+          {!showInstitutionBuilder && !isEmployee && (
             <BottomNavigation 
               currentTab={currentTab} 
               onTabChange={setCurrentTab}
