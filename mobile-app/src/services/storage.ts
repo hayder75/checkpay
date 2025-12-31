@@ -1,57 +1,66 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { STORAGE_KEYS } from '../config';
 import { Pattern } from '../types';
+import { log } from '../utils/logger';
 
+/**
+ * Secure storage service
+ * Uses expo-secure-store for sensitive data (tokens, API keys)
+ * Uses AsyncStorage for non-sensitive data
+ */
 export const storage = {
-  // JWT Token
+  // JWT Token (stored in secure storage)
   async getToken(): Promise<string | null> {
     try {
-      const token = await AsyncStorage.getItem(STORAGE_KEYS.TOKEN);
+      const token = await SecureStore.getItemAsync(STORAGE_KEYS.TOKEN);
       if (token) {
-        console.log('🔑 [Storage] Token retrieved:', token.substring(0, 20) + '...');
+        log.debug('Storage', 'Token retrieved', { hasToken: true });
       } else {
-        console.warn('⚠️ [Storage] No token found in storage');
+        log.debug('Storage', 'No token found in storage');
       }
       return token;
     } catch (error) {
-      console.error('❌ [Storage] Error getting token:', error);
+      log.error('Storage', 'Error getting token', error);
       return null;
     }
   },
 
   async setToken(token: string): Promise<void> {
     try {
-      await AsyncStorage.setItem(STORAGE_KEYS.TOKEN, token);
-      console.log('✅ [Storage] Token saved:', token.substring(0, 20) + '...');
+      await SecureStore.setItemAsync(STORAGE_KEYS.TOKEN, token);
+      log.debug('Storage', 'Token saved', { hasToken: true });
     } catch (error) {
-      console.error('❌ [Storage] Error saving token:', error);
+      log.error('Storage', 'Error saving token', error);
       throw error;
     }
   },
 
   async removeToken(): Promise<void> {
     try {
-      await AsyncStorage.removeItem(STORAGE_KEYS.TOKEN);
-      console.log('🗑️ [Storage] Token removed');
+      await SecureStore.deleteItemAsync(STORAGE_KEYS.TOKEN);
+      log.debug('Storage', 'Token removed');
     } catch (error) {
-      console.error('❌ [Storage] Error removing token:', error);
+      log.error('Storage', 'Error removing token', error);
     }
   },
 
-  // User Data
+  // User Data (stored in AsyncStorage - non-sensitive)
   async getUser(): Promise<any | null> {
     try {
       const data = await AsyncStorage.getItem(STORAGE_KEYS.USER);
       if (data) {
         const user = JSON.parse(data);
-        console.log('👤 [Storage] User retrieved:', user.username || user.phone || 'Unknown');
+        log.debug('Storage', 'User retrieved', { 
+          username: user.username || user.phone || 'Unknown' 
+        });
         return user;
       } else {
-        console.warn('⚠️ [Storage] No user found in storage');
+        log.debug('Storage', 'No user found in storage');
         return null;
       }
     } catch (error) {
-      console.error('❌ [Storage] Error getting user:', error);
+      log.error('Storage', 'Error getting user', error);
       return null;
     }
   },
@@ -59,9 +68,11 @@ export const storage = {
   async setUser(user: any): Promise<void> {
     try {
       await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
-      console.log('✅ [Storage] User saved:', user.username || user.phone || 'Unknown');
+      log.debug('Storage', 'User saved', { 
+        username: user.username || user.phone || 'Unknown' 
+      });
     } catch (error) {
-      console.error('❌ [Storage] Error saving user:', error);
+      log.error('Storage', 'Error saving user', error);
       throw error;
     }
   },
@@ -69,23 +80,39 @@ export const storage = {
   async removeUser(): Promise<void> {
     try {
       await AsyncStorage.removeItem(STORAGE_KEYS.USER);
-      console.log('🗑️ [Storage] User removed');
+      log.debug('Storage', 'User removed');
     } catch (error) {
-      console.error('❌ [Storage] Error removing user:', error);
+      log.error('Storage', 'Error removing user', error);
     }
   },
 
-  // API Key
+  // API Key (stored in secure storage)
   async getApiKey(): Promise<string | null> {
-    return await AsyncStorage.getItem(STORAGE_KEYS.API_KEY);
+    try {
+      return await SecureStore.getItemAsync(STORAGE_KEYS.API_KEY);
+    } catch (error) {
+      log.error('Storage', 'Error getting API key', error);
+      return null;
+    }
   },
 
   async setApiKey(apiKey: string): Promise<void> {
-    await AsyncStorage.setItem(STORAGE_KEYS.API_KEY, apiKey);
+    try {
+      await SecureStore.setItemAsync(STORAGE_KEYS.API_KEY, apiKey);
+      log.debug('Storage', 'API key saved');
+    } catch (error) {
+      log.error('Storage', 'Error saving API key', error);
+      throw error;
+    }
   },
 
   async removeApiKey(): Promise<void> {
-    await AsyncStorage.removeItem(STORAGE_KEYS.API_KEY);
+    try {
+      await SecureStore.deleteItemAsync(STORAGE_KEYS.API_KEY);
+      log.debug('Storage', 'API key removed');
+    } catch (error) {
+      log.error('Storage', 'Error removing API key', error);
+    }
   },
 
   // Patterns
@@ -194,9 +221,9 @@ export const storage = {
     try {
       const data = await AsyncStorage.getItem('institution_patterns');
       const patterns = data ? JSON.parse(data) : [];
-      console.log(`📦 [Storage] Retrieved ${patterns.length} patterns from storage`);
-      if (patterns.length > 0) {
-        console.log('📦 [Storage] Sample pattern:', {
+      log.debug('Storage', `Retrieved ${patterns.length} patterns from storage`);
+      if (__DEV__ && patterns.length > 0) {
+        log.debug('Storage', 'Sample pattern', {
           id: patterns[0].id,
           name: patterns[0].name,
           institution: patterns[0].institution,
@@ -205,7 +232,7 @@ export const storage = {
       }
       return patterns;
     } catch (error) {
-      console.error('❌ [Storage] Error reading patterns:', error);
+      log.error('Storage', 'Error reading patterns', error);
       return [];
     }
   },
@@ -213,17 +240,19 @@ export const storage = {
   async setInstitutionPatterns(patterns: any[]): Promise<void> {
     try {
       await AsyncStorage.setItem('institution_patterns', JSON.stringify(patterns));
-      console.log(`💾 [Storage] Saved ${patterns.length} patterns to storage`);
+      log.debug('Storage', `Saved ${patterns.length} patterns to storage`);
       
-      // Verify save was successful
-      const verified = await this.getInstitutionPatterns();
-      if (verified.length === patterns.length) {
-        console.log(`✅ [Storage] Verified save: ${verified.length} patterns stored`);
-      } else {
-        console.warn(`⚠️ [Storage] Save verification failed: expected ${patterns.length}, got ${verified.length}`);
+      // Verify save was successful (only in dev mode)
+      if (__DEV__) {
+        const verified = await this.getInstitutionPatterns();
+        if (verified.length === patterns.length) {
+          log.debug('Storage', `Verified save: ${verified.length} patterns stored`);
+        } else {
+          log.warn('Storage', `Save verification failed: expected ${patterns.length}, got ${verified.length}`);
+        }
       }
     } catch (error) {
-      console.error('❌ [Storage] Error saving patterns:', error);
+      log.error('Storage', 'Error saving patterns', error);
       throw error;
     }
   },
@@ -249,8 +278,8 @@ export const storage = {
   },
 
   async setProcessedSMSIds(ids: string[]): Promise<void> {
-    // Keep only last 100 IDs to avoid memory issues
-    const limitedIds = ids.slice(-100);
+    // Keep only last 500 IDs to avoid memory issues while ensuring gap-free resumption
+    const limitedIds = ids.slice(-500);
     await AsyncStorage.setItem('processed_sms_ids', JSON.stringify(limitedIds));
   },
 
@@ -273,7 +302,7 @@ export const storage = {
       const token = await this.getToken();
       return !!token && token.trim().length > 0;
     } catch (error) {
-      console.error('❌ [Storage] Error checking token:', error);
+      log.error('Storage', 'Error checking token', error);
       return false;
     }
   },
@@ -291,12 +320,11 @@ export const storage = {
     await AsyncStorage.removeItem(key);
   },
 
-  // Get all auth data for debugging
+  // Get all auth data for debugging (only in dev mode, no sensitive data)
   async getAuthData(): Promise<{
     hasToken: boolean;
     hasUser: boolean;
     hasApiKey: boolean;
-    tokenPreview?: string;
     userPreview?: string;
   }> {
     try {
@@ -308,11 +336,10 @@ export const storage = {
         hasToken: !!token,
         hasUser: !!user,
         hasApiKey: !!apiKey,
-        tokenPreview: token ? token.substring(0, 20) + '...' : undefined,
         userPreview: user ? (user.username || user.phone || 'Unknown') : undefined,
       };
     } catch (error) {
-      console.error('❌ [Storage] Error getting auth data:', error);
+      log.error('Storage', 'Error getting auth data', error);
       return {
         hasToken: false,
         hasUser: false,
@@ -324,11 +351,19 @@ export const storage = {
   // Clear all data (logout)
   async clearAll(): Promise<void> {
     try {
-      console.log('🗑️ [Storage] Clearing all data...');
+      log.info('Storage', 'Clearing all data...');
+      
+      // Clear secure storage (tokens, API keys)
+      await Promise.all([
+        this.removeToken(),
+        this.removeApiKey(),
+      ]).catch(error => {
+        log.warn('Storage', 'Error clearing secure storage', error);
+      });
+      
+      // Clear AsyncStorage
       await AsyncStorage.multiRemove([
-        STORAGE_KEYS.TOKEN,
         STORAGE_KEYS.USER,
-        STORAGE_KEYS.API_KEY,
         STORAGE_KEYS.PATTERNS,
         'sim_iccid',
         'onboarding_completed',
@@ -341,9 +376,10 @@ export const storage = {
         'last_processed_sms_timestamp',
         'pending_background_sms',
       ]);
-      console.log('✅ [Storage] All data cleared');
+      
+      log.info('Storage', 'All data cleared');
     } catch (error) {
-      console.error('❌ [Storage] Error clearing data:', error);
+      log.error('Storage', 'Error clearing data', error);
       throw error;
     }
   },

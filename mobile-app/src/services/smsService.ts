@@ -24,6 +24,7 @@ export interface LocalTransaction {
   smsText: string;
   receivedAt: string;
   synced: boolean; // Whether synced to backend
+  isValidated?: boolean; // Whether verified via OCR or manual entry
   createdAt: string;
 }
 
@@ -31,14 +32,16 @@ class SMSService {
   private isMonitoring: boolean = false;
   private lastProcessedSMSId: string | null = null;
   private processedSMSIds: Set<string> = new Set(); // Track all processed SMS IDs
-  private appState: AppStateStatus = 'active';
+  private lastProcessedTimestamp: number | null = null; // Track last processed SMS timestamp
+  private appState: AppStateStatus = AppState.currentState;
   private checkInterval: NodeJS.Timeout | null = null;
   private appStateSubscription: any = null; // Subscription for AppState changes
+  private lastSyncTime: number = 0;
   private installationDate: Date | null = null; // Cache installation date
   private stateLoaded: boolean = false;
 
   /**
-   * Load persisted state from storage (processed SMS IDs)
+   * Load persisted state from storage (processed SMS IDs and timestamp)
    */
   private async loadPersistedState(): Promise<void> {
     if (this.stateLoaded) return;
@@ -48,11 +51,15 @@ class SMSService {
       const persistedIds = await storage.getProcessedSMSIds();
       this.processedSMSIds = new Set(persistedIds);
       
+      // Load last processed timestamp for gap-free resumption
+      this.lastProcessedTimestamp = await storage.getLastProcessedSMSTimestamp();
+      
       // Load installation date
       this.installationDate = await installationService.getInstallationDate();
       
       log.info('SMS Service', `Loaded ${persistedIds.length} processed IDs`, {
         installDate: this.installationDate?.toISOString(),
+        lastProcessedTimestamp: this.lastProcessedTimestamp ? new Date(this.lastProcessedTimestamp).toISOString() : null,
       });
       this.stateLoaded = true;
     } catch (error) {
@@ -131,6 +138,9 @@ class SMSService {
 
     // Initial check
     await this.checkForNewSMS();
+    
+    // Sync any unsynced transactions
+    this.syncAllUnsyncedTransactions().catch(err => console.error('❌ [SMS Service] Initial sync failed:', err));
   }
 
   /**
@@ -191,6 +201,7 @@ class SMSService {
       // Process any SMS received while in background
       this.processPendingBackgroundSMS();
       this.checkForNewSMS();
+      this.syncAllUnsyncedTransactions().catch(err => console.error('❌ [SMS Service] Foreground sync failed:', err));
     } else if (this.appState === 'active' && nextAppState.match(/inactive|background/)) {
       // App went to background - native BroadcastReceiver will handle SMS
       console.log('App went to background, native BroadcastReceiver active');
@@ -270,6 +281,14 @@ class SMSService {
       if (this.appState === 'active') {
         console.log('✅ [SMS Service] App is active, checking for new SMS...');
         this.checkForNewSMS();
+        
+        // Also sync unsynced transactions periodically
+        // We do this every 30 seconds (every 6th check) to avoid overwhelming the server
+        const now = Date.now();
+        if (!this.lastSyncTime || now - this.lastSyncTime > 30000) {
+          this.lastSyncTime = now;
+          this.syncAllUnsyncedTransactions().catch(err => console.error('❌ [SMS Service] Periodic sync failed:', err));
+        }
       } else {
         console.log('⏸️ [SMS Service] App is not active, skipping SMS check');
       }
@@ -383,6 +402,12 @@ class SMSService {
         usageCount: 0,
         smsExample: null,
         type: 'institution',
+        // Include security fields from backend
+        allowedSenders: p.allowedSenders || null,
+        requireSenderVerification: p.requireSenderVerification !== false,
+        senderVerificationMode: p.senderVerificationMode || 'STRICT',
+        maxAmountThreshold: p.maxAmountThreshold || null,
+        requireContactCheck: p.requireContactCheck !== false,
       }));
       
       // Combine all patterns (user patterns first, then institution patterns)
@@ -428,15 +453,23 @@ class SMSService {
       //   }))
       // );
 
-      // Read recent SMS (last 20 messages to catch more)
+      // Read SMS messages - use timestamp-based resumption to avoid gaps
       try {
         const { readSMSMessages } = await import('../utils/smsReader');
+        
+        // Determine how many SMS to read based on last processed timestamp
+        // If we have a timestamp, read more messages to ensure we catch all SMS since then
+        // Otherwise, read a reasonable default (50 messages for initial scan)
+        const smsLimit = this.lastProcessedTimestamp ? 100 : 50;
+        
         log.debug('SMS Service', 'Reading SMS messages', {
           processedCount: this.processedSMSIds.size,
           lastProcessedId: this.lastProcessedSMSId,
+          lastProcessedTimestamp: this.lastProcessedTimestamp ? new Date(this.lastProcessedTimestamp).toISOString() : null,
+          smsLimit,
         });
         
-        const smsMessages = await readSMSMessages(20);
+        const smsMessages = await readSMSMessages(smsLimit);
         
         log.info('SMS Service', `Read ${smsMessages?.length || 0} SMS messages`);
         
@@ -452,7 +485,10 @@ class SMSService {
         let skippedOld = 0;
         let skippedAlreadyProcessed = 0;
         
-        for (const sms of smsMessages) {
+        // Sort SMS by date (oldest first) to process in chronological order
+        const sortedSMS = [...smsMessages].sort((a, b) => a.date - b.date);
+        
+        for (const sms of sortedSMS) {
           // Skip if already processed (check both last ID and set)
           if (this.processedSMSIds.has(sms.id)) {
             skippedAlreadyProcessed++;
@@ -470,6 +506,15 @@ class SMSService {
             }
           }
 
+          // Skip SMS older than last processed timestamp (gap-free resumption)
+          // Only use timestamp check if SMS date is a valid number
+          if (this.lastProcessedTimestamp && typeof sms.date === 'number' && sms.date <= this.lastProcessedTimestamp) {
+            skippedAlreadyProcessed++;
+            // Mark as processed to avoid checking again
+            this.processedSMSIds.add(sms.id);
+            continue;
+          }
+
           log.debug('SMS Service', `Checking SMS ${sms.id}`, {
             preview: sms.body.substring(0, 150),
             address: sms.address,
@@ -480,27 +525,46 @@ class SMSService {
           const result = await this.processSMS(sms, patterns);
           if (result) {
             processedCount++;
-            log.success('SMS Service', `✅ Processed SMS ${sms.id} as transaction`, {
-              txnId: result.txnId,
-              amount: result.amount,
-            });
+            log.success('SMS Service', `✅ Processed SMS ${sms.id} as transaction`);
             // Mark as processed
             this.processedSMSIds.add(sms.id);
-            // Keep set size manageable (last 100)
-            if (this.processedSMSIds.size > 100) {
-              const firstId = Array.from(this.processedSMSIds)[0];
-              this.processedSMSIds.delete(firstId);
-            }
           } else {
             log.debug('SMS Service', `⏭️ SMS ${sms.id} did not match any pattern`, {
               preview: sms.body.substring(0, 100),
             });
+            // Mark non-matching SMS as processed to avoid re-checking
+            // Note: We still update timestamp below to ensure no gaps
+            this.processedSMSIds.add(sms.id);
           }
+          
+          // Keep set size manageable (last 500 for better gap prevention)
+          if (this.processedSMSIds.size > 500) {
+            const firstId = Array.from(this.processedSMSIds)[0];
+            this.processedSMSIds.delete(firstId);
+          }
+          
+          // Update timestamp for ALL checked SMS (matched or not) to ensure no gaps
+          // The processed IDs set handles deduplication, timestamp is just for efficiency
           this.lastProcessedSMSId = sms.id;
+          // Only update timestamp if SMS date is a valid number
+          if (typeof sms.date === 'number') {
+            if (!this.lastProcessedTimestamp || sms.date > this.lastProcessedTimestamp) {
+              this.lastProcessedTimestamp = sms.date;
+            }
+          } else {
+            log.warn('SMS Service', `SMS ${sms.id} has invalid date format:`, sms.date);
+          }
         }
         
-        // Persist processed IDs after each batch (Requirement #3)
+        // Persist processed IDs and timestamp after each batch (Requirement #3)
         await this.saveProcessedIds();
+        if (this.lastProcessedTimestamp && typeof this.lastProcessedTimestamp === 'number') {
+          try {
+            await storage.setLastProcessedSMSTimestamp(this.lastProcessedTimestamp);
+          } catch (error) {
+            log.error('SMS Service', 'Error saving last processed timestamp', error);
+          }
+        }
         
         if (skippedOld > 0) {
           log.debug('SMS Service', `Skipped ${skippedOld} SMS from before installation`);
@@ -562,6 +626,55 @@ class SMSService {
           txnId: matchResult.data.txnId,
         });
         return false;
+      }
+
+      // NEW: Verify SMS security
+      if (matchResult.pattern) {
+        const { verifySMS } = await import('./smsVerification');
+        const verification = await verifySMS(
+          {
+            address: sms.address,
+            date: sms.date,
+            body: sms.body,
+          },
+          matchResult.pattern,
+          {
+            amount: matchResult.data.amount,
+            txnId: matchResult.data.txnId,
+          },
+          matchResult.confidence
+        );
+        
+        // Check if verification passed
+        if (!verification.valid) {
+          log.warn('SMS Service', 'SMS verification failed', {
+            txnId: matchResult.data.txnId,
+            reasons: verification.reasons,
+            confidence: verification.confidence,
+            sender: sms.address,
+            patternId: matchResult.pattern.id,
+            patternName: matchResult.pattern.name,
+            allowedSenders: (matchResult.pattern as any).allowedSenders,
+            requireSenderVerification: (matchResult.pattern as any).requireSenderVerification,
+          });
+          console.warn('🚫 [SMS Service] SMS REJECTED - Verification failed:', {
+            sender: sms.address,
+            pattern: matchResult.pattern.name,
+            reasons: verification.reasons,
+            allowedSenders: (matchResult.pattern as any).allowedSenders,
+          });
+          return false;
+        }
+        
+        // If requires review, log it but still process
+        if (verification.requiresReview) {
+          log.warn('SMS Service', 'SMS requires review', {
+            txnId: matchResult.data.txnId,
+            reasons: verification.reasons,
+            confidence: verification.confidence,
+          });
+          // You might want to flag this transaction for manual review
+        }
       }
 
       // Extract sender name - prefer extracted sender, then try to parse from SMS, then sendFrom, then bank name
@@ -971,7 +1084,7 @@ class SMSService {
       if (matchResult.matched && matchResult.data) {
         return {
           matched: true,
-          pattern: matchResult.pattern?.name,
+          pattern: matchResult.data.patternName,
           extracted: matchResult.data,
         };
       }
@@ -994,6 +1107,10 @@ class SMSService {
   resetProcessedSMS(): void {
     this.processedSMSIds.clear();
     this.lastProcessedSMSId = null;
+    this.lastProcessedTimestamp = null;
+    // Also clear from storage
+    storage.setProcessedSMSIds([]).catch(() => {});
+    storage.removeItem('last_processed_sms_timestamp').catch(() => {});
     // console.log('🔄 [SMS Service] Reset processed SMS IDs');
   }
 }
