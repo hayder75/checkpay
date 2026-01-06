@@ -14,6 +14,12 @@ export interface InstitutionPattern {
   usageCount: number;
   smsExample?: string | null;
   type: 'institution' | 'country';
+  // Security fields for sender verification
+  allowedSenders?: string[] | null;
+  requireSenderVerification?: boolean;
+  senderVerificationMode?: 'STRICT' | 'WARN' | 'NONE';
+  maxAmountThreshold?: number | null;
+  requireContactCheck?: boolean;
 }
 
 /**

@@ -165,7 +165,8 @@ export default function AnalyticsScreen({ apiKey }: Props) {
             <View style={styles.spendingSection}>
               <Text style={styles.spendingLabel}>My Spending</Text>
               <Text style={styles.spendingAmount}>
-                ${(stats?.spending?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {(stats?.spending?.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <Text style={styles.currencyUnit}> Br</Text>
               </Text>
               {stats?.spending?.change !== undefined && (
                 <View style={styles.changeRow}>
@@ -235,14 +236,13 @@ export default function AnalyticsScreen({ apiKey }: Props) {
                       <Text style={[styles.categoryName, { color: colors.text }]}>{category.name}</Text>
                   </View>
                   <Text style={[styles.categoryAmount, { color: colors.text }]}>
-                    ${category.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {category.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <Text style={styles.currencyUnitSmall}> Br</Text>
                   </Text>
                 </View>
               ))
             )}
           </View>
-        </>
-      )}
     </ScrollView>
   );
 }
@@ -372,6 +372,16 @@ const styles = StyleSheet.create({
   categoryAmount: {
     fontSize: 15,
     fontWeight: '700',
+  },
+  currencyUnit: {
+    fontSize: 18,
+    fontWeight: '600',
+    opacity: 0.8,
+  },
+  currencyUnitSmall: {
+    fontSize: 10,
+    fontWeight: '600',
+    opacity: 0.6,
   },
   emptyText: {
     fontSize: 14,

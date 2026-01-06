@@ -38,16 +38,16 @@ const lightColors = {
 };
 
 const darkColors = {
-  background: '#ffffff',
-  surface: '#f9fafb',
-  text: '#1f2937',
-  textSecondary: '#6b7280',
-  border: '#e5e7eb',
+  background: '#121212',
+  surface: '#1e1e1e',
+  text: '#ffffff',
+  textSecondary: '#a0a0a0',
+  border: '#333333',
   primary: '#F37100', // Brand color (orange)
   primaryText: '#ffffff',
   accent: '#F37100',
-  lightGreen: '#d1fae5',
-  darkGreen: '#059669',
+  lightGreen: '#064e3b',
+  darkGreen: '#10b981',
 };
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {

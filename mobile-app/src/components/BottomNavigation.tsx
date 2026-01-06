@@ -1,9 +1,9 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Home, Building2, History, User, ScanLine, CheckCircle2 } from 'lucide-react-native';
+import { Home, Building2, History, User, ScanLine } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
 
-export type Tab = 'home' | 'banks' | 'transactions' | 'ocr' | 'profile' | 'verify';
+export type Tab = 'home' | 'banks' | 'transactions' | 'ocr' | 'profile' | 'employee-management';
 
 interface Props {
   currentTab: Tab;
@@ -17,7 +17,7 @@ export default function BottomNavigation({ currentTab, onTabChange, isEmployee =
   const allTabs: { id: Tab; label: string; Icon: any }[] = [
     { id: 'home', label: 'Home', Icon: Home },
     { id: 'transactions', label: 'History', Icon: History },
-    { id: 'verify', label: 'Verify', Icon: CheckCircle2 },
+    { id: 'banks', label: 'Banks', Icon: Building2 },
     { id: 'ocr', label: 'Scan', Icon: ScanLine },
   ];
 

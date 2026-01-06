@@ -35,7 +35,7 @@ export default function PhoneInput({ value, onChangeText, placeholder, autoFocus
   
   // Parse current value to get calling code and number
   const parsed = value ? parsePhoneNumber(value) : null;
-  const selectedCallingCode = parsed?.callingCode || '+254'; // Default to Kenya
+  const selectedCallingCode = parsed?.callingCode || '+251'; // Default to Ethiopia
   // Extract just the number part (remove calling code if present)
   let phoneNumber = '';
   if (parsed) {
@@ -113,7 +113,7 @@ export default function PhoneInput({ value, onChangeText, placeholder, autoFocus
         
         <TextInput
           style={[styles.input, { color: colors.text }]}
-          placeholder={placeholder || "712345678"}
+          placeholder={placeholder || "912345678"}
           placeholderTextColor={colors.textSecondary}
           value={phoneNumber}
           onChangeText={handlePhoneChange}

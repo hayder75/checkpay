@@ -29,7 +29,7 @@ interface Props {
 }
 
 export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwitchToEmployeeRegister }: Props) {
-  const { colors } = useTheme();
+  const { theme, colors } = useTheme();
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -177,13 +177,15 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
       >
         <View style={styles.header}>
           <Image 
-            source={require('../../assets/logo/logo - Asset 2.png')} 
-            style={styles.logo}
+            source={theme === 'dark' 
+              ? require('../../assets/logo/logo - Asset 1.png') 
+              : require('../../assets/logo/logo - Asset 2.png')
+            } 
+            style={styles.logo} 
             resizeMode="contain"
           />
-          {/* <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            Sign in to your account
-          </Text> */}
+          <Text style={[styles.title, { color: colors.text }]}>Welcome Back</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Sign in to continue to CheckPay</Text>
         </View>
 
         <View style={styles.form}>
@@ -281,7 +283,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
               onPress={onSwitchToEmployeeRegister}
             >
               <Text style={[styles.switchText, { color: colors.textSecondary }]}>
-                Register as Employee
+                Login as Employee
               </Text>
             </TouchableOpacity>
           )}
@@ -305,12 +307,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   logo: {
-    width: 200,
-    height: 60,
+    width: 120,
+    height: 120,
+    marginBottom: 20,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: 'bold',
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 16,
+    textAlign: 'center',
   },
   form: {
     width: '100%',

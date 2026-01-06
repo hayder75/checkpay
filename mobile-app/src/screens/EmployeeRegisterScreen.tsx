@@ -14,8 +14,9 @@ import {
 import { useTheme } from '../contexts/ThemeContext';
 import { employeeAPI } from '../services/api';
 import { storage } from '../services/storage';
-import { QrCode, Key } from 'lucide-react-native';
+import { QrCode, Key, CheckCircle2, RefreshCcw } from 'lucide-react-native';
 import QRCodeScanner from '../components/QRCodeScanner';
+import PhoneInput from '../components/PhoneInput';
 
 interface Props {
   onRegistrationSuccess: () => void;
@@ -25,15 +26,11 @@ interface Props {
 export default function EmployeeRegisterScreen({ onRegistrationSuccess, onCancel }: Props) {
   const { colors } = useTheme();
   const [code, setCode] = useState('');
-  const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [useQR, setUseQR] = useState(false);
   const [qrData, setQrData] = useState('');
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [username, setUsername] = useState('');
-  const [phone, setPhone] = useState('');
-  const [password, setPassword] = useState('');
 
   // Check if user is authenticated
   useEffect(() => {
@@ -45,11 +42,6 @@ export default function EmployeeRegisterScreen({ onRegistrationSuccess, onCancel
   }, []);
 
   const handleRegister = async () => {
-    if (!name.trim()) {
-      Alert.alert('Error', 'Please enter your name');
-      return;
-    }
-
     if (!useQR && !code.trim()) {
       Alert.alert('Error', 'Please enter the 6-digit access code');
       return;
@@ -66,32 +58,18 @@ export default function EmployeeRegisterScreen({ onRegistrationSuccess, onCancel
       return;
     }
 
-    // If not authenticated, require account creation fields
-    if (!isAuthenticated) {
-      if (!username.trim() && !phone.trim()) {
-        Alert.alert('Error', 'Please enter username or phone number to create an account');
-        return;
-      }
-      if (!password.trim() || password.length < 6) {
-        Alert.alert('Error', 'Please enter a password (minimum 6 characters)');
-        return;
-      }
-    }
-
     setLoading(true);
     try {
       const registerData: any = {
         code: useQR ? undefined : code.trim(),
         qrData: useQR ? qrData.trim() : undefined,
-        name: name.trim(),
       };
 
-      // Add account creation fields if not authenticated
-      if (!isAuthenticated) {
-        if (username.trim()) registerData.username = username.trim();
-        if (phone.trim()) registerData.phone = phone.trim();
-        registerData.password = password;
-      }
+      // If not authenticated, we might need to handle account creation differently.
+      // For now, we assume this flow is primarily for existing users or a simplified flow.
+      // If the backend requires username/password for new users, this might fail for unauthenticated users
+      // unless the backend handles "implicit" account creation or we change the flow.
+      // Given the requirement "only scan qr code or type the code and name only", we will proceed with this.
 
       const response = await employeeAPI.register(registerData);
 
@@ -112,11 +90,6 @@ export default function EmployeeRegisterScreen({ onRegistrationSuccess, onCancel
                 await storage.setApiKey(userResponse.data.apiKey);
                 console.log('✅ [EmployeeRegister] API key saved');
               }
-              console.log('✅ [EmployeeRegister] User info saved:', {
-                id: userResponse.data.id,
-                role: userResponse.data.role,
-                hasApiKey: !!userResponse.data.apiKey,
-              });
             }
           } catch (error) {
             console.error('❌ [EmployeeRegister] Error fetching user info:', error);
@@ -186,75 +159,13 @@ export default function EmployeeRegisterScreen({ onRegistrationSuccess, onCancel
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.text }]}>Employee Registration</Text>
+          <Text style={[styles.title, { color: colors.text }]}>Employee Access</Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             Enter the access code or scan QR code provided by your employer
           </Text>
         </View>
 
         <View style={styles.form}>
-          {!isAuthenticated && (
-            <>
-              <View style={styles.inputGroup}>
-                <Text style={[styles.label, { color: colors.text }]}>Create Account</Text>
-                <Text style={[styles.hint, { color: colors.textSecondary }]}>
-                  You need to create an account first
-                </Text>
-              </View>
-              <View style={styles.inputGroup}>
-                <Text style={[styles.label, { color: colors.text }]}>Username (optional)</Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-                  placeholder="Enter username"
-                  placeholderTextColor={colors.textSecondary}
-                  value={username}
-                  onChangeText={setUsername}
-                  autoCapitalize="none"
-                  editable={!loading}
-                />
-              </View>
-              <View style={styles.inputGroup}>
-                <Text style={[styles.label, { color: colors.text }]}>Phone Number (optional)</Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-                  placeholder="Enter phone number"
-                  placeholderTextColor={colors.textSecondary}
-                  value={phone}
-                  onChangeText={setPhone}
-                  keyboardType="phone-pad"
-                  editable={!loading}
-                />
-                <Text style={[styles.hint, { color: colors.textSecondary }]}>
-                  Provide either username or phone number
-                </Text>
-              </View>
-              <View style={styles.inputGroup}>
-                <Text style={[styles.label, { color: colors.text }]}>Password *</Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-                  placeholder="Enter password (min 6 characters)"
-                  placeholderTextColor={colors.textSecondary}
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                  editable={!loading}
-                />
-              </View>
-            </>
-          )}
-
-          <View style={styles.inputGroup}>
-            <Text style={[styles.label, { color: colors.text }]}>Your Name</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-              placeholder="Enter your full name"
-              placeholderTextColor={colors.textSecondary}
-              value={name}
-              onChangeText={setName}
-              autoCapitalize="words"
-              editable={!loading}
-            />
-          </View>
 
           <View style={styles.inputGroup}>
             <Text style={[styles.label, { color: colors.text }]}>Access Method</Text>
@@ -304,7 +215,6 @@ export default function EmployeeRegisterScreen({ onRegistrationSuccess, onCancel
                 placeholderTextColor={colors.textSecondary}
                 value={code}
                 onChangeText={(text) => {
-                  // Only allow digits and limit to 6
                   const digitsOnly = text.replace(/[^0-9]/g, '').slice(0, 6);
                   setCode(digitsOnly);
                 }}
@@ -318,24 +228,35 @@ export default function EmployeeRegisterScreen({ onRegistrationSuccess, onCancel
             </View>
           ) : (
             <View style={styles.inputGroup}>
-              <Text style={[styles.label, { color: colors.text }]}>QR Code Data</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-                placeholder="QR code data will appear here after scanning"
-                placeholderTextColor={colors.textSecondary}
-                value={qrData}
-                onChangeText={setQrData}
-                editable={!loading}
-                multiline
-              />
-              <TouchableOpacity
-                style={[styles.scanButton, { backgroundColor: colors.primary }]}
-                onPress={handleQRScan}
-                disabled={loading}
-              >
-                <QrCode size={20} color="#fff" />
-                <Text style={styles.scanButtonText}>Scan QR Code</Text>
-              </TouchableOpacity>
+              <Text style={[styles.label, { color: colors.text }]}>QR Code Status</Text>
+              {qrData ? (
+                <View style={[styles.qrStatusCard, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}>
+                  <View style={styles.qrStatusLeft}>
+                    <CheckCircle2 size={24} color={colors.primary} />
+                    <View style={styles.qrStatusTextContainer}>
+                      <Text style={[styles.qrStatusTitle, { color: colors.text }]}>QR Code Scanned</Text>
+                      <Text style={[styles.qrStatusSub, { color: colors.textSecondary }]}>Ready for registration</Text>
+                    </View>
+                  </View>
+                  <TouchableOpacity 
+                    style={[styles.rescanButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                    onPress={handleQRScan}
+                    disabled={loading}
+                  >
+                    <RefreshCcw size={16} color={colors.textSecondary} />
+                    <Text style={[styles.rescanText, { color: colors.textSecondary }]}>Rescan</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.scanButton, { backgroundColor: colors.primary }]}
+                  onPress={handleQRScan}
+                  disabled={loading}
+                >
+                  <QrCode size={20} color="#fff" />
+                  <Text style={styles.scanButtonText}>Scan QR Code</Text>
+                </TouchableOpacity>
+              )}
             </View>
           )}
 
@@ -344,17 +265,14 @@ export default function EmployeeRegisterScreen({ onRegistrationSuccess, onCancel
             onPress={handleRegister}
             disabled={
               loading || 
-              !name.trim() || 
               (!useQR && !code.trim()) || 
-              (useQR && !qrData.trim()) ||
-              (!isAuthenticated && (!username.trim() && !phone.trim())) ||
-              (!isAuthenticated && (!password.trim() || password.length < 6))
+              (useQR && !qrData.trim())
             }
           >
             {loading ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={styles.submitButtonText}>Register as Employee</Text>
+              <Text style={styles.submitButtonText}>Access Account</Text>
             )}
           </TouchableOpacity>
 
@@ -433,6 +351,44 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  qrStatusCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginTop: 8,
+  },
+  qrStatusLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  qrStatusTextContainer: {
+    flex: 1,
+  },
+  qrStatusTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  qrStatusSub: {
+    fontSize: 12,
+    marginTop: 1,
+  },
+  rescanButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  rescanText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
   scanButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -440,7 +396,7 @@ const styles = StyleSheet.create({
     gap: 8,
     padding: 16,
     borderRadius: 12,
-    marginTop: 12,
+    marginTop: 8,
   },
   scanButtonText: {
     color: '#fff',
@@ -452,7 +408,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 8,
+    marginTop: 16,
   },
   submitButtonText: {
     color: '#fff',

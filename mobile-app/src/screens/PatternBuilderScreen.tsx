@@ -31,6 +31,11 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated, onPatte
   const [saving, setSaving] = useState(false);
   const [useAI, setUseAI] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
+  // Security fields
+  const [allowedSenders, setAllowedSenders] = useState<string[]>([]);
+  const [senderInput, setSenderInput] = useState('');
+  const [requireSenderVerification, setRequireSenderVerification] = useState(true);
+  const [requireContactCheck, setRequireContactCheck] = useState(true);
 
   const handleAnalyze = async () => {
     if (!smsText.trim() || !patternName.trim()) {
@@ -105,12 +110,28 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated, onPatte
       let createdPattern = null;
       
       // Always create pattern via API (preview is just for validation)
-      const response = await patternsAPI.create({
+      const requestData = {
         smsText: smsText.trim(),
         name: patternName.trim(),
         description: description.trim() || undefined,
         useAI: useAI,
+        // Security fields - ALWAYS send the array (even if empty) so backend knows it was provided
+        allowedSenders: allowedSenders.length > 0 ? allowedSenders : [],
+        requireSenderVerification,
+        requireContactCheck,
+      };
+      
+      console.log('[Pattern Builder] Sending pattern creation request:', {
+        name: requestData.name,
+        allowedSenders: requestData.allowedSenders,
+        allowedSendersLength: requestData.allowedSenders.length,
+        allowedSendersType: typeof requestData.allowedSenders,
+        allowedSendersIsArray: Array.isArray(requestData.allowedSenders),
+        requireSenderVerification: requestData.requireSenderVerification,
+        requireContactCheck: requestData.requireContactCheck,
       });
+      
+      const response = await patternsAPI.create(requestData);
       
       let createdPattern = null;
       let method = 'rule-based';
@@ -218,6 +239,91 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated, onPatte
               value={description}
               onChangeText={setDescription}
             />
+          </View>
+
+          {/* Security Settings */}
+          <View style={[styles.inputGroup, { marginTop: 8 }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text, fontSize: 16, marginBottom: 12 }]}>Security Settings</Text>
+            
+            {/* Allowed Senders */}
+            <View style={{ marginBottom: 12 }}>
+              <Text style={[styles.label, { color: colors.text }]}>Allowed Senders (Phone/Name)</Text>
+              <Text style={[styles.hint, { color: colors.textSecondary, marginBottom: 8 }]}>
+                Add phone numbers or sender names that can send SMS for this pattern
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TextInput
+                  style={[styles.input, { flex: 1, backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
+                  placeholder="e.g., +251911234567 or CBE"
+                  placeholderTextColor={colors.textSecondary}
+                  value={senderInput}
+                  onChangeText={setSenderInput}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity
+                  style={[styles.button, { backgroundColor: colors.primary, paddingHorizontal: 16, minWidth: 60 }]}
+                  onPress={() => {
+                    if (senderInput.trim()) {
+                      setAllowedSenders([...allowedSenders, senderInput.trim()]);
+                      setSenderInput('');
+                    }
+                  }}
+                >
+                  <Text style={[styles.buttonText, { color: colors.primaryText }]}>Add</Text>
+                </TouchableOpacity>
+              </View>
+              {allowedSenders.length > 0 && (
+                <View style={{ marginTop: 8, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {allowedSenders.map((sender, index) => (
+                    <View
+                      key={index}
+                      style={[styles.tag, { backgroundColor: colors.primary + '20', borderColor: colors.primary }]}
+                    >
+                      <Text style={[styles.tagText, { color: colors.primary }]}>{sender}</Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setAllowedSenders(allowedSenders.filter((_, i) => i !== index));
+                        }}
+                        style={{ marginLeft: 6 }}
+                      >
+                        <Text style={[styles.tagText, { color: colors.primary }]}>×</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            {/* Security Toggles */}
+            <View style={[styles.toggleContainer, { backgroundColor: colors.surface, borderColor: colors.border, marginBottom: 8 }]}>
+              <Text style={[styles.toggleLabel, { color: colors.text }]}>
+                Require Sender Verification
+              </Text>
+              <TouchableOpacity
+                style={[styles.toggle, requireSenderVerification && { backgroundColor: colors.primary }]}
+                onPress={() => setRequireSenderVerification(!requireSenderVerification)}
+              >
+                <View style={[styles.toggleThumb, requireSenderVerification && styles.toggleThumbActive]} />
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.toggleHint, { color: colors.textSecondary, marginBottom: 12 }]}>
+              Only accept SMS from allowed senders
+            </Text>
+
+            <View style={[styles.toggleContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.toggleLabel, { color: colors.text }]}>
+                Reject SMS from Contacts
+              </Text>
+              <TouchableOpacity
+                style={[styles.toggle, requireContactCheck && { backgroundColor: colors.primary }]}
+                onPress={() => setRequireContactCheck(!requireContactCheck)}
+              >
+                <View style={[styles.toggleThumb, requireContactCheck && styles.toggleThumbActive]} />
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.toggleHint, { color: colors.textSecondary }]}>
+              Reject SMS from numbers in your contacts (prevents spoofing)
+            </Text>
           </View>
 
           {/* AI Toggle */}
@@ -550,6 +656,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
     paddingHorizontal: 4,
+  },
+  hint: {
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  tag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  tagText: {
+    fontSize: 12,
+    fontWeight: '500',
   },
 });
 

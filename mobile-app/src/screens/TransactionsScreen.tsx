@@ -12,18 +12,22 @@ import {
   AppState,
   AppStateStatus,
 } from 'react-native';
-import { CreditCard, RefreshCw, ArrowDown, ArrowUp, X } from 'lucide-react-native';
+import { CreditCard, RefreshCw, ArrowDown, ArrowUp, X, CheckCircle2 } from 'lucide-react-native';
 import { storage } from '../services/storage';
 import { smsService, LocalTransaction } from '../services/smsService';
 import { useTheme } from '../contexts/ThemeContext';
 import { dashboardAPI } from '../services/api';
+import VerifyPaymentsScreen from './VerifyPaymentsScreen';
 
 interface Props {
   apiKey?: string | null;
 }
 
+type TransactionsTab = 'transactions' | 'verify';
+
 export default function TransactionsScreen({ apiKey }: Props) {
   const { colors } = useTheme();
+  const [activeTab, setActiveTab] = useState<TransactionsTab>('transactions');
   const [transactions, setTransactions] = useState<LocalTransaction[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -82,6 +86,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
               smsText: tx.smsText || '',
               receivedAt: tx.createdAt || tx.receivedAt || new Date().toISOString(),
               synced: true,
+              isValidated: tx.isValidated || false,
               createdAt: tx.createdAt || new Date().toISOString(),
             }));
             
@@ -103,13 +108,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
       }
       
       // Filter out withdrawals - only show deposits (positive amounts)
-      const beforeFilter = txs.length;
       txs = txs.filter(t => t.amount > 0);
-      const afterFilter = txs.length;
-      
-      if (beforeFilter !== afterFilter) {
-        console.log(`🔍 [TransactionsScreen] Filtered out ${beforeFilter - afterFilter} withdrawal(s), showing ${afterFilter} deposit(s)`);
-      }
       
       // Sort by most recent first
       txs.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
@@ -192,22 +191,12 @@ export default function TransactionsScreen({ apiKey }: Props) {
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) {
-      const hours = date.getHours();
-      const mins = date.getMinutes();
-      return `Today, ${hours.toString().padStart(2, '0')}.${mins.toString().padStart(2, '0')}`;
-    }
-    if (diffDays === 1) return 'Yesterday';
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
+    const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const month = months[date.getMonth()];
+    const day = date.getDate();
+    const hours = date.getHours().toString().padStart(2, '0');
+    const mins = date.getMinutes().toString().padStart(2, '0');
+    return `${month} ${day}, ${hours}:${mins}`;
   };
 
   // Extract sender name from SMS text if not already captured
@@ -266,17 +255,34 @@ export default function TransactionsScreen({ apiKey }: Props) {
                 )}
             </View>
             <View style={styles.transactionInfo}>
-                <Text style={[styles.transactionBank, { color: colors.text }]}>
-                {displayName}
-                </Text>
-                <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>
-                {formatDate(item.receivedAt)}
-                </Text>
-            </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Text style={[styles.transactionBank, { color: colors.text }]}>
+                      {displayName}
+                    </Text>
+                    <View style={[
+                      styles.statusTag, 
+                      { 
+                        backgroundColor: item.isValidated ? colors.darkGreen + '10' : '#fff7ed',
+                        borderColor: item.isValidated ? colors.darkGreen + '30' : '#fdba74',
+                      }
+                    ]}>
+                      <Text style={[
+                        styles.statusTagText, 
+                        { color: item.isValidated ? colors.darkGreen : '#c2410c' }
+                      ]}>
+                        {item.isValidated ? 'Verified' : 'Pending'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>
+                    {formatDate(item.receivedAt)}
+                  </Text>
+                </View>
         </View>
-        <View style={styles.transactionRight}>
-            <Text style={[styles.transactionAmount, { color: isIncome ? colors.darkGreen : '#ef4444' }]}>
-                {isIncome ? '+' : '-'}${Math.abs(item.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          <View style={styles.transactionRight}>
+            <Text style={[styles.transactionAmount, { color: colors.text }]}>
+              {item.amount > 0 ? '+' : ''}{item.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <Text style={styles.currencyUnitSmall}> Br</Text>
             </Text>
             {!item.synced && (
                 <View style={styles.unsyncedDot} />
@@ -290,46 +296,87 @@ export default function TransactionsScreen({ apiKey }: Props) {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={[styles.title, { color: colors.text }]}>Transactions</Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            {transactions.length} transaction{transactions.length !== 1 ? 's' : ''}
+      {/* Tab Header */}
+      <View style={styles.tabHeader}>
+        <TouchableOpacity
+          style={[
+            styles.tabButton,
+            activeTab === 'transactions' && styles.activeTabButton,
+            activeTab === 'transactions' && { borderBottomColor: colors.primary }
+          ]}
+          onPress={() => setActiveTab('transactions')}
+        >
+          <Text style={[
+            styles.tabButtonText,
+            { color: activeTab === 'transactions' ? colors.primary : colors.textSecondary }
+          ]}>
+            Transactions
           </Text>
-        </View>
-        {isAuthenticated && unsyncedCount > 0 && (
-          <TouchableOpacity
-            onPress={syncUnsyncedTransactions}
-            disabled={syncing}
-            style={[styles.syncButton, { backgroundColor: colors.primary + '10' }]}
-          >
-            <RefreshCw 
-              size={14} 
-              color={colors.primary} 
-              style={syncing ? { transform: [{ rotate: '180deg' }] } : undefined}
-            />
-            <Text style={[styles.syncButtonText, { color: colors.primary }]}>
-              Sync ({unsyncedCount})
-            </Text>
-          </TouchableOpacity>
-        )}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.tabButton,
+            activeTab === 'verify' && styles.activeTabButton,
+            activeTab === 'verify' && { borderBottomColor: colors.primary }
+          ]}
+          onPress={() => setActiveTab('verify')}
+        >
+          <CheckCircle2 
+            size={16} 
+            color={activeTab === 'verify' ? colors.primary : colors.textSecondary}
+            style={{ marginRight: 6 }}
+          />
+          <Text style={[
+            styles.tabButtonText,
+            { color: activeTab === 'verify' ? colors.primary : colors.textSecondary }
+          ]}>
+            Verify
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      {transactions.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No transactions yet</Text>
-        </View>
+      {/* Tab Content */}
+      {activeTab === 'transactions' ? (
+        <>
+          <View style={styles.header}>
+            <Text style={[styles.title, { color: colors.text }]}>Transactions</Text>
+            {isAuthenticated && unsyncedCount > 0 && (
+              <TouchableOpacity
+                onPress={syncUnsyncedTransactions}
+                disabled={syncing}
+                style={[styles.syncButton, { backgroundColor: colors.primary + '10' }]}
+              >
+                <RefreshCw 
+                  size={14} 
+                  color={colors.primary} 
+                  style={syncing ? { transform: [{ rotate: '180deg' }] } : undefined}
+                />
+                <Text style={[styles.syncButtonText, { color: colors.primary }]}>
+                  Sync ({unsyncedCount})
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {transactions.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No transactions yet</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={transactions}
+              renderItem={renderTransaction}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.listContent}
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+              }
+              showsVerticalScrollIndicator={false}
+            />
+          )}
+        </>
       ) : (
-        <FlatList
-          data={transactions}
-          renderItem={renderTransaction}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
-          }
-          showsVerticalScrollIndicator={false}
-        />
+        <VerifyPaymentsScreen apiKey={apiKey} />
       )}
 
       {/* Transaction Detail Modal */}
@@ -369,75 +416,39 @@ export default function TransactionsScreen({ apiKey }: Props) {
               <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
                 <View style={styles.detailSection}>
                   <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Amount</Text>
-                  <Text style={[styles.detailValue, { color: colors.text }]}>
-                    ${selectedTransaction.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <Text style={[styles.detailValue, { color: colors.text, fontSize: 24, fontWeight: '700' }]}>
+                    {selectedTransaction.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <Text style={{ fontSize: 14, fontWeight: '600', opacity: 0.6 }}> Br</Text>
                   </Text>
                 </View>
 
                 {selectedTransaction.bank && (
                   <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Bank/Institution</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Bank</Text>
                     <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.bank}</Text>
                   </View>
                 )}
 
                 {displaySender && (
                   <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Sender</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>From</Text>
                     <Text style={[styles.detailValue, { color: colors.text }]}>{displaySender}</Text>
                   </View>
                 )}
 
-                {selectedTransaction.sendFrom && (
-                  <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>From (Phone)</Text>
-                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.sendFrom}</Text>
-                  </View>
-                )}
-
-                {selectedTransaction.sendTo && (
-                  <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>To</Text>
-                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.sendTo}</Text>
-                  </View>
-                )}
-
                 <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Transaction ID</Text>
-                  <Text style={[styles.detailValue, { color: colors.text, fontFamily: 'monospace' }]}>
-                    {selectedTransaction.txnId}
-                  </Text>
-                </View>
-
-                <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Date & Time</Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Date</Text>
                   <Text style={[styles.detailValue, { color: colors.text }]}>
                     {new Date(selectedTransaction.receivedAt).toLocaleString()}
                   </Text>
                 </View>
 
-                {selectedTransaction.pattern && (
-                  <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Pattern</Text>
-                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.pattern}</Text>
-                  </View>
-                )}
-
                 <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Status</Text>
-                  <Text style={[styles.detailValue, { color: selectedTransaction.synced ? colors.primary : '#ef4444' }]}>
-                    {selectedTransaction.synced ? 'Synced' : 'Not Synced'}
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Transaction ID</Text>
+                  <Text style={[styles.detailValue, { color: colors.text, fontFamily: 'monospace', fontSize: 14 }]}>
+                    {selectedTransaction.txnId}
                   </Text>
                 </View>
-
-                {selectedTransaction.smsText && (
-                  <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Original SMS</Text>
-                    <View style={[styles.smsTextContainer, { backgroundColor: colors.background }]}>
-                      <Text style={[styles.smsText, { color: colors.text }]}>{selectedTransaction.smsText}</Text>
-                    </View>
-                  </View>
-                )}
               </ScrollView>
               );
             })()}
@@ -452,25 +463,45 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  tabHeader: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+    paddingTop: 60,
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  activeTabButton: {
+    borderBottomWidth: 2,
+  },
+  tabButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 20,
-    paddingTop: 60,
+    paddingTop: 10,
     paddingBottom: 10,
-  },
-  headerLeft: {
-    flex: 1,
   },
   title: {
     fontSize: 28,
     fontWeight: '700',
     letterSpacing: -0.5,
-    marginBottom: 4,
   },
-  subtitle: {
-    fontSize: 14,
+  currencyUnitSmall: {
+    fontSize: 10,
+    fontWeight: '600',
+    opacity: 0.6,
   },
   syncButton: {
     flexDirection: 'row',
@@ -543,6 +574,17 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     fontStyle: 'italic',
+  },
+  statusTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  statusTagText: {
+    fontSize: 10,
+    fontWeight: '600',
+    textTransform: 'capitalize',
   },
   modalOverlay: {
     flex: 1,

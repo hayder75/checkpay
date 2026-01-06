@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { scanImageFromGallery, OCRResult } from '../services/ocrService';
-import { ingestTransaction } from '../services/api';
+import { ingestTransaction, verifyTransaction } from '../services/api';
 import { matchInstitutionPattern, InstitutionPattern, findMatchingInstitutionPattern } from '../utils/patternMatcher';
 import { Pattern } from '../types';
 import { storage } from '../services/storage';
@@ -38,7 +38,7 @@ interface OCRScreenProps {
 }
 
 export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenProps) {
-  const { colors } = useTheme();
+  const { theme, colors } = useTheme();
   const [loading, setLoading] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [result, setResult] = useState<OCRResult | null>(null);
@@ -196,18 +196,16 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
         return;
       }
 
-      // Send only txnId and institution/patternId
-      await ingestTransaction({
+      // Record verification attempt instead of ingesting a zero-amount transaction
+      await verifyTransaction({
         txnId: extractedTransaction.txnId,
-        amount: 0,
-        sender: 'Unknown',
+        businessId: selectedInstitution?.businessId || undefined,
+        source: extractedTransaction.source || 'OCR',
+        ocrText: extractedTransaction.ocrText || '',
         bank: extractedTransaction.institution || '',
-        pattern: extractedTransaction.institution || 'OCR Pattern',
-        source: 'OCR',
-        smsText: extractedTransaction.ocrText || '', // Still send OCR text for backend verification if needed
       });
 
-      console.log('✅ [OCR] Transaction sent to backend successfully');
+      console.log('✅ [OCR] Verification attempt recorded successfully');
       
       // Success Animation/Feedback
       Alert.alert('Success', 'Transaction ID submitted successfully!');
@@ -672,8 +670,11 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
         <View style={styles.header}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
             <Image 
-              source={require('../../assets/logo/logo - Asset 2.png')} 
-              style={styles.headerLogo}
+              source={theme === 'dark' 
+                ? require('../../assets/logo/logo - Asset 1.png') 
+                : require('../../assets/logo/logo - Asset 2.png')
+              } 
+              style={styles.headerLogo} 
               resizeMode="contain"
             />
             {!showInstitutionPicker && !extractedTransaction && (
@@ -682,8 +683,8 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
               </TouchableOpacity>
             )}
           </View>
-          <Text style={styles.title}>Scan & Save</Text>
-          <Text style={styles.subtitle}>
+          <Text style={[styles.title, { color: colors.text }]}>Verify Transaction</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             {selectedInstitution 
               ? `Scanning for ${selectedInstitution.bank || selectedInstitution.name}`
               : 'Select an institution to start scanning.'}

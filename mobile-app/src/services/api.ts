@@ -1,13 +1,15 @@
 import axios from 'axios';
 import { API_BASE_URL } from '../config';
 import { storage } from './storage';
+import { log } from '../utils/logger';
 
-// Debug: Log API configuration
-console.log('🔧 API Configuration:', {
-  baseURL: API_BASE_URL,
-  fullURL: `${API_BASE_URL}/auth/login`,
-  isNgrok: API_BASE_URL.includes('ngrok'),
-});
+// Log API configuration (only in dev mode)
+if (__DEV__) {
+  log.debug('API', 'API Configuration', {
+    baseURL: API_BASE_URL,
+    isNgrok: API_BASE_URL.includes('ngrok'),
+  });
+}
 
 // Create axios instance
 const api = axios.create({
@@ -30,9 +32,9 @@ api.interceptors.request.use(
     if (config.url?.includes('/ocr/verify')) {
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
-        console.log('🔑 [API] Using JWT token for OCR verify endpoint');
+        log.debug('API', 'Using JWT token for OCR verify endpoint');
       } else {
-        console.warn('⚠️ [API] No JWT token found for OCR verify endpoint');
+        log.warn('API', 'No JWT token found for OCR verify endpoint');
       }
     }
     // Use API key for verify and ingest endpoints (they require API key authentication)
@@ -40,21 +42,21 @@ api.interceptors.request.use(
     else if (config.url?.includes('/verify') || config.url?.includes('/ingest')) {
       if (apiKey) {
         config.headers['X-API-Key'] = apiKey;
-        console.log(`🔑 [API] Using API key for ${config.url?.includes('/verify') ? 'verification' : 'ingest'} endpoint`);
+        log.debug('API', `Using API key for ${config.url?.includes('/verify') ? 'verification' : 'ingest'} endpoint`);
       } else if (token) {
         // Fallback to JWT token if no API key (for authenticated users)
-        console.log(`🔑 [API] No API key found, using JWT token for ${config.url?.includes('/verify') ? 'verification' : 'ingest'} endpoint`);
+        log.debug('API', `No API key found, using JWT token for ${config.url?.includes('/verify') ? 'verification' : 'ingest'} endpoint`);
         config.headers.Authorization = `Bearer ${token}`;
       } else {
-        console.warn(`⚠️ [API] No API key or JWT token found for ${config.url} endpoint`);
+        log.warn('API', `No API key or JWT token found for ${config.url} endpoint`);
       }
     } else {
       // Use JWT token for all other endpoints
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
-        console.log('🔑 [API] Using JWT token for authentication');
+        log.debug('API', 'Using JWT token for authentication');
       } else {
-        console.warn('⚠️ [API] No authentication token found');
+        log.warn('API', 'No authentication token found');
       }
     }
     
@@ -63,26 +65,26 @@ api.interceptors.request.use(
       config.headers['ngrok-skip-browser-warning'] = 'true';
     }
     
-    // Debug: Log request details
-    console.log('📤 API Request:', {
-      method: config.method?.toUpperCase(),
-      url: config.url,
-      baseURL: config.baseURL,
-      fullURL: `${config.baseURL}${config.url}`,
-      hasAuth: !!(token || apiKey),
-      hasToken: !!token,
-      hasApiKey: !!apiKey,
-      authType: config.url?.includes('/ocr/verify')
-        ? 'JWT'
-        : (config.url?.includes('/verify') || config.url?.includes('/ingest'))
-        ? (apiKey ? 'API-Key' : 'JWT')
-        : 'JWT',
-    });
+    // Debug: Log request details (only in dev mode, no sensitive data)
+    if (__DEV__) {
+      log.debug('API', 'API Request', {
+        method: config.method?.toUpperCase(),
+        url: config.url,
+        hasAuth: !!(token || apiKey),
+        hasToken: !!token,
+        hasApiKey: !!apiKey,
+        authType: config.url?.includes('/ocr/verify')
+          ? 'JWT'
+          : (config.url?.includes('/verify') || config.url?.includes('/ingest'))
+          ? (apiKey ? 'API-Key' : 'JWT')
+          : 'JWT',
+      });
+    }
     
     return config;
   },
   (error) => {
-    console.error('❌ Request interceptor error:', error);
+    log.error('API', 'Request interceptor error', error);
     return Promise.reject(error);
   }
 );
@@ -90,49 +92,40 @@ api.interceptors.request.use(
 // Response interceptor - Handle 401 errors
 api.interceptors.response.use(
   (response) => {
-    console.log('✅ API Response:', {
-      status: response.status,
-      url: response.config.url,
-    });
+    if (__DEV__) {
+      log.debug('API', 'API Response', {
+        status: response.status,
+        url: response.config.url,
+      });
+    }
     return response;
   },
   async (error) => {
-    // Enhanced error logging
+    // Enhanced error logging (no sensitive data)
     const errorDetails = {
       message: error.message,
       code: error.code,
-      response: error.response ? {
-        status: error.response.status,
-        data: error.response.data,
-      } : 'No response (network error)',
-      config: error.config ? {
-        url: error.config.url,
-        baseURL: error.config.baseURL,
-        method: error.config.method,
-        headers: error.config.headers,
-      } : 'No config',
+      status: error.response?.status,
+      url: error.config?.url,
     };
     
-    console.error('❌ API Error:', errorDetails);
+    log.error('API', 'API Error', errorDetails);
     
     // Provide helpful error messages
     if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
-      console.error('🌐 Network Error Details:', {
+      log.error('API', 'Network Error', {
         baseURL: API_BASE_URL,
-        possibleCauses: [
-          'Backend server is not running',
-          'Ngrok tunnel is not active',
-          'Network connectivity issue',
-          'Firewall blocking connection',
-          'Wrong API URL in config',
-        ],
-        troubleshooting: [
-          'Check if backend is running: npm run dev (in backend folder)',
-          'Check if ngrok is running: ngrok http 3000',
-          'Verify ngrok URL in mobile-app/src/config.ts',
-          'Check network connection',
-        ],
       });
+      // Show user-friendly alert for network errors
+      // We use a timeout to prevent blocking the UI immediately if multiple requests fail
+      setTimeout(() => {
+        // Import Alert dynamically to avoid circular dependencies if any
+        const { Alert } = require('react-native');
+        Alert.alert(
+          'Connection Error',
+          'Unable to connect to the server. Please check your internet connection and try again.'
+        );
+      }, 100);
     }
     
     if (error.response?.status === 401) {
@@ -143,17 +136,13 @@ api.interceptors.response.use(
       // Don't clear token for /ingest or /verify endpoints - they use API keys
       if (url.includes('/ingest') || url.includes('/verify')) {
         // API key authentication failed - don't clear JWT token
-        console.warn(`🔒 [API] 401 Unauthorized for ${url} - API key authentication failed: ${errorMessage}`);
-        // Only clear API key if it's invalid
-        if (errorMessage.includes('Invalid API key') || errorMessage.includes('API key required')) {
-          console.warn('⚠️ [API] API key may be invalid, but keeping it for retry');
-        }
+        log.warn('API', `401 Unauthorized for ${url} - API key authentication failed`);
       } else {
         // JWT authentication failed - clear token
-        console.warn('🔒 [API] 401 Unauthorized - JWT token authentication failed, clearing token');
+        log.warn('API', '401 Unauthorized - JWT token authentication failed, clearing token');
         await storage.removeToken();
         await storage.removeUser();
-        console.log('✅ [API] JWT token cleared due to 401 error');
+        log.info('API', 'JWT token cleared due to 401 error');
         // Keep API key as it might still be valid
       }
     }
@@ -197,7 +186,15 @@ export const authAPI = {
 
 // Patterns API
 export const patternsAPI = {
-  create: async (data: { smsText: string; name: string; description?: string; useAI?: boolean }) => {
+  create: async (data: { 
+    smsText: string; 
+    name: string; 
+    description?: string; 
+    useAI?: boolean;
+    allowedSenders?: string[];
+    requireSenderVerification?: boolean;
+    requireContactCheck?: boolean;
+  }) => {
     const response = await api.post('/patterns', data);
     return response.data;
   },
@@ -216,17 +213,7 @@ export const patternsAPI = {
   },
 };
 
-// Premium API
-export const premiumAPI = {
-  getStatus: async () => {
-    const response = await api.get('/premium/status');
-    return response.data;
-  },
-  upgrade: async (txnId: string) => {
-    const response = await api.post('/premium/upgrade', { txnId });
-    return response.data;
-  },
-};
+
 
 // Business API
 export const businessAPI = {
@@ -240,6 +227,10 @@ export const businessAPI = {
   },
   create: async (data: { name: string; description?: string; primaryInstitution?: string }) => {
     const response = await api.post('/businesses', data);
+    return response.data;
+  },
+  getStats: async (id: string) => {
+    const response = await api.get(`/businesses/${id}/stats`);
     return response.data;
   },
 };
@@ -262,11 +253,23 @@ export const employeeAPI = {
     const response = await api.post('/access-codes/validate', { code });
     return response.data;
   },
+  generateCode: async (businessId: string) => {
+    const response = await api.post(`/access-codes/businesses/${businessId}`);
+    return response.data;
+  },
+  delete: async (businessId: string, employeeId: string) => {
+    const response = await api.delete(`/businesses/${businessId}/employees/${employeeId}`);
+    return response.data;
+  },
+  reauthorize: async (businessId: string, employeeId: string) => {
+    const response = await api.post(`/businesses/${businessId}/employees/${employeeId}/reauthorize`);
+    return response.data;
+  },
 };
 
 // Dashboard API
 export const dashboardAPI = {
-  getTransactions: async (params?: { page?: number; limit?: number }) => {
+  getTransactions: async (params?: { page?: number; limit?: number; employeeId?: string }) => {
     const response = await api.get('/dashboard/transactions', { params });
     return response.data;
   },
@@ -411,7 +414,7 @@ export const checkSimRegistration = async (iccid: string | null) => {
     const response = await api.get(`/auth/sims/check?iccid=${iccid}`);
     return response.data.data;
   } catch (error: any) {
-    console.error('Error checking SIM registration:', error);
+    log.error('API', 'Error checking SIM registration', error);
     return { 
       isRegistered: false, 
       error: error.response?.data?.error || 'Failed to check SIM registration' 
@@ -423,7 +426,7 @@ export const checkSimRegistration = async (iccid: string | null) => {
 export const testAPIConnection = async (): Promise<{ success: boolean; message: string; details?: any }> => {
   try {
     const token = await storage.getToken();
-    console.log('🔍 [API] Testing connection to:', API_BASE_URL);
+    log.debug('API', 'Testing connection', { baseURL: API_BASE_URL });
     
     // Try a simple authenticated endpoint
     const response = await api.get('/auth/me');
@@ -434,7 +437,6 @@ export const testAPIConnection = async (): Promise<{ success: boolean; message: 
       details: {
         baseURL: API_BASE_URL,
         hasToken: !!token,
-        user: response.data?.data,
       },
     };
   } catch (error: any) {
@@ -443,11 +445,9 @@ export const testAPIConnection = async (): Promise<{ success: boolean; message: 
       error: error.message,
       code: error.code,
       status: error.response?.status,
-      statusText: error.response?.statusText,
-      data: error.response?.data,
     };
     
-    console.error('❌ [API] Connection test failed:', errorDetails);
+    log.error('API', 'Connection test failed', errorDetails);
     
     let message = 'Connection failed';
     if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
@@ -490,12 +490,12 @@ export const ingestTransaction = async (transaction: {
         const businesses = Array.isArray(businessesResponse.data) ? businessesResponse.data : [];
         if (businesses.length > 0) {
           businessId = businesses[0].id;
-          await storage.setBusinessId(businessId);
-          console.log('✅ [API] Using business ID:', businessId);
+          await storage.setBusinessId(businessId!);
+          log.debug('API', 'Using business ID', { businessId });
         }
       }
     } catch (error) {
-      console.error('Error fetching businesses:', error);
+      log.error('API', 'Error fetching businesses', error);
       // Continue without businessId - backend will handle it
     }
   }
@@ -520,28 +520,22 @@ export const ingestTransaction = async (transaction: {
   
   const token = await storage.getToken();
   const apiKey = await storage.getApiKey();
-  console.log('📤 [API] Sending transaction to backend:', {
-    endpoint: '/ingest',
-    baseURL: API_BASE_URL,
-    fullURL: `${API_BASE_URL}/ingest`,
-    payload: { 
-      ...payload, 
-      smsText: payload.smsText?.substring(0, 50) + '...',
-      sender: payload.sender || 'Unknown',
-    },
-    hasToken: !!token,
-    hasApiKey: !!apiKey,
-    authMethod: 'API-Key (required for /ingest)',
-    apiKeyPreview: apiKey ? apiKey.substring(0, 20) + '...' : 'none',
-  });
+  
+  if (__DEV__) {
+    log.debug('API', 'Sending transaction to backend', {
+      endpoint: '/ingest',
+      hasToken: !!token,
+      hasApiKey: !!apiKey,
+      authMethod: 'API-Key (required for /ingest)',
+    });
+  }
   
   try {
     const response = await api.post('/ingest', payload);
     
-    console.log('✅ [API] Transaction sent successfully:', {
+    log.debug('API', 'Transaction sent successfully', {
       success: response.data.success,
       txnId: transaction.txnId,
-      transactionId: response.data.data?.id,
       status: response.status,
     });
     
@@ -552,30 +546,24 @@ export const ingestTransaction = async (transaction: {
       error: error.message,
       code: error.code,
       status: error.response?.status,
-      statusText: error.response?.statusText,
-      data: error.response?.data,
-      fullURL: `${API_BASE_URL}/ingest`,
-      hasToken: !!token,
     };
     
-    console.error('❌ [API] Failed to send transaction:', errorDetails);
+    log.error('API', 'Failed to send transaction', errorDetails);
     
     // Log specific error types
     if (error.response?.status === 401) {
       const errorMsg = error.response?.data?.error || '';
       if (errorMsg.includes('API key')) {
-        console.error('🔒 [API] Authentication failed - API key required for /ingest endpoint');
-        console.error('   Make sure API key is stored and being sent in X-API-Key header');
+        log.error('API', 'Authentication failed - API key required for /ingest endpoint');
       } else {
-        console.error('🔒 [API] Authentication failed - token may be expired or invalid');
+        log.error('API', 'Authentication failed - token may be expired or invalid');
       }
     } else if (error.response?.status === 400) {
-      console.error('📋 [API] Validation error - check payload format:', error.response?.data);
+      log.error('API', 'Validation error - check payload format');
     } else if (error.response?.status === 403) {
-      console.error('🚫 [API] Forbidden - check business access permissions');
+      log.error('API', 'Forbidden - check business access permissions');
     } else if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
-      console.error('🌐 [API] Network error - cannot reach backend server');
-      console.error('   Check if backend is running and API_BASE_URL is correct:', API_BASE_URL);
+      log.error('API', 'Network error - cannot reach backend server', { baseURL: API_BASE_URL });
     }
     
     throw error;
@@ -583,16 +571,44 @@ export const ingestTransaction = async (transaction: {
 };
 
 // Verify transaction endpoint
-export const verifyTransaction = async (txnId: string) => {
-  console.log('🔍 [API] Verifying transaction:', txnId);
+export const verifyTransaction = async (data: { 
+  txnId: string; 
+  businessId?: string;
+  source?: string;
+  ocrText?: string;
+  bank?: string;
+}) => {
+  log.debug('API', 'Recording verification attempt', { txnId: data.txnId });
   
-  const response = await api.get('/verify', {
-    params: { txn: txnId },
-  });
+  const response = await api.post('/verify', data);
   
-  console.log('✅ [API] Verification response:', response.data);
+  log.debug('API', 'Verification recording response', { success: response.data.success });
   
   return response.data;
+};
+
+// Package API
+export const packageAPI = {
+  // Get user's active package with usage stats
+  getMyPackage: async () => {
+    const response = await api.get('/user-packages/me');
+    return response.data;
+  },
+  // Get available packages (filtered by tier)
+  getPackages: async (params?: { tier?: 'FREE' | 'BUSINESS' }) => {
+    const response = await api.get('/packages', { params });
+    return response.data;
+  },
+  // Activate a package for the user
+  activatePackage: async (data: { packageId: string; notes?: string }) => {
+    const response = await api.post('/user-packages/activate', data);
+    return response.data;
+  },
+  // Purchase a package
+  purchasePackage: async (data: { packageId: string; transactionNumber: string }) => {
+    const response = await api.post('/user-packages/purchase', data);
+    return response.data;
+  },
 };
 
 export default api;

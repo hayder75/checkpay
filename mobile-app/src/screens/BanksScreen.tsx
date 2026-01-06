@@ -11,17 +11,16 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
-import { Building2, X, Plus, RefreshCw, Sparkles } from 'lucide-react-native';
+import { Building2, X, Plus, RefreshCw } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { storage } from '../services/storage';
 import { patternsAPI, institutionPatternsAPI } from '../services/api';
 
 interface Props {
   apiKey?: string | null;
-  onNavigateToInstitutionBuilder?: () => void;
 }
 
-export default function BanksScreen({ apiKey, onNavigateToInstitutionBuilder }: Props) {
+export default function BanksScreen({ apiKey }: Props) {
   const { colors } = useTheme();
   const [banks, setBanks] = useState<string[]>([]);
   const [availableInstitutions, setAvailableInstitutions] = useState<string[]>([]);
@@ -225,16 +224,8 @@ export default function BanksScreen({ apiKey, onNavigateToInstitutionBuilder }: 
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
-          <Text style={[styles.title, { color: colors.text }]}>Financial Institutions</Text>
+          <Text style={[styles.title, { color: colors.text }]}>My Banks</Text>
           <View style={styles.headerActions}>
-            {onNavigateToInstitutionBuilder && (
-              <TouchableOpacity
-                onPress={onNavigateToInstitutionBuilder}
-                style={[styles.createButton, { backgroundColor: colors.primary }]}
-              >
-                <Sparkles size={18} color="#fff" />
-              </TouchableOpacity>
-            )}
             <TouchableOpacity
               onPress={onRefresh}
               style={[styles.refreshButton, { backgroundColor: colors.surface }]}
@@ -249,9 +240,7 @@ export default function BanksScreen({ apiKey, onNavigateToInstitutionBuilder }: 
           </View>
         </View>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-          Tracking {banks.length} institution{banks.length !== 1 ? 's' : ''}
-          {availableInstitutions.length > 0 && ` • ${availableInstitutions.length} available from backend`}
-          {availableInstitutions.length === 0 && !loading && ' • Pull to refresh'}
+          {banks.length} bank{banks.length !== 1 ? 's' : ''} selected
         </Text>
       </View>
 
@@ -279,7 +268,7 @@ export default function BanksScreen({ apiKey, onNavigateToInstitutionBuilder }: 
           <View style={[styles.inputContainer, { backgroundColor: colors.surface }]}>
             <TextInput
               style={[styles.input, { color: colors.text }]}
-              placeholder="Add new institution..."
+              placeholder="Add bank name..."
               placeholderTextColor={colors.textSecondary}
               value={newBank}
               onChangeText={setNewBank}
@@ -296,13 +285,10 @@ export default function BanksScreen({ apiKey, onNavigateToInstitutionBuilder }: 
 
         {/* Banks List */}
         <View style={styles.listSection}>
-          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>TRACKED INSTITUTIONS</Text>
           {banks.length === 0 ? (
             <View style={styles.emptyState}>
               <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                {availableInstitutions.length > 0 
-                  ? 'No institutions selected. Pull to refresh to load from backend.'
-                  : 'No institutions found. Pull to refresh to load from backend.'}
+                No banks selected yet. Add banks below or pull to refresh.
               </Text>
             </View>
           ) : (
@@ -315,23 +301,19 @@ export default function BanksScreen({ apiKey, onNavigateToInstitutionBuilder }: 
           )}
         </View>
 
-        {/* Available Institutions (from backend) */}
-        {availableInstitutions.length > 0 ? (
+        {/* Available Banks */}
+        {availableInstitutions.length > 0 && (
           <View style={styles.listSection}>
             <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
-              AVAILABLE INSTITUTIONS ({availableInstitutions.length})
-            </Text>
-            <Text style={[styles.infoText, { color: colors.textSecondary }]}>
-              These institutions are available from your patterns. Tap to add them to tracked list.
+              Add More Banks
             </Text>
             <View style={styles.availableList}>
               {availableInstitutions
                 .filter(inst => {
-                  // Case-insensitive check if already tracked
                   const isTracked = banks.some(b => b.toLowerCase() === inst.toLowerCase());
                   return !isTracked;
                 })
-                .slice(0, 20) // Show first 20 available
+                .slice(0, 10)
                 .map((institution) => (
                   <TouchableOpacity
                     key={institution}
@@ -349,37 +331,6 @@ export default function BanksScreen({ apiKey, onNavigateToInstitutionBuilder }: 
                     <Plus size={16} color={colors.primary} />
                   </TouchableOpacity>
                 ))}
-              {availableInstitutions.filter(inst => {
-                const isTracked = banks.some(b => b.toLowerCase() === inst.toLowerCase());
-                return !isTracked;
-              }).length === 0 && (
-                <Text style={[styles.infoText, { color: colors.textSecondary, fontStyle: 'italic' }]}>
-                  All available institutions are already tracked.
-                </Text>
-              )}
-              {availableInstitutions.filter(inst => {
-                const isTracked = banks.some(b => b.toLowerCase() === inst.toLowerCase());
-                return !isTracked;
-              }).length > 20 && (
-                <Text style={[styles.moreText, { color: colors.textSecondary }]}>
-                  +{availableInstitutions.filter(inst => {
-                    const isTracked = banks.some(b => b.toLowerCase() === inst.toLowerCase());
-                    return !isTracked;
-                  }).length - 20} more available
-                </Text>
-              )}
-            </View>
-          </View>
-        ) : !loading && (
-          <View style={styles.listSection}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
-              AVAILABLE INSTITUTIONS
-            </Text>
-            <View style={styles.emptyState}>
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                No institutions found from patterns.{'\n'}
-                Pull to refresh or check if you have patterns in the system.
-              </Text>
             </View>
           </View>
         )}

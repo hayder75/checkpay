@@ -113,7 +113,7 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
 
     Alert.alert(
       'Verify Payment',
-      `Are you sure you want to verify this payment?\n\nTransaction ID: ${transaction.txnId}\nAmount: $${transaction.amount.toFixed(2)}\nSender: ${transaction.sender}`,
+      `Are you sure you want to verify this payment of ${transaction.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Br from ${transaction.sender}?`,
       [
         {
           text: 'Cancel',
@@ -124,12 +124,12 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
           onPress: async () => {
             setVerifyingIds(prev => new Set(prev).add(transaction.id));
             try {
-              const result = await verifyTransaction(transaction.txnId);
+              const result = await verifyTransaction({ txnId: transaction.txnId });
               
               if (result.success && result.data?.confirmed) {
                 Alert.alert(
                   'Success',
-                  `Payment verified successfully!\n\nAmount: $${result.data.amount}\nSender: ${result.data.sender || transaction.sender}`,
+                  `Payment of ${result.data.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Br from ${result.data.sender || transaction.sender} has been verified.`,
                   [{ text: 'OK', onPress: () => loadTransactions() }]
                 );
               } else {
@@ -204,7 +204,7 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
         </View>
         <View style={styles.transactionRight}>
           <Text style={[styles.transactionAmount, { color: isIncome ? colors.darkGreen : '#ef4444' }]}>
-            {isIncome ? '+' : '-'}${Math.abs(item.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {isIncome ? '+' : '-'}{Math.abs(item.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Br
           </Text>
           <TouchableOpacity
             onPress={() => handleVerify(item)}
@@ -254,8 +254,10 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text style={[styles.title, { color: colors.text }]}>Verify Payments</Text>
+        </View>
+        <View style={styles.headerRight}>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            {transactions.length} payment{transactions.length !== 1 ? 's' : ''} pending verification
+            {transactions.length} pending
           </Text>
         </View>
       </View>
@@ -297,20 +299,27 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 20,
-    paddingTop: 60,
+    paddingTop: 10,
     paddingBottom: 10,
   },
   headerLeft: {
     flex: 1,
   },
+  headerRight: {
+    alignItems: 'flex-end',
+  },
   title: {
     fontSize: 28,
     fontWeight: '700',
     letterSpacing: -0.5,
-    marginBottom: 4,
   },
   subtitle: {
     fontSize: 14,
+  },
+  currencyUnitSmall: {
+    fontSize: 10,
+    fontWeight: '600',
+    opacity: 0.6,
   },
   listContent: {
     padding: 20,

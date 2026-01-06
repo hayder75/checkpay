@@ -4,11 +4,11 @@
     "slug": "mobile-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/logo/logo - Asset 8.png",
+    "icon": "./assets/logo/logo - Asset 10.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/logo/logo - Asset 9.png",
+      "image": "./assets/logo/aaaa.jpg",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -59,7 +59,12 @@
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
       ],
-      "package": "com.checkpay.mobile"
+      "package": "com.checkpay.mobile",
+      "splash": {
+        "image": "./assets/logo/logo - Asset 9.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#ffffff"
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"

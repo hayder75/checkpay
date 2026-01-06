@@ -716,12 +716,13 @@ class SMSService {
         : matchResult.data.bank || 'Unknown';
 
       // Create transaction object with improved detail extraction
+      // Use sms.address (actual SMS sender) for sendFrom to enable backend verification
       const transaction: LocalTransaction = {
         id: `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         txnId: matchResult.data.txnId,
         amount: matchResult.data.amount, // Already positive (deposits only)
         sender: maskedSender,
-        sendFrom: matchResult.data.sendFrom || null,
+        sendFrom: sms.address || matchResult.data.sendFrom || null, // Use actual SMS sender address for verification
         sendTo: matchResult.data.sendTo || null,
         bank: matchResult.data.bank || matchResult.data.patternName || null,
         pattern: matchResult.data.patternName || 'Institution Pattern',

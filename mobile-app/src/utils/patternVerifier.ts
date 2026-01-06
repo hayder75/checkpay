@@ -33,6 +33,12 @@ export async function downloadCountryPatterns(countryCode: string): Promise<Inst
         usageCount: p.usageCount || 0,
         smsExample: p.smsExample || null,
         type: p.type || (p.institution ? 'institution' : 'country'),
+        // Security fields
+        allowedSenders: p.allowedSenders || null,
+        requireSenderVerification: p.requireSenderVerification !== false,
+        senderVerificationMode: p.senderVerificationMode || 'STRICT',
+        maxAmountThreshold: p.maxAmountThreshold || null,
+        requireContactCheck: p.requireContactCheck !== false,
       }));
       
       console.log(`✅ [Pattern Download] Downloaded ${mappedPatterns.length} patterns`);

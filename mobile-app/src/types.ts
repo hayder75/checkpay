@@ -8,6 +8,7 @@ export interface Pattern {
   bank?: string;
   currency?: string;
   userId?: string;
+  businessId?: string;
   createdAt?: string;
   updatedAt?: string;
 }

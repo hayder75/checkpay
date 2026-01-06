@@ -1,20 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet, PermissionsAndroid, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import BottomNavigation, { Tab } from './src/components/BottomNavigation';
+import ErrorBoundary from './src/components/ErrorBoundary';
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
 import EmployeeRegisterScreen from './src/screens/EmployeeRegisterScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import BanksScreen from './src/screens/BanksScreen';
 import TransactionsScreen from './src/screens/TransactionsScreen';
-import VerifyPaymentsScreen from './src/screens/VerifyPaymentsScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import OCRScreen from './src/screens/OCRScreen';
-import InstitutionBuilderScreen from './src/screens/InstitutionBuilderScreen';
 import EmployeeScreen from './src/screens/EmployeeScreen';
+import EmployeeManagementScreen from './src/screens/EmployeeManagementScreen';
+import EmployeeTransactionsScreen from './src/screens/EmployeeTransactionsScreen';
 import { storage } from './src/services/storage';
 import { smsService } from './src/services/smsService';
 import { Pattern } from './src/types';
@@ -34,8 +35,8 @@ function AppContent() {
   const [sampleSMSCountry, setSampleSMSCountry] = useState<string>('');
   const [currentTab, setCurrentTab] = useState<Tab>('home');
   const [authScreen, setAuthScreen] = useState<'login' | 'register' | 'employee-register' | null>(null);
-  const [showInstitutionBuilder, setShowInstitutionBuilder] = useState(false);
   const [cameFromOnboarding, setCameFromOnboarding] = useState(false);
+  const [selectedEmployee, setSelectedEmployee] = useState<{ id: string; name: string } | null>(null);
 
   // Check if user is employee (only OCR access)
   const isEmployee = user?.role === 'EMPLOYEE';
@@ -46,14 +47,12 @@ function AppContent() {
       if (currentTab !== 'ocr') {
         setCurrentTab('ocr');
       }
-      if (showInstitutionBuilder) {
-        setShowInstitutionBuilder(false);
-      }
     }
-  }, [isEmployee, currentTab, showInstitutionBuilder]);
+  }, [isEmployee, currentTab]);
 
   useEffect(() => {
     initializeApp();
+    requestPermissions();
     
     // Start SMS monitoring after app initializes (with longer delay to not block UI)
     const startMonitoring = async () => {
@@ -77,6 +76,21 @@ function AppContent() {
       smsService.stopMonitoring();
     };
   }, []);
+
+  const requestPermissions = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        const granted = await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.READ_SMS,
+          PermissionsAndroid.PERMISSIONS.RECEIVE_SMS,
+          PermissionsAndroid.PERMISSIONS.CAMERA,
+        ]);
+        console.log('🔐 [App] Permissions status:', granted);
+      } catch (err) {
+        console.warn(err);
+      }
+    }
+  };
 
   const initializeApp = async () => {
     try {
@@ -189,7 +203,7 @@ function AppContent() {
                   let countryCode = await storage.getCountryCode();
                   if (!countryCode && response.data?.country) {
                     countryCode = response.data.country;
-                    await storage.setCountryCode(countryCode);
+                    await storage.setCountryCode(countryCode!);
                     console.log(`✅ [App] Set country code from user profile: ${countryCode}`);
                   }
                   
@@ -199,7 +213,7 @@ function AppContent() {
                     setTimeout(async () => {
                       try {
                         const { downloadCountryPatterns } = await import('./src/utils/patternVerifier');
-                        const institutionPatterns = await downloadCountryPatterns(countryCode);
+                        const institutionPatterns = await downloadCountryPatterns(countryCode!);
                         console.log(`✅ Downloaded and saved ${institutionPatterns.length} institution patterns for country ${countryCode}`);
                       } catch (error) {
                         console.error('Error downloading institution patterns:', error);
@@ -327,7 +341,7 @@ function AppContent() {
     if (!countryCode && userData?.country) {
       // User has country in their profile, set it as country code
       countryCode = userData.country;
-      await storage.setCountryCode(countryCode);
+      await storage.setCountryCode(countryCode!);
       console.log(`✅ Set country code from user profile: ${countryCode}`);
     }
     
@@ -335,7 +349,7 @@ function AppContent() {
     if (countryCode) {
       try {
         const { downloadCountryPatterns } = await import('./src/utils/patternVerifier');
-        const institutionPatterns = await downloadCountryPatterns(countryCode);
+        const institutionPatterns = await downloadCountryPatterns(countryCode!);
         console.log(`✅ Downloaded and saved ${institutionPatterns.length} institution patterns for country ${countryCode}`);
       } catch (error) {
         console.error('Error downloading institution patterns:', error);
@@ -413,22 +427,7 @@ function AppContent() {
   };
 
   const renderScreen = () => {
-    // If showing institution builder, render it
-    if (showInstitutionBuilder) {
-      return (
-        <InstitutionBuilderScreen
-          apiKey={apiKey || ''}
-          onInstitutionCreated={() => {
-            setShowInstitutionBuilder(false);
-            refreshPatterns();
-          }}
-          onInstitutionsRefreshed={(updatedPatterns) => {
-            setPatterns(updatedPatterns);
-          }}
-        />
-      );
-    }
-
+    console.log('App.tsx: renderScreen called with currentTab:', currentTab);
     // For employees, show employee screen (no bottom nav)
     if (isEmployee) {
       return <EmployeeScreen onLogout={handleLogout} />;
@@ -439,30 +438,28 @@ function AppContent() {
         return (
           <HomeScreen 
             apiKey={apiKey} 
-            onNavigateToProfile={() => setCurrentTab('profile')}
+            onNavigateToProfile={() => {
+              console.log('Navigating to profile');
+              setCurrentTab('profile');
+            }}
+            onNavigateToTransactions={() => {
+              console.log('Navigating to transactions');
+              setCurrentTab('transactions');
+            }}
+            onNavigateToEmployeeManagement={() => {
+              console.log('Navigating to employee management');
+              setCurrentTab('employee-management');
+            }}
           />
         );
       case 'banks':
-        // Banks is now a sub-screen of Profile, but we keep it here for direct access if needed
-        // or if we want to support back navigation from it
         return (
-          <View style={{ flex: 1 }}>
-            <View style={styles.header}>
-              <TouchableOpacity onPress={() => setCurrentTab('profile')} style={styles.menuButton}>
-                <Text style={{ fontSize: 24, color: colors.text }}>←</Text>
-              </TouchableOpacity>
-              <Text style={[styles.headerTitle, { color: colors.text }]}>My Banks</Text>
-            </View>
-            <BanksScreen 
-              apiKey={apiKey} 
-              onNavigateToInstitutionBuilder={isEmployee ? undefined : () => setShowInstitutionBuilder(true)}
-            />
-          </View>
+          <BanksScreen 
+            apiKey={apiKey} 
+          />
         );
       case 'transactions':
         return <TransactionsScreen apiKey={apiKey} />;
-      case 'verify':
-        return <VerifyPaymentsScreen apiKey={apiKey} />;
       case 'ocr':
         return <OCRScreen patterns={patterns} />;
       case 'profile':
@@ -473,11 +470,40 @@ function AppContent() {
             onNavigateToBanks={() => setCurrentTab('banks')}
           />
         );
+      case 'employee-management':
+        return (
+          <EmployeeManagementScreen 
+            onBack={() => setCurrentTab('home')}
+            onViewTransactions={(id, name) => {
+              setSelectedEmployee({ id, name });
+              setCurrentTab('employee-transactions' as any);
+            }}
+          />
+        );
+      case 'employee-transactions' as any:
+        return (
+          <EmployeeTransactionsScreen 
+            employeeId={selectedEmployee?.id || ''}
+            employeeName={selectedEmployee?.name || ''}
+            onBack={() => setCurrentTab('employee-management')}
+          />
+        );
       default:
         return (
           <HomeScreen 
             apiKey={apiKey} 
-            onNavigateToProfile={() => setCurrentTab('profile')}
+            onNavigateToProfile={() => {
+              console.log('Navigating to profile');
+              setCurrentTab('profile');
+            }}
+            onNavigateToTransactions={() => {
+              console.log('Navigating to transactions');
+              setCurrentTab('transactions');
+            }}
+            onNavigateToEmployeeManagement={() => {
+              console.log('Navigating to employee management');
+              setCurrentTab('employee-management');
+            }}
           />
         );
     }
@@ -545,7 +571,7 @@ function AppContent() {
     if (!countryCode && userData?.country) {
       // User has country in their profile, set it as country code
       countryCode = userData.country;
-      await storage.setCountryCode(countryCode);
+      await storage.setCountryCode(countryCode!);
       console.log(`✅ Set country code from user profile: ${countryCode}`);
     }
     
@@ -553,7 +579,7 @@ function AppContent() {
     if (countryCode) {
       try {
         const { downloadCountryPatterns } = await import('./src/utils/patternVerifier');
-        const institutionPatterns = await downloadCountryPatterns(countryCode);
+        const institutionPatterns = await downloadCountryPatterns(countryCode!);
         console.log(`✅ Downloaded and saved ${institutionPatterns.length} institution patterns for country ${countryCode}`);
       } catch (error) {
         console.error('Error downloading institution patterns:', error);
@@ -703,7 +729,7 @@ function AppContent() {
           <View style={{ flex: 1 }}>
             {renderScreen()}
           </View>
-          {!showInstitutionBuilder && !isEmployee && (
+          {!isEmployee && (
             <BottomNavigation 
               currentTab={currentTab} 
               onTabChange={setCurrentTab}
@@ -718,9 +744,11 @@ function AppContent() {
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <AppContent />
-    </ThemeProvider>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <AppContent />
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }
 

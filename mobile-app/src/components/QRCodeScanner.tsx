@@ -36,7 +36,11 @@ export default function QRCodeScanner({ onScan, onClose }: Props) {
         // Validate QR code format
         try {
           const parsed = JSON.parse(code.value);
-          if (parsed.type === 'employee_registration' && parsed.businessId && parsed.code) {
+          const isEmployeeInvite = (parsed.type === 'employee_registration' || parsed.type === 'EMPLOYEE_INVITE') && 
+                                  parsed.businessId && 
+                                  (parsed.code || parsed.otp);
+          
+          if (isEmployeeInvite) {
             onScan(code.value);
           } else {
             Alert.alert('Invalid QR Code', 'This QR code is not a valid employee registration code.');

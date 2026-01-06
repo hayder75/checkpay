@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,29 +10,34 @@ import {
   AppState,
   AppStateStatus,
   Image,
+  Alert,
 } from 'react-native';
-import { ArrowDown, ArrowUp, ChevronDown, User } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, ChevronDown, Settings, Users, X } from 'lucide-react-native';
 import { LineChart } from 'react-native-chart-kit';
 import { useTheme } from '../contexts/ThemeContext';
 import { storage } from '../services/storage';
 import { smsService, LocalTransaction } from '../services/smsService';
 import { dashboardAPI } from '../services/api';
+import { log } from '../utils/logger';
 
 interface Props {
   apiKey?: string | null;
   onNavigateToProfile?: () => void;
+  onNavigateToTransactions?: () => void;
+  onNavigateToEmployeeManagement?: () => void;
 }
 
 const { width } = Dimensions.get('window');
 
-export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
-  const { colors } = useTheme();
+export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactions, onNavigateToEmployeeManagement }: Props) {
+  const { theme, colors } = useTheme();
+  // const navigation = useNavigation(); // Removed
   const [transactions, setTransactions] = useState<LocalTransaction[]>([]);
-  const [isMonitoring, setIsMonitoring] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [timeFilter, setTimeFilter] = useState<'1d' | '7d' | '30d'>('7d');
   const [paymentTotal, setPaymentTotal] = useState(0);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [selectedTransaction, setSelectedTransaction] = useState<LocalTransaction | null>(null);
 
   const timeFilterOptions = [
     { value: '1d' as const, label: '1 Day' },
@@ -40,29 +45,13 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
     { value: '30d' as const, label: '30 Days' },
   ];
 
-  const getFilterLabel = () => {
+  // Memoize filter label
+  const filterLabel = useMemo(() => {
     return timeFilterOptions.find(opt => opt.value === timeFilter)?.label || '7 Days';
-  };
-
-  useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 5000);
-    
-    // Refresh when app comes to foreground
-    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
-      if (nextAppState === 'active') {
-        console.log('🔄 [HomeScreen] App came to foreground, refreshing transactions');
-        loadData();
-      }
-    });
-    
-    return () => {
-      clearInterval(interval);
-      subscription.remove();
-    };
   }, [timeFilter]);
 
-  const loadData = async () => {
+  // Memoize loadData to prevent recreating on every render
+  const loadData = useCallback(async () => {
     try {
       const storedUser = await storage.getUser();
       setUser(storedUser);
@@ -74,16 +63,16 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
       const token = await storage.getToken();
       if (token) {
         try {
-          console.log('🔄 [HomeScreen] Fetching transactions from backend...');
+          log.debug('HomeScreen', 'Fetching transactions from backend');
           const response = await dashboardAPI.getTransactions({ limit: 100 });
-          console.log('📥 [HomeScreen] Backend response:', {
-            success: response.success,
-            hasData: !!response.data,
-            dataType: Array.isArray(response.data) ? 'array' : typeof response.data,
-            dataKeys: response.data && typeof response.data === 'object' ? Object.keys(response.data) : 'N/A',
-            dataLength: Array.isArray(response.data) ? response.data.length : 
-                       (response.data?.transactions ? response.data.transactions.length : 'N/A'),
-          });
+          
+          if (__DEV__) {
+            log.debug('HomeScreen', 'Backend response', {
+              success: response.success,
+              hasData: !!response.data,
+              dataType: Array.isArray(response.data) ? 'array' : typeof response.data,
+            });
+          }
           
           if (response.success && response.data) {
             // Backend returns { success: true, data: { transactions: [...], pagination: {...} } }
@@ -97,9 +86,7 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
               backendTxs = response.data.data.transactions;
             }
             
-            console.log(`📊 [HomeScreen] Extracted ${backendTxs.length} transactions from backend response`);
-            
-            console.log(`📊 [HomeScreen] Processing ${backendTxs.length} backend transactions`);
+            log.debug('HomeScreen', `Extracted ${backendTxs.length} transactions from backend response`);
             
             // Convert backend transactions to LocalTransaction format
             const convertedTxs: LocalTransaction[] = backendTxs.map((tx: any) => ({
@@ -114,6 +101,7 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
               smsText: tx.smsText || '',
               receivedAt: tx.createdAt || tx.receivedAt || new Date().toISOString(),
               synced: true,
+              isValidated: tx.isValidated || false,
               createdAt: tx.createdAt || new Date().toISOString(),
             }));
             
@@ -122,27 +110,23 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
             const unsyncedLocalTxs = txs.filter(t => !t.synced && !backendTxnIds.has(t.txnId));
             txs = [...convertedTxs, ...unsyncedLocalTxs];
             
-            console.log(`✅ [HomeScreen] Fetched ${backendTxs.length} transactions from backend, ${unsyncedLocalTxs.length} unsynced local, total: ${txs.length}`);
+            log.debug('HomeScreen', `Fetched ${backendTxs.length} transactions from backend, ${unsyncedLocalTxs.length} unsynced local, total: ${txs.length}`);
           } else {
-            console.warn('⚠️ [HomeScreen] Backend response not successful:', {
+            log.warn('HomeScreen', 'Backend response not successful', {
               success: response.success,
               error: response.error,
-              message: response.message,
-              data: response.data,
             });
           }
         } catch (error: any) {
-          console.error('❌ [HomeScreen] Error fetching transactions from backend:', {
+          log.error('HomeScreen', 'Error fetching transactions from backend', {
             message: error.message,
-            response: error.response?.data,
             status: error.response?.status,
             code: error.code,
-            stack: error.stack,
           });
           // Continue with local transactions if backend fetch fails
         }
       } else {
-        console.log('ℹ️ [HomeScreen] No auth token, using local transactions only');
+        log.debug('HomeScreen', 'No auth token, using local transactions only');
       }
       
       // Filter out withdrawals - only show deposits (positive amounts)
@@ -150,87 +134,151 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
       txs = txs.filter(t => t.amount > 0);
       const afterFilter = txs.length;
       
-      if (beforeFilter !== afterFilter) {
-        console.log(`🔍 [HomeScreen] Filtered out ${beforeFilter - afterFilter} withdrawal(s), showing ${afterFilter} deposit(s)`);
+      if (__DEV__ && beforeFilter !== afterFilter) {
+        log.debug('HomeScreen', `Filtered out ${beforeFilter - afterFilter} withdrawal(s), showing ${afterFilter} deposit(s)`);
       }
       
       // Sort by most recent first
       txs.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
       
-      console.log(`📊 [HomeScreen] Final transaction count: ${txs.length}`);
+      log.debug('HomeScreen', `Final transaction count: ${txs.length}`);
       setTransactions(txs);
-      setIsMonitoring(smsService.isActive());
-
-      // Calculate payment total based on time filter
-      const now = new Date();
-      let startDate = new Date();
       
-      switch (timeFilter) {
-        case '1d':
-          startDate.setDate(now.getDate() - 1);
-          break;
-        case '7d':
-          startDate.setDate(now.getDate() - 7);
-          break;
-        case '30d':
-          startDate.setDate(now.getDate() - 30);
-          break;
-      }
-      startDate.setHours(0, 0, 0, 0);
-
-      let total = 0;
-      txs.forEach((tx) => {
-        const txDate = new Date(tx.receivedAt);
-        if (txDate >= startDate) {
-          total += Math.abs(tx.amount);
-        }
-      });
-
-      setPaymentTotal(total);
+      // Payment total is now calculated via useMemo (calculatedPaymentTotal)
+      // and synced to state via useEffect
     } catch (error) {
-      console.error('Error loading data:', error);
+      log.error('HomeScreen', 'Error loading data', error);
     }
-  };
+  }, [timeFilter]); // Dependencies: timeFilter
 
-  // Simple bar chart data based on time filter
-  const getChartData = () => {
-    const days = [];
+  useEffect(() => {
+    loadData();
+    const interval = setInterval(loadData, 5000);
+    
+    // Refresh when app comes to foreground
+    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'active') {
+        log.debug('HomeScreen', 'App came to foreground, refreshing transactions');
+        loadData();
+      }
+    });
+    
+    return () => {
+      clearInterval(interval);
+      subscription.remove();
+    };
+  }, [loadData]);
+
+  // Memoize filtered transactions (only deposits, sorted)
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter(t => t.amount > 0)
+      .sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
+  }, [transactions]);
+
+  // Memoize payment total calculation
+  const calculatedPaymentTotal = useMemo(() => {
     const now = new Date();
-    let daysToShow = 7;
+    let startDate = new Date();
+    
+    switch (timeFilter) {
+      case '1d':
+        startDate.setDate(now.getDate() - 1);
+        break;
+      case '7d':
+        startDate.setDate(now.getDate() - 7);
+        break;
+      case '30d':
+        startDate.setDate(now.getDate() - 30);
+        break;
+    }
+    startDate.setHours(0, 0, 0, 0);
+
+    return filteredTransactions.reduce((total, tx) => {
+      const txDate = new Date(tx.receivedAt);
+      if (txDate >= startDate) {
+        return total + Math.abs(tx.amount);
+      }
+      return total;
+    }, 0);
+  }, [filteredTransactions, timeFilter]);
+
+  // Sync calculated total with state (only update if changed)
+  useEffect(() => {
+    if (Math.abs(calculatedPaymentTotal - paymentTotal) > 0.01) {
+      setPaymentTotal(calculatedPaymentTotal);
+    }
+  }, [calculatedPaymentTotal, paymentTotal]);
+
+  // Memoize chart data - expensive calculation
+  const chartData = useMemo(() => {
+    const dataPoints: number[] = [];
+    const labels: string[] = [];
+    const now = new Date();
     
     if (timeFilter === '1d') {
-      daysToShow = 1; // For 1d, maybe show hours? Keeping simple for now
+      // Last 24 hours in 4-hour intervals
+      for (let i = 5; i >= 0; i--) {
+        const date = new Date(now);
+        date.setHours(now.getHours() - (i * 4));
+        date.setMinutes(0, 0, 0);
+        
+        const nextDate = new Date(date);
+        nextDate.setHours(date.getHours() + 4);
+        
+        const periodTransactions = filteredTransactions.filter((tx) => {
+          const txDate = new Date(tx.receivedAt);
+          return txDate >= date && txDate < nextDate;
+        });
+        
+        const periodTotal = periodTransactions.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
+        dataPoints.push(periodTotal);
+        labels.push(`${date.getHours()}:00`);
+      }
+    } else if (timeFilter === '7d') {
+      // Last 7 days
+      for (let i = 6; i >= 0; i--) {
+        const date = new Date(now);
+        date.setDate(now.getDate() - i);
+        date.setHours(0, 0, 0, 0);
+        
+        const nextDate = new Date(date);
+        nextDate.setDate(date.getDate() + 1);
+        
+        const dayTransactions = filteredTransactions.filter((tx) => {
+          const txDate = new Date(tx.receivedAt);
+          return txDate >= date && txDate < nextDate;
+        });
+        
+        const dayTotal = dayTransactions.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
+        dataPoints.push(dayTotal);
+        labels.push(date.toLocaleDateString('en-US', { weekday: 'short' }));
+      }
     } else if (timeFilter === '30d') {
-      daysToShow = 7; // Show last 7 days even for 30d filter to keep graph clean, or aggregate
-    }
-    
-    const dataPoints = [];
-    const labels = [];
-
-    for (let i = daysToShow - 1; i >= 0; i--) {
-      const date = new Date(now);
-      date.setDate(date.getDate() - i);
-      date.setHours(0, 0, 0, 0);
-      
-      const nextDate = new Date(date);
-      nextDate.setDate(nextDate.getDate() + 1);
-      
-      const dayTransactions = transactions.filter((tx) => {
-        const txDate = new Date(tx.receivedAt);
-        return txDate >= date && txDate < nextDate;
-      });
-      
-      const dayTotal = dayTransactions.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
-      
-      dataPoints.push(dayTotal);
-      labels.push(date.toLocaleDateString('en-US', { weekday: 'short' }));
+      // Last 30 days in 5-day intervals
+      for (let i = 5; i >= 0; i--) {
+        const date = new Date(now);
+        date.setDate(now.getDate() - (i * 5));
+        date.setHours(0, 0, 0, 0);
+        
+        const nextDate = new Date(date);
+        nextDate.setDate(date.getDate() + 5);
+        
+        const periodTransactions = filteredTransactions.filter((tx) => {
+          const txDate = new Date(tx.receivedAt);
+          return txDate >= date && txDate < nextDate;
+        });
+        
+        const periodTotal = periodTransactions.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
+        dataPoints.push(periodTotal);
+        labels.push(`${date.getDate()}/${date.getMonth() + 1}`);
+      }
     }
     
     // If no data, show flat line
     if (dataPoints.every(val => val === 0)) {
          return {
-            labels: labels,
-            datasets: [{ data: new Array(labels.length).fill(0) }]
+            labels: labels.length > 0 ? labels : ['No Data'],
+            datasets: [{ data: labels.length > 0 ? new Array(labels.length).fill(0) : [0] }]
         };
     }
 
@@ -244,18 +292,63 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
             }
         ]
     };
-  };
+  }, [filteredTransactions, timeFilter, colors.primary]);
 
-  const chartData = getChartData();
+  // Calculate a nice round number for the Y-axis max value
+  const getNiceMaxY = useCallback((max: number) => {
+    if (max === 0) return 100;
+    
+    const digits = Math.floor(Math.log10(max));
+    const magnitude = Math.pow(10, digits);
+    const normalized = max / magnitude;
+    
+    let niceNormalized;
+    if (normalized <= 1) niceNormalized = 1;
+    else if (normalized <= 2) niceNormalized = 2;
+    else if (normalized <= 5) niceNormalized = 5;
+    else niceNormalized = 10;
+    
+    return niceNormalized * magnitude;
+  }, []);
 
-  const getUserName = () => {
+  // Memoize final chart data with Y-axis scaling
+  const finalChartData = useMemo(() => {
+    const chartDataCopy = { ...chartData };
+    if (!chartDataCopy.datasets[0]?.data?.length) return chartDataCopy;
+    
+    const maxDataValue = Math.max(...chartData.datasets[0].data);
+    const niceMaxYValue = getNiceMaxY(maxDataValue);
+    
+    // Add a hidden dataset to force the Y-axis to use our nice max value
+    // We only add this if we have actual data
+    if (chartData.datasets[0].data.some(v => v > 0)) {
+      chartDataCopy.datasets = [...chartData.datasets];
+      chartDataCopy.datasets.push({
+        data: [niceMaxYValue],
+        color: () => 'transparent',
+        strokeWidth: 0,
+        withDots: false,
+      } as any);
+      // Also add 0 to ensure start from 0
+      chartDataCopy.datasets.push({
+        data: [0],
+        color: () => 'transparent',
+        strokeWidth: 0,
+        withDots: false,
+      } as any);
+    }
+    return chartDataCopy;
+  }, [chartData, getNiceMaxY]);
+
+  // Memoize user name
+  const userName = useMemo(() => {
     if (user?.username) return user.username;
     if (user?.phone) return user.phone;
     return 'User';
-  };
+  }, [user]);
 
   // Extract sender name from SMS text if not already captured
-  const extractSenderFromSMS = (smsText: string): string | null => {
+  const extractSenderFromSMS = useCallback((smsText: string): string | null => {
     if (!smsText) return null;
     
     const senderPatterns = [
@@ -274,9 +367,10 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
       }
     }
     return null;
-  };
+  }, []);
 
-  const getDisplayName = (item: LocalTransaction): string => {
+  // Memoize display name function
+  const getDisplayName = useCallback((item: LocalTransaction): string => {
     // First try to extract sender from SMS text if sender is Unknown or empty
     if ((!item.sender || item.sender === 'Unknown' || item.sender === '') && item.smsText) {
       const extractedSender = extractSenderFromSMS(item.smsText);
@@ -289,30 +383,45 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
     if (item.sendFrom) return item.sendFrom;
     if (item.pattern && item.pattern !== 'Institution Pattern') return item.pattern;
     return 'Transaction';
-  };
+  }, [extractSenderFromSMS]);
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: colors.background }]} showsVerticalScrollIndicator={false}>
       {/* Header (Separate) */}
       <View style={styles.header}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          <Image 
-            source={require('../../assets/logo/logo - Asset 8.png')} 
-            style={styles.headerLogo}
-            resizeMode="contain"
-          />
+        <View style={styles.headerLeft}>
           <View>
-            <Text style={[styles.greeting, { color: colors.textSecondary }]}>Welcome Back</Text>
-            <Text style={[styles.title, { color: colors.text }]}>{getUserName()}</Text>
+            <Text style={[styles.greeting, { color: colors.textSecondary }]}>Hello,</Text>
+            <Text style={[styles.title, { color: colors.text }]}>{userName}</Text>
           </View>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          <View style={[styles.statusBadge, { backgroundColor: isMonitoring ? colors.lightGreen : '#fee2e2' }]}>
-            <View style={[styles.statusDot, { backgroundColor: isMonitoring ? colors.darkGreen : '#ef4444' }]} />
-            <Text style={[styles.statusText, { color: isMonitoring ? colors.darkGreen : '#ef4444' }]}>
-              {isMonitoring ? 'Active' : 'Inactive'}
-            </Text>
-          </View>
+          {/* Employee Management Button (Only for Business Owners) */}
+          {user?.role === 'BUSINESS_OWNER' && (
+            <TouchableOpacity 
+              onPress={() => {
+                console.log('Employee button pressed in HomeScreen');
+                if (onNavigateToEmployeeManagement) {
+                  onNavigateToEmployeeManagement();
+                } else {
+                  console.error('onNavigateToEmployeeManagement prop is missing');
+                }
+              }}
+              style={{ 
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                backgroundColor: '#FF6B00', // Orange
+                borderRadius: 20,
+              }}
+            >
+              <Users size={18} color="#fff" />
+              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Employee</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity 
             onPress={onNavigateToProfile}
             style={{ 
@@ -323,7 +432,7 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
               borderColor: colors.border
             }}
           >
-            <User size={20} color={colors.text} />
+            <Settings size={20} color={colors.text} />
           </TouchableOpacity>
         </View>
       </View>
@@ -336,15 +445,16 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
 
         {/* Payment Info */}
         <View style={styles.paymentSection}>
-          <View style={styles.paymentHeader}><Text style={styles.statValue}>
-              ${paymentTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </Text>
+          <View style={styles.paymentHeader}>
+            <Text style={styles.statValue}>
+              {paymentTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Br
+            </Text>
               {/* <Text style={styles.statLabel}>Total Payment</Text> */}
               <TouchableOpacity
                   style={styles.dropdownButton}
                   onPress={() => setShowDropdown(!showDropdown)}
               >
-                  <Text style={styles.dropdownText}>{getFilterLabel()}</Text>
+                  <Text style={styles.dropdownText}>{filterLabel}</Text>
                   <ChevronDown size={16} color="#fff" />
               </TouchableOpacity>
           </View>
@@ -354,13 +464,15 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
         {/* Analytics Chart */}
         <View style={styles.chartContainer}>
           <LineChart
-              data={chartData}
-              width={width - 24} // Width minus margins
-              height={140}
+              data={finalChartData}
+              width={width - 24} // Full width minus small margins
+              height={180} // Increased height for better visibility
               yAxisLabel=""
               yAxisSuffix=""
-              withHorizontalLabels={false}
-              withVerticalLabels={false}
+              withHorizontalLabels={true}
+              withVerticalLabels={true}
+              fromZero={true}
+              segments={4} // Create 5 horizontal lines (0, 25%, 50%, 75%, 100%)
               chartConfig={{
                   backgroundColor: '#1C1C1E',
                   backgroundGradientFrom: '#1C1C1E',
@@ -368,14 +480,23 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
                   decimalPlaces: 0,
                   color: (opacity = 1) => `rgba(255, 107, 0, ${opacity})`, // Orange accent
                   labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                  propsForLabels: {
+                    fontSize: 10,
+                    fontWeight: '600',
+                  },
                   style: {
-                      borderRadius: 0
+                      borderRadius: 0,
+                      paddingRight: 0,
                   },
                   propsForDots: {
-                      r: "0",
+                      r: "4",
+                      strokeWidth: "2",
+                      stroke: colors.primary
                   },
                   propsForBackgroundLines: {
-                      strokeWidth: 0,
+                      strokeWidth: 1,
+                      stroke: 'rgba(255, 255, 255, 0.1)',
+                      strokeDasharray: '', // Solid lines
                   },
                   fillShadowGradientFrom: '#FF6B00',
                   fillShadowGradientTo: '#FF6B00',
@@ -384,15 +505,21 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
               }}
               bezier
               style={{
-                  marginVertical: 0,
-                  paddingRight: 0,
-                  paddingLeft: 0,
+                  marginVertical: 10,
+                  borderRadius: 16,
               }}
-              withInnerLines={false}
+              withInnerLines={true}
               withOuterLines={false}
               withVerticalLines={false}
-              withHorizontalLines={false}
+              withHorizontalLines={true}
               withDots={false}
+              onDataPointClick={(data) => {
+                // Only show alert for real data points, not our dummy scaling points
+                const colorFunc = data.dataset.color;
+                if (colorFunc && colorFunc(1) !== 'transparent') {
+                  Alert.alert('Amount', `${data.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Br`);
+                }
+              }}
           />
         </View>
       </View>
@@ -445,13 +572,21 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
       <View style={styles.recentSection}>
         <View style={styles.recentHeader}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Recent Transactions</Text>
-          <Text style={[styles.seeAll, { color: colors.primary }]}>See All</Text>
+          {onNavigateToTransactions && (
+            <TouchableOpacity onPress={onNavigateToTransactions}>
+              <Text style={[styles.seeAll, { color: colors.primary }]}>See All</Text>
+            </TouchableOpacity>
+          )}
         </View>
         {transactions.slice(0, 5).map((tx) => {
           const isIncome = tx.amount > 0;
           const displayName = getDisplayName(tx);
           return (
-            <View key={tx.id} style={[styles.transactionItem, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <TouchableOpacity 
+              key={tx.id} 
+              style={[styles.transactionItem, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              onPress={() => setSelectedTransaction(tx)}
+            >
               <View style={styles.transactionLeft}>
                 <View style={[styles.transactionIcon, { backgroundColor: isIncome ? colors.lightGreen + '20' : '#fee2e2' }]}>
                   {isIncome ? (
@@ -469,10 +604,26 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
                   </Text>
                 </View>
               </View>
-              <Text style={[styles.transactionAmount, { color: isIncome ? colors.darkGreen : '#ef4444' }]}>
-                {isIncome ? '+' : '-'}${Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </Text>
-            </View>
+              <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                <Text style={[styles.transactionAmount, { color: isIncome ? colors.darkGreen : '#ef4444' }]}>
+                  {isIncome ? '+' : '-'}{Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <Text style={styles.currencyUnitSmall}> Br</Text>
+                </Text>
+                <View style={[
+                  styles.statusTag, 
+                  { 
+                    backgroundColor: tx.isValidated ? colors.darkGreen + '10' : '#fff7ed',
+                  }
+                ]}>
+                  <Text style={[
+                    styles.statusTagText, 
+                    { color: tx.isValidated ? colors.darkGreen : '#c2410c' }
+                  ]}>
+                    {tx.isValidated ? 'Verified' : 'Pending'}
+                  </Text>
+                </View>
+              </View>
+            </TouchableOpacity>
           );
         })}
         {transactions.length === 0 && (
@@ -481,6 +632,120 @@ export default function HomeScreen({ apiKey, onNavigateToProfile }: Props) {
           </View>
         )}
       </View>
+
+      {/* Transaction Detail Modal */}
+      <Modal
+        visible={selectedTransaction !== null}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setSelectedTransaction(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Transaction Details</Text>
+              <TouchableOpacity
+                onPress={() => setSelectedTransaction(null)}
+                style={styles.closeButton}
+              >
+                <X size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            
+            {selectedTransaction && (() => {
+              // Get the best sender name for display
+              const getSenderForDisplay = () => {
+                if (selectedTransaction.sender && selectedTransaction.sender !== 'Unknown' && selectedTransaction.sender !== '') {
+                  return selectedTransaction.sender;
+                }
+                if (selectedTransaction.smsText) {
+                  const extracted = extractSenderFromSMS(selectedTransaction.smsText);
+                  if (extracted) return extracted;
+                }
+                return null;
+              };
+              const displaySender = getSenderForDisplay();
+              
+              return (
+              <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Amount</Text>
+                  <Text style={[styles.detailValue, { color: colors.text, fontSize: 24, fontWeight: '700' }]}>
+                    {selectedTransaction.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <Text style={{ fontSize: 14, fontWeight: '600', opacity: 0.6 }}> Br</Text>
+                  </Text>
+                </View>
+
+                {selectedTransaction.bank && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Bank/Institution</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.bank}</Text>
+                  </View>
+                )}
+
+                {displaySender && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Sender</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{displaySender}</Text>
+                  </View>
+                )}
+
+                {selectedTransaction.sendFrom && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>From (Phone)</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.sendFrom}</Text>
+                  </View>
+                )}
+
+                {selectedTransaction.sendTo && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>To</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.sendTo}</Text>
+                  </View>
+                )}
+
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Transaction ID</Text>
+                  <Text style={[styles.detailValue, { color: colors.text, fontFamily: 'monospace' }]}>
+                    {selectedTransaction.txnId}
+                  </Text>
+                </View>
+
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Date & Time</Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>
+                    {new Date(selectedTransaction.receivedAt).toLocaleString()}
+                  </Text>
+                </View>
+
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Status</Text>
+                  <Text style={[styles.detailValue, { color: selectedTransaction.isValidated ? colors.darkGreen : '#c2410c' }]}>
+                    {selectedTransaction.isValidated ? 'Verified' : 'Pending'}
+                  </Text>
+                </View>
+
+                {selectedTransaction.pattern && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Pattern</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.pattern}</Text>
+                  </View>
+                )}
+
+                {selectedTransaction.smsText && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Original SMS</Text>
+                    <View style={[styles.smsTextContainer, { backgroundColor: colors.background }]}>
+                      <Text style={[styles.smsText, { color: colors.text }]}>{selectedTransaction.smsText}</Text>
+                    </View>
+                  </View>
+                )}
+              </ScrollView>
+              );
+            })()}
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -505,6 +770,11 @@ const styles = StyleSheet.create({
     // textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
   headerLogo: {
     width: 40,
     height: 40,
@@ -514,28 +784,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: -0.5,
   },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 16,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 6,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
   unifiedCard: {
     marginHorizontal: 12,
     marginBottom: 24,
     borderRadius: 32,
-    paddingTop: 18,
+    paddingTop: 24,
     paddingBottom: 0,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },
@@ -544,6 +797,8 @@ const styles = StyleSheet.create({
     elevation: 10,
     overflow: 'hidden',
     backgroundColor: '#1C1C1E', // Dark background
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
   cardPattern: {
     position: 'absolute',
@@ -588,6 +843,16 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: -1,
     color: '#fff',
+  },
+  currencyUnit: {
+    fontSize: 18,
+    fontWeight: '600',
+    opacity: 0.8,
+  },
+  currencyUnitSmall: {
+    fontSize: 10,
+    fontWeight: '600',
+    opacity: 0.6,
   },
   dropdownButton: {
     flexDirection: 'row',
@@ -703,6 +968,69 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     fontStyle: 'italic',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '90%',
+    paddingBottom: 40,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  closeButton: {
+    padding: 4,
+  },
+  modalBody: {
+    padding: 20,
+  },
+  detailSection: {
+    marginBottom: 20,
+  },
+  detailLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  detailValue: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  smsTextContainer: {
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 4,
+  },
+  smsText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: 'monospace',
+  },
+  statusTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  statusTagText: {
+    fontSize: 9,
+    fontWeight: '600',
+    textTransform: 'capitalize',
   },
 });
 

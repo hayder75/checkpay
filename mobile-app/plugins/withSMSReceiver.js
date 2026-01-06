@@ -216,8 +216,8 @@ class SMSHeadlessTaskService : HeadlessJsTaskService() {
             .build()
     }
     
-    override fun getTaskConfig(intent: Intent): HeadlessJsTaskConfig? {
-        val extras = intent.extras ?: return null
+    override fun getTaskConfig(intent: Intent?): HeadlessJsTaskConfig? {
+        val extras = intent?.extras ?: return null
         
         val data = Arguments.createMap().apply {
             putString("sender", extras.getString("sender", ""))
