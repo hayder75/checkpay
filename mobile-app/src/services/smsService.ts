@@ -886,7 +886,34 @@ class SMSService {
         hasApiKey: !!await storage.getApiKey(),
       });
       
-      // Provide more specific error messages
+      // Handle 403 Token Exhaustion - don't retry, store locally and wait for upgrade
+      if (errorStatus === 403) {
+        const isTokenExhausted = errorMessage.includes('out of credit') || 
+                                  errorMessage.includes('exhausted') || 
+                                  errorMessage.includes('limit reached');
+        
+        if (isTokenExhausted) {
+          console.warn('💳 [SMS Service] Phone sync credits exhausted - transaction stored locally');
+          console.warn('   Transaction will be synced when credits are available');
+          log.warn('SMS Service', 'Token exhausted - storing transaction locally', {
+            txnId: transaction.txnId,
+            errorMessage,
+          });
+          
+          // Mark transaction with special flag for token exhaustion (don't retry automatically)
+          // The transaction stays local but won't be retried until user has tokens
+          (transaction as any).tokenExhausted = true;
+          (transaction as any).tokenExhaustedAt = new Date().toISOString();
+          await this.updateLocalTransaction(transaction);
+          
+          // Don't throw - let the transaction stay local without constant retries
+          return;
+        }
+        
+        console.error('🚫 [SMS Service] Access forbidden - check business permissions');
+      }
+      
+      // Provide more specific error messages for other errors
       if (errorStatus === 401) {
         const authError = error.response?.data?.error || '';
         if (authError.includes('API key') || authError.includes('api key')) {

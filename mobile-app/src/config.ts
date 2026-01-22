@@ -15,8 +15,10 @@ const getBaseURL = (): string => {
   // Priority 3: Development URLs based on platform
   if (Platform.OS === 'android') {
     // Android emulator uses 10.0.2.2 to access host's localhost
-    // For physical device, use your computer's local IP (set via EXPO_PUBLIC_API_URL)
-    return 'http://192.168.43.160:3000/api';
+    // For physical device, set EXPO_PUBLIC_API_URL in your .env file
+    // return 'http://172.20.10.2:3000/api';
+    return "http://192.168.43.160:3000/api"
+      // return "http://10.137.114.87:3000/api"
   }
   
   if (Platform.OS === 'ios') {
@@ -36,4 +38,10 @@ export const STORAGE_KEYS = {
   API_KEY: 'checkpay_api_key',
   PATTERNS: 'checkpay_patterns',
   TRANSACTIONS: 'checkpay_transactions',
+  // Security keys (stored in SecureStore)
+  SECURITY_PIN_HASH: 'security_pin_hash',
+  SECURITY_PIN_SALT: 'security_pin_salt',
+  SECURITY_PIN_ENABLED: 'security_pin_enabled',
+  SECURITY_BIOMETRIC_ENABLED: 'security_biometric_enabled',
+  SECURITY_ONBOARDING_PROMPTED: 'security_onboarding_prompted',
 } as const;

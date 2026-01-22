@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet, PermissionsAndroid, Platform } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet, PermissionsAndroid, Platform, AppState, AppStateStatus, Modal } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
+import { PopupProvider } from './src/contexts/PopupContext';
 import BottomNavigation, { Tab } from './src/components/BottomNavigation';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import LoginScreen from './src/screens/LoginScreen';
@@ -16,8 +17,13 @@ import OCRScreen from './src/screens/OCRScreen';
 import EmployeeScreen from './src/screens/EmployeeScreen';
 import EmployeeManagementScreen from './src/screens/EmployeeManagementScreen';
 import EmployeeTransactionsScreen from './src/screens/EmployeeTransactionsScreen';
+import NotificationsScreen from './src/screens/NotificationsScreen';
+import LockScreen from './src/screens/LockScreen';
+import PINSetupScreen from './src/screens/PINSetupScreen';
+import ProfileCompletionScreen from './src/screens/ProfileCompletionScreen';
 import { storage } from './src/services/storage';
 import { smsService } from './src/services/smsService';
+import { securityService } from './src/services/securityService';
 import { Pattern } from './src/types';
 import { authAPI } from './src/services/api';
 import { patternsAPI } from './src/services/api';
@@ -37,6 +43,15 @@ function AppContent() {
   const [authScreen, setAuthScreen] = useState<'login' | 'register' | 'employee-register' | null>(null);
   const [cameFromOnboarding, setCameFromOnboarding] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<{ id: string; name: string } | null>(null);
+  // Security / Lock screen state
+  const [isLocked, setIsLocked] = useState(false);
+  const [securityEnabled, setSecurityEnabled] = useState(false);
+  const [showSecuritySetupPrompt, setShowSecuritySetupPrompt] = useState(false);
+  const [showPINSetupFromPrompt, setShowPINSetupFromPrompt] = useState(false);
+  const [biometricAvailableForPrompt, setBiometricAvailableForPrompt] = useState(false);
+  const [showProfileCompletion, setShowProfileCompletion] = useState(false);
+  const appState = useRef(AppState.currentState);
+  const backgroundTimestamp = useRef<number | null>(null);
 
   // Check if user is employee (only OCR access)
   const isEmployee = user?.role === 'EMPLOYEE';
@@ -49,6 +64,160 @@ function AppContent() {
       }
     }
   }, [isEmployee, currentTab]);
+
+  // Track previous tab to detect when leaving profile screen
+  const previousTab = useRef<Tab>('home');
+  useEffect(() => {
+    // If user was on profile and is now leaving, refresh security state
+    // (they might have enabled/disabled PIN)
+    if (previousTab.current === 'profile' && currentTab !== 'profile') {
+      refreshSecurityState();
+    }
+    previousTab.current = currentTab;
+  }, [currentTab]);
+
+  // Check security status on mount and when returning from background
+  useEffect(() => {
+    checkSecurityAndLock();
+  }, []);
+
+  // App state change listener for lock screen
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => {
+      subscription.remove();
+    };
+  }, [securityEnabled]);
+
+  const checkSecurityAndLock = async () => {
+    try {
+      const enabled = await securityService.isSecurityEnabled();
+      console.log('🔐 [App] Security check on mount - enabled:', enabled);
+      setSecurityEnabled(enabled);
+      if (enabled) {
+        setIsLocked(true);
+        console.log('🔒 [App] Lock screen will be shown');
+      }
+    } catch (error) {
+      console.error('Error checking security status:', error);
+    }
+  };
+
+  const handleAppStateChange = async (nextAppState: AppStateStatus) => {
+    if (appState.current.match(/active/) && nextAppState.match(/inactive|background/)) {
+      // App going to background - record timestamp
+      backgroundTimestamp.current = Date.now();
+      console.log('📱 [App] Going to background');
+    } else if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
+      // App coming to foreground
+      console.log('📱 [App] Coming to foreground');
+      const enabled = await securityService.isSecurityEnabled();
+      setSecurityEnabled(enabled);
+      
+      if (enabled && backgroundTimestamp.current) {
+        // Lock app if it was in background for more than a few seconds
+        const timeInBackground = Date.now() - backgroundTimestamp.current;
+        if (timeInBackground > 3000) { // 3 seconds threshold
+          setIsLocked(true);
+          console.log('🔒 [App] Locking app after background');
+        }
+      }
+      backgroundTimestamp.current = null;
+    }
+    appState.current = nextAppState;
+  };
+
+  const handleUnlock = () => {
+    setIsLocked(false);
+    console.log('🔓 [App] Unlocked');
+  };
+
+  // Refresh security state - call this after PIN is set up or toggled
+  const refreshSecurityState = async () => {
+    try {
+      const enabled = await securityService.isSecurityEnabled();
+      console.log('🔐 [App] Security state refreshed:', enabled);
+      setSecurityEnabled(enabled);
+      if (enabled) {
+        setIsLocked(true);
+      }
+    } catch (error) {
+      console.error('Error refreshing security state:', error);
+    }
+  };
+
+  // Check if we should prompt user to set up security after login
+  const checkAndPromptSecuritySetup = async () => {
+    try {
+      const enabled = await securityService.isSecurityEnabled();
+      const wasPrompted = await securityService.wasOnboardingPrompted();
+      
+      // If security is not enabled and user hasn't been prompted yet, show the setup prompt
+      if (!enabled && !wasPrompted) {
+        console.log('🔐 [App] Security not set up, showing setup prompt');
+        // Check biometric availability for the prompt
+        const bioInfo = await securityService.getBiometricInfo();
+        setBiometricAvailableForPrompt(bioInfo.isAvailable && bioInfo.hasEnrolledBiometrics);
+        setShowSecuritySetupPrompt(true);
+      }
+    } catch (error) {
+      console.error('Error checking security setup:', error);
+    }
+  };
+
+  // Handle starting PIN setup from prompt
+  const handleStartPINSetupFromPrompt = () => {
+    setShowSecuritySetupPrompt(false);
+    setShowPINSetupFromPrompt(true);
+  };
+
+  // Handle security setup completion from prompt
+  const handleSecuritySetupFromPromptComplete = async () => {
+    setShowPINSetupFromPrompt(false);
+    await refreshSecurityState();
+  };
+
+  // Handle skipping security setup from prompt
+  const handleSkipSecuritySetup = async () => {
+    await securityService.setOnboardingPrompted();
+    setShowSecuritySetupPrompt(false);
+  };
+
+  // Handle profile completion (for social auth users)
+  const handleProfileComplete = async (updatedUser: any) => {
+    console.log('✅ [App] Profile completed:', updatedUser);
+    setUser(updatedUser);
+    setShowProfileCompletion(false);
+    
+    // Continue with login flow
+    const enabled = await securityService.isSecurityEnabled();
+    if (enabled) {
+      await refreshSecurityState();
+    } else {
+      await checkAndPromptSecuritySetup();
+    }
+    
+    // Set country code and download patterns
+    if (updatedUser?.country) {
+      await storage.setCountryCode(updatedUser.country);
+      try {
+        const { downloadCountryPatterns } = await import('./src/utils/patternVerifier');
+        await downloadCountryPatterns(updatedUser.country);
+      } catch (error) {
+        console.error('Error downloading patterns:', error);
+      }
+    }
+    
+    // Start SMS monitoring
+    try {
+      await smsService.startMonitoring();
+    } catch (error) {
+      console.error('Error starting SMS monitoring:', error);
+    }
+    
+    // Setup notifications
+    setupNotifications();
+  };
 
   useEffect(() => {
     initializeApp();
@@ -147,6 +316,43 @@ function AppContent() {
     setShowOnboarding(value);
   };
 
+  const setupNotifications = async () => {
+    try {
+      const { 
+        registerForPushNotificationsAsync, 
+        sendPushTokenToBackend, 
+        setupNotificationListeners,
+        setNotificationNavigationCallback 
+      } = await import('./src/services/NotificationService');
+      
+      const token = await registerForPushNotificationsAsync();
+      if (token) {
+        await sendPushTokenToBackend(token);
+      }
+      
+      // Set up navigation callback for notification taps
+      setNotificationNavigationCallback((data) => {
+        const { txnId, type, notificationId } = data;
+        
+        // Navigate based on notification type
+        if (type === 'TRANSACTION_VERIFIED' || type === 'TRANSACTION_RECEIVED') {
+          // Navigate to transactions screen
+          setCurrentTab('transactions');
+        } else if (type === 'TOKEN_LOW' || type === 'TOKEN_DEPLETED') {
+          // Navigate to profile/settings for token management
+          setCurrentTab('profile');
+        } else {
+          // Default: navigate to notifications screen
+          setCurrentTab('notifications' as any);
+        }
+      });
+      
+      setupNotificationListeners();
+    } catch (error) {
+      console.error('Error setting up notifications:', error);
+    }
+  };
+
   const checkAuth = async () => {
     try {
       // Check for stored token
@@ -173,6 +379,9 @@ function AppContent() {
             
             // Set loading to false immediately so UI appears faster
             setLoading(false);
+            
+            // Check security state to show lock screen if needed
+            await refreshSecurityState();
             
             // Load patterns and country patterns in parallel (non-blocking)
             Promise.all([
@@ -229,7 +438,11 @@ function AppContent() {
             ]).catch(error => {
               console.error('Error in parallel initialization:', error);
             });
-          } else {
+
+            // Setup notifications
+            setupNotifications();
+          } else { // Setup notifications
+            setupNotifications();
             // Token invalid response
             console.warn('⚠️ [App] Token validation returned unsuccessful response');
             await storage.removeToken();
@@ -276,6 +489,22 @@ function AppContent() {
     setPatterns(userPatterns);
     setAuthScreen(null); // Clear auth screen after successful login
     setCameFromOnboarding(false); // Reset flag for login (not from onboarding)
+    
+    // Check if profile completion is needed (for social auth users)
+    if (userData?.profileComplete === false) {
+      console.log('🔄 [App] Profile incomplete, showing completion screen');
+      setShowProfileCompletion(true);
+      return; // Don't proceed with rest of login flow until profile is complete
+    }
+    
+    // Check if security is enabled (for lock screen) or prompt setup
+    const enabled = await securityService.isSecurityEnabled();
+    if (enabled) {
+      await refreshSecurityState();
+    } else {
+      // Check if we should prompt user to set up security
+      await checkAndPromptSecuritySetup();
+    }
     
     // Patterns are now always fetched from backend, no local storage
     
@@ -372,6 +601,9 @@ function AppContent() {
       const errorMsg = error?.message || 'Unknown error';
       console.warn('⚠️ [App] Some transactions failed to sync after login:', errorMsg);
     });
+
+    // Setup notifications
+    setupNotifications();
   };
 
   const refreshPatterns = async () => {
@@ -408,6 +640,10 @@ function AppContent() {
       await storage.clearAll();
       console.log('✅ [App] Storage cleared');
       
+      // Clear security data
+      await securityService.clearAllSecurityData();
+      console.log('✅ [App] Security data cleared');
+      
       // Reset all state
       setUser(null);
       setApiKey(null);
@@ -416,6 +652,8 @@ function AppContent() {
       setShowOnboarding(false);
       setAuthScreen('login'); // Show login screen after logout
       setLoading(false);
+      setIsLocked(false);
+      setSecurityEnabled(false);
       
       console.log('✅ [App] Logout completed, showing login screen');
     } catch (error) {
@@ -449,6 +687,10 @@ function AppContent() {
             onNavigateToEmployeeManagement={() => {
               console.log('Navigating to employee management');
               setCurrentTab('employee-management');
+            }}
+            onNavigateToNotifications={() => {
+              console.log('Navigating to notifications');
+              setCurrentTab('notifications' as any);
             }}
           />
         );
@@ -488,6 +730,8 @@ function AppContent() {
             onBack={() => setCurrentTab('employee-management')}
           />
         );
+      case 'notifications' as any:
+        return <NotificationsScreen onBack={() => setCurrentTab('home')} />;
       default:
         return (
           <HomeScreen 
@@ -503,6 +747,10 @@ function AppContent() {
             onNavigateToEmployeeManagement={() => {
               console.log('Navigating to employee management');
               setCurrentTab('employee-management');
+            }}
+            onNavigateToNotifications={() => {
+              console.log('Navigating to notifications');
+              setCurrentTab('notifications' as any);
             }}
           />
         );
@@ -523,6 +771,22 @@ function AppContent() {
     setApiKey(userApiKey);
     setPatterns(userPatterns);
     setAuthScreen(null); // Clear auth screen after successful registration
+    
+    // Check if profile completion is needed (for social auth users)
+    if (userData?.profileComplete === false) {
+      console.log('🔄 [App] Profile incomplete after registration, showing completion screen');
+      setShowProfileCompletion(true);
+      return; // Don't proceed until profile is complete
+    }
+    
+    // Check if security is enabled (for lock screen) or prompt setup
+    const enabled = await securityService.isSecurityEnabled();
+    if (enabled) {
+      await refreshSecurityState();
+    } else if (!cameFromOnboarding) {
+      // Only prompt if not coming from onboarding (they had the chance there)
+      await checkAndPromptSecuritySetup();
+    }
     
     // Patterns are now always fetched from backend, no local storage
     
@@ -602,6 +866,9 @@ function AppContent() {
       const errorMsg = error?.message || 'Unknown error';
       console.warn('⚠️ [App] Some transactions failed to sync after registration:', errorMsg);
     });
+
+    // Setup notifications
+    setupNotifications();
   };
 
   const handleOnboardingComplete = async (countryCode: string, selectedBanks: string[]) => {
@@ -610,6 +877,9 @@ function AppContent() {
       await storage.setUserCountry(countryCode);
       await storage.setSelectedBanks(selectedBanks);
       setShowOnboarding(false);
+      
+      // Refresh security state in case user set up PIN during onboarding
+      await refreshSecurityState();
       
       // After onboarding, check if user is authenticated
       // If not, show sign-in screen
@@ -712,10 +982,86 @@ function AppContent() {
   // This ensures that authenticated users go directly to home screen
   const shouldShowOnboarding = showOnboarding && !user && !apiKey;
 
+  // Show lock screen if security is enabled and app is locked
+  // Only show after loading is complete and user is authenticated
+  const shouldShowLockScreen = isLocked && securityEnabled && !loading && !authScreen && !shouldShowOnboarding && (user || apiKey);
+  
+  // Debug logging for lock screen state
+  if (__DEV__) {
+    console.log('🔐 [App] Lock screen check:', {
+      isLocked,
+      securityEnabled,
+      loading,
+      authScreen,
+      shouldShowOnboarding,
+      hasUser: !!user,
+      hasApiKey: !!apiKey,
+      shouldShowLockScreen,
+      showSecuritySetupPrompt,
+    });
+  }
+
+  // PIN Setup screen from post-login prompt
+  if (showPINSetupFromPrompt) {
+    return (
+      <ThemeProvider>
+        <PINSetupScreen
+          onComplete={handleSecuritySetupFromPromptComplete}
+          onCancel={() => {
+            setShowPINSetupFromPrompt(false);
+            handleSkipSecuritySetup();
+          }}
+          showBiometricOption={biometricAvailableForPrompt}
+        />
+      </ThemeProvider>
+    );
+  }
+
   return (
     <>
       <StatusBar style={colors.background === '#1a1a1a' ? 'light' : 'dark'} />
-      {shouldShowOnboarding ? (
+      
+      {/* Security Setup Prompt Modal */}
+      <Modal
+        visible={showSecuritySetupPrompt}
+        transparent
+        animationType="fade"
+        onRequestClose={handleSkipSecuritySetup}
+      >
+        <View style={styles.securityPromptOverlay}>
+          <View style={[styles.securityPromptCard, { backgroundColor: colors.surface }]}>
+            <View style={[styles.securityPromptIcon, { backgroundColor: colors.primary + '20' }]}>
+              <Text style={{ fontSize: 40 }}>🔒</Text>
+            </View>
+            <Text style={[styles.securityPromptTitle, { color: colors.text }]}>
+              Secure Your App
+            </Text>
+            <Text style={[styles.securityPromptSubtitle, { color: colors.textSecondary }]}>
+              Add a PIN to protect your financial data. You can also enable biometrics for quick access.
+            </Text>
+            <TouchableOpacity
+              style={[styles.securityPromptButton, { backgroundColor: colors.primary }]}
+              onPress={handleStartPINSetupFromPrompt}
+            >
+              <Text style={styles.securityPromptButtonText}>Set Up PIN</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.securityPromptSkip}
+              onPress={handleSkipSecuritySetup}
+            >
+              <Text style={[styles.securityPromptSkipText, { color: colors.textSecondary }]}>
+                Maybe Later
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {showProfileCompletion && user ? (
+        <ProfileCompletionScreen user={user} onComplete={handleProfileComplete} />
+      ) : shouldShowLockScreen ? (
+        <LockScreen onUnlock={handleUnlock} />
+      ) : shouldShowOnboarding ? (
         <OnboardingScreen
           onComplete={handleOnboardingComplete}
           onNavigateToRegistration={handleNavigateToRegistration}
@@ -744,11 +1090,13 @@ function AppContent() {
 
 export default function App() {
   return (
-    <ErrorBoundary>
-      <ThemeProvider>
-        <AppContent />
-      </ThemeProvider>
-    </ErrorBoundary>
+    <ThemeProvider>
+      <PopupProvider>
+        <ErrorBoundary>
+          <AppContent />
+        </ErrorBoundary>
+      </PopupProvider>
+    </ThemeProvider>
   );
 }
 
@@ -794,5 +1142,64 @@ const styles = StyleSheet.create({
   placeholderText: {
     fontSize: 18,
     textAlign: 'center',
+  },
+  // Security setup prompt styles
+  securityPromptOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  securityPromptCard: {
+    width: '100%',
+    maxWidth: 340,
+    borderRadius: 24,
+    padding: 32,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  securityPromptIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  securityPromptTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  securityPromptSubtitle: {
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: 'center',
+    marginBottom: 28,
+  },
+  securityPromptButton: {
+    width: '100%',
+    paddingVertical: 16,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  securityPromptButtonText: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  securityPromptSkip: {
+    paddingVertical: 12,
+  },
+  securityPromptSkipText: {
+    fontSize: 15,
+    fontWeight: '500',
   },
 });

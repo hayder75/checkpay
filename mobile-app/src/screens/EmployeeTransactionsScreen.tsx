@@ -40,21 +40,49 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
           ? response.data 
           : response.data.transactions || [];
         
-        const convertedTxs: LocalTransaction[] = backendTxs.map((tx: any) => ({
-          id: tx.id || `backend_${tx.txnId}`,
-          txnId: tx.txnId || tx.id,
-          amount: tx.amount || 0,
-          sender: tx.sender || '',
-          sendFrom: tx.sendFrom || null,
-          sendTo: tx.sendTo || null,
-          bank: tx.bank || tx.receiverBank || null,
-          pattern: tx.pattern || 'Backend Pattern',
-          smsText: tx.smsText || '',
-          receivedAt: tx.createdAt || tx.receivedAt || new Date().toISOString(),
-          synced: true,
-          isValidated: tx.isValidated || false,
-          createdAt: tx.createdAt || new Date().toISOString(),
-        }));
+        const convertedTxs: LocalTransaction[] = backendTxs.map((tx: any) => {
+          // Handle sender - can be string or object {name, bank}
+          let senderValue = '';
+          if (typeof tx.sender === 'string') {
+            senderValue = tx.sender;
+          } else if (tx.sender && typeof tx.sender === 'object') {
+            senderValue = tx.sender.name || tx.sender.bank || '';
+          }
+          
+          // Handle bank - can be string or object
+          let bankValue = null;
+          if (typeof tx.bank === 'string') {
+            bankValue = tx.bank;
+          } else if (tx.bank && typeof tx.bank === 'object') {
+            bankValue = tx.bank.name || tx.bank.bank || null;
+          } else if (tx.receiverBank) {
+            bankValue = typeof tx.receiverBank === 'string' ? tx.receiverBank : tx.receiverBank?.name || null;
+          }
+          
+          // Handle pattern - can be string or object
+          let patternValue = 'Backend Pattern';
+          if (typeof tx.pattern === 'string') {
+            patternValue = tx.pattern;
+          } else if (tx.pattern && typeof tx.pattern === 'object') {
+            patternValue = tx.pattern.name || tx.pattern.bank || 'Backend Pattern';
+          }
+          
+          return {
+            id: tx.id || `backend_${tx.txnId}`,
+            txnId: tx.txnId || tx.id,
+            amount: tx.amount || 0,
+            sender: senderValue,
+            sendFrom: tx.sendFrom || null,
+            sendTo: tx.sendTo || null,
+            bank: bankValue,
+            pattern: patternValue,
+            smsText: tx.smsText || '',
+            receivedAt: tx.createdAt || tx.receivedAt || new Date().toISOString(),
+            synced: true,
+            isValidated: tx.isValidated || false,
+            createdAt: tx.createdAt || new Date().toISOString(),
+          };
+        });
         
         setTransactions(convertedTxs);
       }
@@ -78,7 +106,13 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return `${months[date.getMonth()]} ${date.getDate()}, ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+    let hours = date.getHours();
+    const minutes = date.getMinutes();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12; // the hour '0' should be '12'
+    const minutesStr = minutes.toString().padStart(2, '0');
+    return `${months[date.getMonth()]} ${date.getDate()}, ${hours}:${minutesStr} ${ampm}`;
   };
 
   const renderTransaction = ({ item }: { item: LocalTransaction }) => {

@@ -17,6 +17,7 @@ import { storage } from '../services/storage';
 import { smsService, LocalTransaction } from '../services/smsService';
 import { useTheme } from '../contexts/ThemeContext';
 import { dashboardAPI } from '../services/api';
+import TransactionDetailsModal from '../components/TransactionDetailsModal';
 import VerifyPaymentsScreen from './VerifyPaymentsScreen';
 
 interface Props {
@@ -74,21 +75,49 @@ export default function TransactionsScreen({ apiKey }: Props) {
               : response.data.transactions || [];
             
             // Convert backend transactions to LocalTransaction format
-            const convertedTxs: LocalTransaction[] = backendTxs.map((tx: any) => ({
-              id: tx.id || `backend_${tx.txnId}`,
-              txnId: tx.txnId || tx.id,
-              amount: tx.amount || 0,
-              sender: tx.sender || '',
-              sendFrom: tx.sendFrom || null,
-              sendTo: tx.sendTo || null,
-              bank: tx.bank || tx.receiverBank || null,
-              pattern: tx.pattern || 'Backend Pattern',
-              smsText: tx.smsText || '',
-              receivedAt: tx.createdAt || tx.receivedAt || new Date().toISOString(),
-              synced: true,
-              isValidated: tx.isValidated || false,
-              createdAt: tx.createdAt || new Date().toISOString(),
-            }));
+            const convertedTxs: LocalTransaction[] = backendTxs.map((tx: any) => {
+              // Handle sender - can be string or object {name, bank}
+              let senderValue = '';
+              if (typeof tx.sender === 'string') {
+                senderValue = tx.sender;
+              } else if (tx.sender && typeof tx.sender === 'object') {
+                senderValue = tx.sender.name || tx.sender.bank || '';
+              }
+              
+              // Handle bank - can be string or object
+              let bankValue = null;
+              if (typeof tx.bank === 'string') {
+                bankValue = tx.bank;
+              } else if (tx.bank && typeof tx.bank === 'object') {
+                bankValue = tx.bank.name || tx.bank.bank || null;
+              } else if (tx.receiverBank) {
+                bankValue = typeof tx.receiverBank === 'string' ? tx.receiverBank : tx.receiverBank?.name || null;
+              }
+              
+              // Handle pattern - can be string or object
+              let patternValue = 'Backend Pattern';
+              if (typeof tx.pattern === 'string') {
+                patternValue = tx.pattern;
+              } else if (tx.pattern && typeof tx.pattern === 'object') {
+                patternValue = tx.pattern.name || tx.pattern.bank || 'Backend Pattern';
+              }
+              
+              return {
+                id: tx.id || `backend_${tx.txnId}`,
+                txnId: tx.txnId || tx.id,
+                amount: tx.amount || 0,
+                sender: senderValue,
+                sendFrom: tx.sendFrom || null,
+                sendTo: tx.sendTo || null,
+                bank: bankValue,
+                pattern: patternValue,
+                smsText: tx.smsText || '',
+                receivedAt: tx.createdAt || tx.receivedAt || new Date().toISOString(),
+                synced: true,
+                isValidated: tx.isValidated || false,
+                createdAt: tx.createdAt || new Date().toISOString(),
+              };
+            });
             
             // Use backend transactions as primary source, merge with local unsynced ones
             const backendTxnIds = new Set(convertedTxs.map(t => t.txnId));
@@ -194,9 +223,13 @@ export default function TransactionsScreen({ apiKey }: Props) {
     const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
     const month = months[date.getMonth()];
     const day = date.getDate();
-    const hours = date.getHours().toString().padStart(2, '0');
-    const mins = date.getMinutes().toString().padStart(2, '0');
-    return `${month} ${day}, ${hours}:${mins}`;
+    let hours = date.getHours();
+    const minutes = date.getMinutes();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12; // the hour '0' should be '12'
+    const minutesStr = minutes.toString().padStart(2, '0');
+    return `${month} ${day}, ${hours}:${minutesStr} ${ampm}`;
   };
 
   // Extract sender name from SMS text if not already captured
@@ -255,35 +288,41 @@ export default function TransactionsScreen({ apiKey }: Props) {
                 )}
             </View>
             <View style={styles.transactionInfo}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Text style={[styles.transactionBank, { color: colors.text }]}>
-                      {displayName}
-                    </Text>
-                    <View style={[
-                      styles.statusTag, 
-                      { 
-                        backgroundColor: item.isValidated ? colors.darkGreen + '10' : '#fff7ed',
-                        borderColor: item.isValidated ? colors.darkGreen + '30' : '#fdba74',
-                      }
-                    ]}>
-                      <Text style={[
-                        styles.statusTagText, 
-                        { color: item.isValidated ? colors.darkGreen : '#c2410c' }
-                      ]}>
-                        {item.isValidated ? 'Verified' : 'Pending'}
-                      </Text>
-                    </View>
-                  </View>
-                  <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>
-                    {formatDate(item.receivedAt)}
-                  </Text>
-                </View>
+              {item.sender && item.sender !== 'Unknown' && item.sender !== '' && (
+                <Text style={[styles.transactionSender, { color: colors.text }]}>
+                  {item.sender}
+                </Text>
+              )}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={[styles.transactionBank, { color: colors.textSecondary }]}>
+                  {item.bank || 'Unknown Bank'}
+                </Text>
+                <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>·</Text>
+                <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>
+                  {formatDate(item.receivedAt)}
+                </Text>
+              </View>
+            </View>
         </View>
           <View style={styles.transactionRight}>
             <Text style={[styles.transactionAmount, { color: colors.text }]}>
               {item.amount > 0 ? '+' : ''}{item.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               <Text style={styles.currencyUnitSmall}> Br</Text>
             </Text>
+            <View style={[
+              styles.statusTag, 
+              { 
+                backgroundColor: item.isValidated ? colors.darkGreen + '10' : '#fff7ed',
+                borderColor: item.isValidated ? colors.darkGreen + '30' : '#fdba74',
+              }
+            ]}>
+              <Text style={[
+                styles.statusTagText, 
+                { color: item.isValidated ? colors.darkGreen : '#c2410c' }
+              ]}>
+                {item.isValidated ? 'Verified' : 'Pending'}
+              </Text>
+            </View>
             {!item.synced && (
                 <View style={styles.unsyncedDot} />
             )}
@@ -380,81 +419,11 @@ export default function TransactionsScreen({ apiKey }: Props) {
       )}
 
       {/* Transaction Detail Modal */}
-      <Modal
+      <TransactionDetailsModal
         visible={selectedTransaction !== null}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setSelectedTransaction(null)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Transaction Details</Text>
-              <TouchableOpacity
-                onPress={() => setSelectedTransaction(null)}
-                style={styles.closeButton}
-              >
-                <X size={24} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            
-            {selectedTransaction && (() => {
-              // Get the best sender name for display
-              const getSenderForDisplay = () => {
-                if (selectedTransaction.sender && selectedTransaction.sender !== 'Unknown' && selectedTransaction.sender !== '') {
-                  return selectedTransaction.sender;
-                }
-                if (selectedTransaction.smsText) {
-                  const extracted = extractSenderFromSMS(selectedTransaction.smsText);
-                  if (extracted) return extracted;
-                }
-                return null;
-              };
-              const displaySender = getSenderForDisplay();
-              
-              return (
-              <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-                <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Amount</Text>
-                  <Text style={[styles.detailValue, { color: colors.text, fontSize: 24, fontWeight: '700' }]}>
-                    {selectedTransaction.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    <Text style={{ fontSize: 14, fontWeight: '600', opacity: 0.6 }}> Br</Text>
-                  </Text>
-                </View>
-
-                {selectedTransaction.bank && (
-                  <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Bank</Text>
-                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.bank}</Text>
-                  </View>
-                )}
-
-                {displaySender && (
-                  <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>From</Text>
-                    <Text style={[styles.detailValue, { color: colors.text }]}>{displaySender}</Text>
-                  </View>
-                )}
-
-                <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Date</Text>
-                  <Text style={[styles.detailValue, { color: colors.text }]}>
-                    {new Date(selectedTransaction.receivedAt).toLocaleString()}
-                  </Text>
-                </View>
-
-                <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Transaction ID</Text>
-                  <Text style={[styles.detailValue, { color: colors.text, fontFamily: 'monospace', fontSize: 14 }]}>
-                    {selectedTransaction.txnId}
-                  </Text>
-                </View>
-              </ScrollView>
-              );
-            })()}
-          </View>
-        </View>
-      </Modal>
+        transaction={selectedTransaction}
+        onClose={() => setSelectedTransaction(null)}
+      />
     </View>
   );
 }
@@ -543,10 +512,14 @@ const styles = StyleSheet.create({
   transactionInfo: {
     flex: 1,
   },
-  transactionBank: {
+  transactionSender: {
     fontSize: 16,
     fontWeight: '600',
     marginBottom: 4,
+  },
+  transactionBank: {
+    fontSize: 12,
+    fontWeight: '500',
   },
   transactionTime: {
     fontSize: 12,
@@ -576,66 +549,14 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   statusTag: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
     borderWidth: 1,
   },
   statusTagText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '600',
     textTransform: 'capitalize',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '90%',
-    paddingBottom: 40,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  closeButton: {
-    padding: 4,
-  },
-  modalBody: {
-    padding: 20,
-  },
-  detailSection: {
-    marginBottom: 20,
-  },
-  detailLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  detailValue: {
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  smsTextContainer: {
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 8,
-  },
-  smsText: {
-    fontSize: 14,
-    lineHeight: 20,
   },
 });

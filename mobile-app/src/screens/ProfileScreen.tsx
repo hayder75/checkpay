@@ -9,13 +9,17 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { Building2, ChevronRight, Users, UserPlus, QrCode, Copy, RefreshCw, X as CloseIcon, Settings, CreditCard, Shield, Info, LogOut, Mail, Phone, Globe } from 'lucide-react-native';
+import { Building2, ChevronRight, Users, UserPlus, QrCode, Copy, RefreshCw, X as CloseIcon, Settings, CreditCard, Shield, Info, LogOut, Mail, Phone, Globe, Clock, AlertCircle, Check, Lock, Fingerprint } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { storage } from '../services/storage';
 import { installationService } from '../services/installation';
 import { authAPI, employeeAPI, packageAPI } from '../services/api';
 import { Modal } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
+import PaymentModal from '../components/PaymentModal';
+import { securityService } from '../services/securityService';
+import PINSetupScreen from './PINSetupScreen';
+import { getDisplayName, getUserInitials } from '../utils/userUtils';
 
 interface Props {
   apiKey?: string | null;
@@ -54,6 +58,22 @@ interface Package {
   billingCycle?: string | null;
 }
 
+interface PurchaseRequest {
+  id: string;
+  packageId: string;
+  transactionNumber: string;
+  status: 'PENDING' | 'VERIFIED' | 'REJECTED';
+  adminNotes?: string;
+  createdAt: string;
+  package: {
+    id: string;
+    name: string;
+    price: number;
+    tier?: string;
+    billingCycle?: string;
+  };
+}
+
 export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: Props) {
   const { colors, theme, toggleTheme } = useTheme();
   const [user, setUser] = useState<any>(null);
@@ -65,34 +85,125 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: P
   const [generatingOTP, setGeneratingOTP] = useState(false);
   const [currentPackage, setCurrentPackage] = useState<UserPackage | null>(null);
   const [availablePackages, setAvailablePackages] = useState<Package[]>([]);
+  const [pendingPurchases, setPendingPurchases] = useState<PurchaseRequest[]>([]);
   const [loadingPackage, setLoadingPackage] = useState(true);
-  const [activating, setActivating] = useState<string | null>(null);
+  const [selectedPackage, setSelectedPackage] = useState<Package | null>(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [purchasing, setPurchasing] = useState(false);
+  // Security state
+  const [pinEnabled, setPinEnabled] = useState(false);
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [biometricName, setBiometricName] = useState('Biometrics');
+  const [showPINSetup, setShowPINSetup] = useState(false);
+  const [isChangingPIN, setIsChangingPIN] = useState(false);
+
+  const [isUpgradeCollapsed, setIsUpgradeCollapsed] = useState(true);
 
   const isBusinessOwner = user?.role === 'BUSINESS_OWNER' || user?.role === 'DEVELOPER';
 
   useEffect(() => {
     loadProfile();
     loadPackageInfo();
+    loadSecuritySettings();
   }, []);
+
+  const loadSecuritySettings = async () => {
+    try {
+      const [pinStatus, bioStatus, bioInfo] = await Promise.all([
+        securityService.isPINEnabled(),
+        securityService.isBiometricEnabled(),
+        securityService.getBiometricInfo(),
+      ]);
+      setPinEnabled(pinStatus);
+      setBiometricEnabled(bioStatus);
+      setBiometricAvailable(bioInfo.isAvailable && bioInfo.hasEnrolledBiometrics);
+      setBiometricName(securityService.getBiometricTypeName(bioInfo.biometricTypes));
+    } catch (error) {
+      console.error('Error loading security settings:', error);
+    }
+  };
+
+  const handleTogglePIN = async (value: boolean) => {
+    if (value) {
+      // Enable PIN - show PIN setup
+      setIsChangingPIN(false);
+      setShowPINSetup(true);
+    } else {
+      // Disable PIN - confirm first
+      Alert.alert(
+        'Disable PIN',
+        'Are you sure you want to disable the PIN lock? This will also disable biometric unlock.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Disable',
+            style: 'destructive',
+            onPress: async () => {
+              await securityService.disablePIN();
+              setPinEnabled(false);
+              setBiometricEnabled(false);
+            },
+          },
+        ]
+      );
+    }
+  };
+
+  const handleToggleBiometric = async (value: boolean) => {
+    if (value) {
+      try {
+        await securityService.enableBiometric();
+        setBiometricEnabled(true);
+        Alert.alert('Success', `${biometricName} has been enabled for quick unlock.`);
+      } catch (error: any) {
+        Alert.alert('Error', error.message || 'Failed to enable biometric');
+      }
+    } else {
+      await securityService.disableBiometric();
+      setBiometricEnabled(false);
+    }
+  };
+
+  const handleChangePIN = () => {
+    setIsChangingPIN(true);
+    setShowPINSetup(true);
+  };
+
+  const handlePINSetupComplete = () => {
+    setShowPINSetup(false);
+    setPinEnabled(true);
+    loadSecuritySettings();
+  };
 
   const loadPackageInfo = async () => {
     try {
       setLoadingPackage(true);
-      const [myPackageRes, freePackagesRes, businessPackagesRes] = await Promise.all([
+      const [myPackageRes, packagesRes, purchasesRes] = await Promise.all([
         packageAPI.getMyPackage().catch(() => ({ success: false, data: null })),
-        packageAPI.getPackages({ tier: 'FREE' }),
-        packageAPI.getPackages({ tier: 'BUSINESS' }),
+        packageAPI.getPackages(),
+        packageAPI.getMyPurchases().catch(() => ({ success: false, data: [] })),
       ]);
 
       if (myPackageRes.success && myPackageRes.data) {
         setCurrentPackage(myPackageRes.data);
       }
 
-      const allPackages: Package[] = [
-        ...(freePackagesRes.data || []),
-        ...(businessPackagesRes.data || []),
-      ];
-      setAvailablePackages(allPackages);
+      if (packagesRes.success) {
+        // Only show BUSINESS tier packages
+        const businessPackages = packagesRes.data.filter((p: Package) => 
+          p.tier === 'BUSINESS' && p.price && p.price > 0
+        );
+        setAvailablePackages(businessPackages);
+      }
+
+      if (purchasesRes.success) {
+        // Show pending purchases
+        const pending = purchasesRes.data.filter(
+          (p: PurchaseRequest) => p.status === 'PENDING'
+        );
+        setPendingPurchases(pending);
+      }
     } catch (error) {
       console.error('Error loading package info:', error);
     } finally {
@@ -100,35 +211,56 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: P
     }
   };
 
-  const handleActivatePackage = async (packageId: string) => {
-    if (activating) return;
+  const handleSelectPackage = (pkg: Package) => {
+    // Check if there's already a pending purchase for this package
+    const hasPending = pendingPurchases.some(p => p.packageId === pkg.id);
+    if (hasPending) {
+      Alert.alert(
+        'Pending Purchase',
+        'You already have a pending purchase request for this package. Please wait for admin verification.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
 
-    Alert.alert(
-      'Activate Package',
-      'Are you sure you want to activate this package? Your remaining tokens from the current package will be rolled over.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Activate',
-          onPress: async () => {
-            try {
-              setActivating(packageId);
-              const response = await packageAPI.activatePackage({ packageId });
-              if (response.success) {
-                Alert.alert('Success', 'Package activated successfully');
-                await loadPackageInfo();
-              } else {
-                Alert.alert('Error', response.error || 'Failed to activate package');
-              }
-            } catch (error: any) {
-              Alert.alert('Error', error.response?.data?.error || 'Failed to activate package');
-            } finally {
-              setActivating(null);
-            }
-          },
-        },
-      ]
-    );
+    // Check if it's the current package
+    if (currentPackage?.package.id === pkg.id) {
+      Alert.alert('Current Package', 'This is your current package.');
+      return;
+    }
+
+    setSelectedPackage(pkg);
+    setShowPaymentModal(true);
+  };
+
+  const handlePurchaseSubmit = async (transactionNumber: string) => {
+    if (!selectedPackage) return;
+
+    setPurchasing(true);
+    try {
+      const response = await packageAPI.purchasePackage({
+        packageId: selectedPackage.id,
+        transactionNumber,
+      });
+
+      if (response.success) {
+        setShowPaymentModal(false);
+        setSelectedPackage(null);
+        Alert.alert(
+          'Request Submitted!', 
+          'Your purchase request has been submitted. Your package will be activated once the transaction is verified by admin.',
+          [{ text: 'OK' }]
+        );
+        loadPackageInfo(); // Refresh to show the pending purchase
+      } else {
+        throw new Error(response.error || 'Failed to submit purchase request');
+      }
+    } catch (error: any) {
+      console.error('Purchase error:', error);
+      Alert.alert('Error', error.response?.data?.error || error.message || 'Failed to submit purchase request');
+    } finally {
+      setPurchasing(false);
+    }
   };
 
   const formatDate = (dateString?: string | null) => {
@@ -155,15 +287,33 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: P
       if (token) {
         try {
           const response = await authAPI.getMe();
-          if (response.success && response.data) {
-            const freshUser = response.data;
-            setUser(freshUser);
-            if (freshUser.plan) {
-              setPlan(freshUser.plan);
+          if (response.success) {
+            // Robustly extract user data
+            const freshUser = response.data || response.user || (response.id ? response : null);
+            
+            if (freshUser) {
+              // Merge fresh data with stored user, preserving name fields if API doesn't return them
+              const mergedUser = {
+                ...storedUser,  // Start with stored user data
+                ...freshUser,   // Override with fresh data from API
+                // Preserve name fields from stored user if fresh data doesn't have them
+                username: freshUser.username || storedUser?.username,
+                firstName: freshUser.firstName || freshUser.first_name || storedUser?.firstName,
+                lastName: freshUser.lastName || freshUser.last_name || storedUser?.lastName,
+                phone: freshUser.phone || storedUser?.phone,
+                email: freshUser.email || storedUser?.email,
+              };
+              
+              console.log('✅ [Profile] Merged user data:', JSON.stringify(mergedUser, null, 2));
+              
+              setUser(mergedUser);
+              if (mergedUser.plan) {
+                setPlan(mergedUser.plan);
+              }
+              // Update stored user with merged data
+              await storage.setUser(mergedUser);
+              console.log('✅ [Profile] Loaded and merged fresh user data from backend');
             }
-            // Update stored user
-            await storage.setUser(freshUser);
-            console.log('✅ [Profile] Loaded fresh user data from backend');
           }
         } catch (error) {
           console.error('Error fetching user data from backend:', error);
@@ -228,12 +378,12 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: P
         <View style={styles.profileHeader}>
           <View style={[styles.avatar, { backgroundColor: colors.primary + '10' }]}>
             <Text style={[styles.avatarText, { color: colors.primary }]}>
-              {user?.username?.[0]?.toUpperCase() || user?.phone?.[0] || 'U'}
+              {getUserInitials(user)}
             </Text>
           </View>
           <View style={styles.profileInfo}>
             <Text style={[styles.name, { color: colors.text }]}>
-              {user?.username || 'User'}
+              {getDisplayName(user)}
             </Text>
             <View style={styles.badgeRow}>
               <View style={[styles.roleBadge, { backgroundColor: colors.primary + '10' }]}>
@@ -376,82 +526,142 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: P
             </View>
           )}
 
+          {/* Pending Purchases */}
+          {pendingPurchases.length > 0 && (
+            <View style={[styles.pendingSection, { borderTopColor: colors.border }]}>
+              <View style={styles.pendingHeader}>
+                <Clock size={16} color="#f59e0b" />
+                <Text style={styles.pendingSectionTitle}>PENDING VERIFICATION</Text>
+              </View>
+              {pendingPurchases.map((purchase) => (
+                <View key={purchase.id} style={[styles.pendingItem, { borderBottomColor: 'rgba(245, 158, 11, 0.2)' }]}>
+                  <View style={styles.pendingInfo}>
+                    <Text style={[styles.pendingPackageName, { color: colors.text }]}>
+                      {purchase.package.name}
+                    </Text>
+                    <Text style={[styles.pendingTxn, { color: colors.textSecondary }]}>
+                      Txn: {purchase.transactionNumber}
+                    </Text>
+                  </View>
+                  <View style={styles.pendingBadge}>
+                    <AlertCircle size={12} color="#f59e0b" />
+                    <Text style={styles.pendingBadgeText}>Awaiting</Text>
+                  </View>
+                </View>
+              ))}
+              <Text style={[styles.pendingNote, { color: colors.textSecondary }]}>
+                Will be activated after admin verification
+              </Text>
+            </View>
+          )}
+
           {/* Available Packages */}
           {availablePackages.length > 0 && (
             <View style={[styles.availablePackagesContainer, { borderTopColor: colors.border }]}>
-              <Text style={[styles.availablePackagesTitle, { color: colors.text }]}>Available Packages</Text>
-              {availablePackages.map((pkg) => (
-                <TouchableOpacity
-                  key={pkg.id}
-                  style={[
-                    styles.packageOption,
-                    {
-                      backgroundColor: currentPackage?.package.id === pkg.id ? colors.primary + '10' : 'transparent',
-                      borderColor: currentPackage?.package.id === pkg.id ? colors.primary : colors.border,
-                      opacity: activating === pkg.id ? 0.6 : 1,
-                    },
-                  ]}
-                  onPress={() => handleActivatePackage(pkg.id)}
-                  disabled={activating === pkg.id || currentPackage?.package.id === pkg.id}
-                >
-                  <View style={styles.packageOptionContent}>
+              <TouchableOpacity 
+                style={styles.collapsableHeader} 
+                onPress={() => setIsUpgradeCollapsed(!isUpgradeCollapsed)}
+                activeOpacity={0.7}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.availablePackagesTitle, { color: colors.text }]}>Upgrade Package</Text>
+                  <Text style={[styles.availablePackagesSubtitle, { color: colors.textSecondary }]}>
+                    Select a package and complete payment to upgrade
+                  </Text>
+                </View>
+                <ChevronRight 
+                  size={20} 
+                  color={colors.textSecondary} 
+                  style={{ transform: [{ rotate: isUpgradeCollapsed ? '0deg' : '90deg' }] }} 
+                />
+              </TouchableOpacity>
+
+              {!isUpgradeCollapsed && availablePackages.map((pkg, index) => {
+                const isPending = pendingPurchases.some(p => p.packageId === pkg.id);
+                const isCurrent = currentPackage?.package.id === pkg.id;
+                const isPopular = pkg.name.toLowerCase().includes('pro') || pkg.name.toLowerCase().includes('business') || index === 1;
+                
+                return (
+                  <TouchableOpacity
+                    key={pkg.id}
+                    style={[
+                      styles.packageOption,
+                      {
+                        backgroundColor: colors.background,
+                        borderColor: isCurrent ? colors.primary : isPending ? '#f59e0b' : colors.border,
+                        borderWidth: isCurrent ? 2 : 1,
+                      },
+                    ]}
+                    onPress={() => handleSelectPackage(pkg)}
+                    disabled={isCurrent}
+                    activeOpacity={0.8}
+                  >
+                    {isPopular && (
+                      <View style={[styles.popularBadge, { backgroundColor: colors.primary }]}>
+                        <Text style={styles.popularBadgeText}>MOST POPULAR</Text>
+                      </View>
+                    )}
+
                     <View style={styles.packageOptionHeader}>
-                      <Text style={[styles.packageOptionName, { color: colors.text }]}>
-                        {pkg.name}
-                      </Text>
-                      {pkg.tier && (
-                        <View
-                          style={[
-                            styles.tierBadge,
-                            {
-                              backgroundColor:
-                                pkg.tier === 'BUSINESS' ? '#f59e0b20' : colors.primary + '20',
-                            },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.tierBadgeText,
-                              {
-                                color: pkg.tier === 'BUSINESS' ? '#f59e0b' : colors.primary,
-                              },
-                            ]}
-                          >
-                            {pkg.tier}
-                          </Text>
+                      <View style={styles.packageOptionTitleSection}>
+                        <Text style={[styles.packageOptionName, { color: colors.text }]}>
+                          {pkg.name}
+                        </Text>
+                        <Text style={[styles.packageOptionTier, { color: colors.textSecondary }]}>
+                          {pkg.tier} Tier
+                        </Text>
+                      </View>
+                      <View style={styles.packageOptionPriceSection}>
+                        <Text style={[styles.packageOptionPrice, { color: colors.text }]}>
+                          ${pkg.price}
+                        </Text>
+                        <Text style={[styles.packageOptionPeriod, { color: colors.textSecondary }]}>
+                          /{pkg.billingCycle?.toLowerCase().replace('_', ' ') || 'mo'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={[styles.packageOptionDivider, { backgroundColor: colors.border }]} />
+
+                    <View style={styles.packageOptionFeatures}>
+                      <View style={styles.featureItem}>
+                        <Check size={14} color={colors.primary} />
+                        <Text style={[styles.featureText, { color: colors.textSecondary }]}>
+                          <Text style={{ color: colors.text, fontWeight: '600' }}>
+                            {pkg.maxPhoneTxns === null ? 'Unlimited' : pkg.maxPhoneTxns}
+                          </Text> Phone Txns
+                        </Text>
+                      </View>
+                      <View style={styles.featureItem}>
+                        <Check size={14} color={colors.primary} />
+                        <Text style={[styles.featureText, { color: colors.textSecondary }]}>
+                          <Text style={{ color: colors.text, fontWeight: '600' }}>
+                            {pkg.maxVerifiedTxns === null ? 'Unlimited' : pkg.maxVerifiedTxns}
+                          </Text> Verified Txns
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.packageOptionFooter}>
+                      {isCurrent ? (
+                        <View style={[styles.statusBadge, { backgroundColor: colors.primary + '15' }]}>
+                          <Check size={12} color={colors.primary} />
+                          <Text style={[styles.statusBadgeText, { color: colors.primary }]}>Current Plan</Text>
                         </View>
+                      ) : isPending ? (
+                        <View style={[styles.statusBadge, { backgroundColor: '#f59e0b15' }]}>
+                          <Clock size={12} color="#f59e0b" />
+                          <Text style={[styles.statusBadgeText, { color: '#f59e0b' }]}>Pending</Text>
+                        </View>
+                      ) : (
+                        <Text style={[styles.selectActionText, { color: colors.primary }]}>
+                          Upgrade Now
+                        </Text>
                       )}
                     </View>
-                    {pkg.description && (
-                      <Text style={[styles.packageDescription, { color: colors.textSecondary }]} numberOfLines={2}>
-                        {pkg.description}
-                      </Text>
-                    )}
-                    <View style={styles.packageFeatures}>
-                      <Text style={[styles.featureText, { color: colors.textSecondary }]}>
-                        Phone: {pkg.maxPhoneTxns === null ? 'Unlimited' : pkg.maxPhoneTxns}
-                      </Text>
-                      <Text style={[styles.featureText, { color: colors.textSecondary }]}>
-                        Verified: {pkg.maxVerifiedTxns === null ? 'Unlimited' : pkg.maxVerifiedTxns}
-                      </Text>
-                    </View>
-                    {pkg.price !== null && pkg.price !== undefined && (
-                      <Text style={[styles.packagePrice, { color: colors.text }]}>
-                        ${Number(pkg.price).toFixed(2)}
-                        {pkg.billingCycle && ` / ${pkg.billingCycle.toLowerCase()}`}
-                      </Text>
-                    )}
-                  </View>
-                  {activating === pkg.id && (
-                    <ActivityIndicator size="small" color={colors.primary} style={styles.activatingIndicator} />
-                  )}
-                  {currentPackage?.package.id === pkg.id && (
-                    <View style={[styles.currentBadge, { backgroundColor: colors.primary }]}>
-                      <Text style={[styles.currentBadgeText, { color: colors.primaryText }]}>Current</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              ))}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           )}
         </View>
@@ -490,6 +700,57 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: P
             </View>
           </>
         )}
+
+        {/* Security Section */}
+        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>SECURITY</Text>
+        <View style={[styles.listCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          {/* App Lock Toggle */}
+          <View style={styles.listItem}>
+            <View style={styles.listItemLeft}>
+              <Lock size={18} color={colors.primary} />
+              <Text style={[styles.listItemText, { color: colors.text }]}>App Lock</Text>
+            </View>
+            <Switch
+              value={pinEnabled}
+              onValueChange={handleTogglePIN}
+              trackColor={{ false: '#767577', true: colors.primary }}
+              thumbColor={pinEnabled ? '#fff' : '#f4f3f4'}
+            />
+          </View>
+
+          {/* Biometric Toggle (only if PIN enabled and biometric available) */}
+          {pinEnabled && biometricAvailable && (
+            <>
+              <View style={[styles.listDivider, { backgroundColor: colors.border }]} />
+              <View style={styles.listItem}>
+                <View style={styles.listItemLeft}>
+                  <Fingerprint size={18} color={colors.primary} />
+                  <Text style={[styles.listItemText, { color: colors.text }]}>{biometricName}</Text>
+                </View>
+                <Switch
+                  value={biometricEnabled}
+                  onValueChange={handleToggleBiometric}
+                  trackColor={{ false: '#767577', true: colors.primary }}
+                  thumbColor={biometricEnabled ? '#fff' : '#f4f3f4'}
+                />
+              </View>
+            </>
+          )}
+
+          {/* Change PIN Button (only if PIN enabled) */}
+          {pinEnabled && (
+            <>
+              <View style={[styles.listDivider, { backgroundColor: colors.border }]} />
+              <TouchableOpacity style={styles.listItem} onPress={handleChangePIN}>
+                <View style={styles.listItemLeft}>
+                  <Shield size={18} color={colors.textSecondary} />
+                  <Text style={[styles.listItemText, { color: colors.text }]}>Change PIN</Text>
+                </View>
+                <ChevronRight size={18} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
 
         {/* Preferences Section */}
         <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>PREFERENCES</Text>
@@ -614,6 +875,33 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: P
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* Payment Modal */}
+      <PaymentModal
+        visible={showPaymentModal}
+        selectedPackage={selectedPackage}
+        onSubmit={handlePurchaseSubmit}
+        onClose={() => {
+          setShowPaymentModal(false);
+          setSelectedPackage(null);
+        }}
+        isSubmitting={purchasing}
+      />
+
+      {/* PIN Setup Modal */}
+      <Modal
+        visible={showPINSetup}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setShowPINSetup(false)}
+      >
+        <PINSetupScreen
+          onComplete={handlePINSetupComplete}
+          onCancel={() => setShowPINSetup(false)}
+          isChangingPIN={isChangingPIN}
+          showBiometricOption={biometricAvailable && !isChangingPIN}
+        />
       </Modal>
     </ScrollView>
   );
@@ -926,75 +1214,181 @@ const styles = StyleSheet.create({
   noPackageText: {
     fontSize: 13,
   },
+  // Pending purchases styles
+  pendingSection: {
+    padding: 16,
+    borderTopWidth: 1,
+    backgroundColor: 'rgba(245, 158, 11, 0.05)',
+  },
+  pendingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 8,
+  },
+  pendingSectionTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#f59e0b',
+    letterSpacing: 0.5,
+  },
+  pendingItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+  },
+  pendingInfo: {
+    flex: 1,
+  },
+  pendingPackageName: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  pendingTxn: {
+    fontSize: 11,
+    fontFamily: 'monospace',
+  },
+  pendingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    gap: 4,
+  },
+  pendingBadgeText: {
+    color: '#f59e0b',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  pendingNote: {
+    fontSize: 10,
+    marginTop: 10,
+    fontStyle: 'italic',
+  },
   availablePackagesContainer: {
     padding: 16,
     borderTopWidth: 1,
   },
   availablePackagesTitle: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
+    marginBottom: 4,
+  },
+  collapsableHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  availablePackagesSubtitle: {
+    fontSize: 12,
     marginBottom: 12,
   },
   packageOption: {
-    borderRadius: 12,
-    padding: 12,
+    padding: 20,
+    borderRadius: 20,
     borderWidth: 1,
-    marginBottom: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
+    marginBottom: 16,
+    position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
   },
-  packageOptionContent: {
-    flex: 1,
+  popularBadge: {
+    position: 'absolute',
+    top: -12,
+    right: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 8,
+    zIndex: 1,
+  },
+  popularBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
   packageOptionHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-    flexWrap: 'wrap',
-    gap: 6,
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  packageOptionTitleSection: {
+    flex: 1,
   },
   packageOptionName: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 2,
+    letterSpacing: -0.5,
   },
-  tierBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  tierBadgeText: {
-    fontSize: 9,
-    fontWeight: '600',
-  },
-  packageDescription: {
+  packageOptionTier: {
     fontSize: 11,
-    marginBottom: 6,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  packageFeatures: {
+  packageOptionPriceSection: {
+    alignItems: 'flex-end',
+  },
+  packageOptionPrice: {
+    fontSize: 20,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+  },
+  packageOptionPeriod: {
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  packageOptionDivider: {
+    height: 1,
+    width: '100%',
+    marginBottom: 16,
+    opacity: 0.5,
+  },
+  packageOptionFeatures: {
+    gap: 8,
+    marginBottom: 16,
+  },
+  featureItem: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 4,
+    alignItems: 'center',
+    gap: 8,
   },
   featureText: {
-    fontSize: 11,
+    fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
   },
-  packagePrice: {
+  packageOptionFooter: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: 4,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  statusBadgeText: {
     fontSize: 12,
-    fontWeight: '600',
-    marginTop: 4,
+    fontWeight: '700',
   },
-  activatingIndicator: {
-    marginLeft: 8,
-  },
-  currentBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    marginLeft: 8,
-  },
-  currentBadgeText: {
-    fontSize: 9,
-    fontWeight: '600',
+  selectActionText: {
+    fontSize: 14,
+    fontWeight: '700',
   },
 });
 

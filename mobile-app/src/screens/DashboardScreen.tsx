@@ -88,20 +88,48 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
             console.log(`📥 [Dashboard] Fetched ${backendTxs.length} transactions from backend`);
             
             // Convert backend transactions to LocalTransaction format
-            const convertedTxs: LocalTransaction[] = backendTxs.map((tx: any) => ({
-              id: tx.id || `backend_${tx.txnId}`,
-              txnId: tx.txnId || tx.id,
-              amount: tx.amount || 0,
-              sender: tx.sender || '',
-              sendFrom: tx.sendFrom || null,
-              sendTo: tx.sendTo || null,
-              bank: tx.bank || tx.receiverBank || null,
-              pattern: tx.pattern || 'Backend Pattern',
-              smsText: tx.smsText || '',
-              receivedAt: tx.createdAt || tx.receivedAt || new Date().toISOString(),
-              synced: true,
-              createdAt: tx.createdAt || new Date().toISOString(),
-            }));
+            const convertedTxs: LocalTransaction[] = backendTxs.map((tx: any) => {
+              // Handle sender - can be string or object {name, bank}
+              let senderValue = '';
+              if (typeof tx.sender === 'string') {
+                senderValue = tx.sender;
+              } else if (tx.sender && typeof tx.sender === 'object') {
+                senderValue = tx.sender.name || tx.sender.bank || '';
+              }
+              
+              // Handle bank - can be string or object
+              let bankValue = null;
+              if (typeof tx.bank === 'string') {
+                bankValue = tx.bank;
+              } else if (tx.bank && typeof tx.bank === 'object') {
+                bankValue = tx.bank.name || tx.bank.bank || null;
+              } else if (tx.receiverBank) {
+                bankValue = typeof tx.receiverBank === 'string' ? tx.receiverBank : tx.receiverBank?.name || null;
+              }
+              
+              // Handle pattern - can be string or object
+              let patternValue = 'Backend Pattern';
+              if (typeof tx.pattern === 'string') {
+                patternValue = tx.pattern;
+              } else if (tx.pattern && typeof tx.pattern === 'object') {
+                patternValue = tx.pattern.name || tx.pattern.bank || 'Backend Pattern';
+              }
+              
+              return {
+                id: tx.id || `backend_${tx.txnId}`,
+                txnId: tx.txnId || tx.id,
+                amount: tx.amount || 0,
+                sender: senderValue,
+                sendFrom: tx.sendFrom || null,
+                sendTo: tx.sendTo || null,
+                bank: bankValue,
+                pattern: patternValue,
+                smsText: tx.smsText || '',
+                receivedAt: tx.createdAt || tx.receivedAt || new Date().toISOString(),
+                synced: true,
+                createdAt: tx.createdAt || new Date().toISOString(),
+              };
+            });
             
             // Use backend transactions as primary source, merge with local unsynced ones
             const backendTxnIds = new Set(convertedTxs.map(t => t.txnId));
@@ -195,9 +223,13 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
     if (diffMins < 1) return 'Just now';
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) {
-      const hours = date.getHours();
-      const mins = date.getMinutes();
-      return `Today, ${hours.toString().padStart(2, '0')}.${mins.toString().padStart(2, '0')}`;
+      let hours = date.getHours();
+      const minutes = date.getMinutes();
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      hours = hours % 12;
+      hours = hours ? hours : 12; // the hour '0' should be '12'
+      const minutesStr = minutes.toString().padStart(2, '0');
+      return `Today, ${hours}:${minutesStr} ${ampm}`;
     }
     if (diffDays === 1) return 'Yesterday';
     if (diffDays < 7) return `${diffDays}d ago`;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,27 +10,34 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Animated,
+  Dimensions,
 } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { employeeAPI } from '../services/api';
 import { storage } from '../services/storage';
-import { QrCode, Key, CheckCircle2, RefreshCcw } from 'lucide-react-native';
+import { QrCode, Key, CheckCircle2, RefreshCcw, ArrowRight } from 'lucide-react-native';
 import QRCodeScanner from '../components/QRCodeScanner';
-import PhoneInput from '../components/PhoneInput';
 
 interface Props {
   onRegistrationSuccess: () => void;
   onCancel?: () => void;
 }
 
+const { width } = Dimensions.get('window');
+
 export default function EmployeeRegisterScreen({ onRegistrationSuccess, onCancel }: Props) {
-  const { colors } = useTheme();
+  const { colors, theme } = useTheme();
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [useQR, setUseQR] = useState(false);
   const [qrData, setQrData] = useState('');
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  
+  // Animation values
+  const slideAnim = useRef(new Animated.Value(0)).current;
+  const fadeAnim = useRef(new Animated.Value(1)).current;
 
   // Check if user is authenticated
   useEffect(() => {
@@ -40,6 +47,39 @@ export default function EmployeeRegisterScreen({ onRegistrationSuccess, onCancel
     };
     checkAuth();
   }, []);
+
+  const switchMethod = (isQR: boolean) => {
+    if (useQR === isQR) return;
+    
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: isQR ? 20 : -20,
+        duration: 150,
+        useNativeDriver: true,
+      })
+    ]).start(() => {
+      setUseQR(isQR);
+      slideAnim.setValue(isQR ? -20 : 20);
+      
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        })
+      ]).start();
+    });
+  };
 
   const handleRegister = async () => {
     if (!useQR && !code.trim()) {
@@ -64,12 +104,6 @@ export default function EmployeeRegisterScreen({ onRegistrationSuccess, onCancel
         code: useQR ? undefined : code.trim(),
         qrData: useQR ? qrData.trim() : undefined,
       };
-
-      // If not authenticated, we might need to handle account creation differently.
-      // For now, we assume this flow is primarily for existing users or a simplified flow.
-      // If the backend requires username/password for new users, this might fail for unauthenticated users
-      // unless the backend handles "implicit" account creation or we change the flow.
-      // Given the requirement "only scan qr code or type the code and name only", we will proceed with this.
 
       const response = await employeeAPI.register(registerData);
 
@@ -157,135 +191,159 @@ export default function EmployeeRegisterScreen({ onRegistrationSuccess, onCancel
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
         <View style={styles.header}>
           <Text style={[styles.title, { color: colors.text }]}>Employee Access</Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            Enter the access code or scan QR code provided by your employer
+            Connect to your employer's business account
           </Text>
         </View>
 
-        <View style={styles.form}>
-
-          <View style={styles.inputGroup}>
-            <Text style={[styles.label, { color: colors.text }]}>Access Method</Text>
-            <View style={styles.methodButtons}>
-              <TouchableOpacity
-                style={[
-                  styles.methodButton,
-                  { backgroundColor: !useQR ? colors.primary : colors.surface, borderColor: colors.border },
-                ]}
-                onPress={() => {
-                  setUseQR(false);
-                  setQrData('');
-                }}
-                disabled={loading}
-              >
-                <Key size={20} color={!useQR ? '#fff' : colors.text} />
-                <Text style={[styles.methodButtonText, { color: !useQR ? '#fff' : colors.text }]}>
-                  Access Code
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.methodButton,
-                  { backgroundColor: useQR ? colors.primary : colors.surface, borderColor: colors.border },
-                ]}
-                onPress={() => {
-                  setUseQR(true);
-                  setCode('');
-                  handleQRScan();
-                }}
-                disabled={loading}
-              >
-                <QrCode size={20} color={useQR ? '#fff' : colors.text} />
-                <Text style={[styles.methodButtonText, { color: useQR ? '#fff' : colors.text }]}>
-                  QR Code
-                </Text>
-              </TouchableOpacity>
-            </View>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          {/* Segmented Control */}
+          <View style={[styles.segmentedControl, { backgroundColor: colors.background }]}>
+            <TouchableOpacity
+              style={[
+                styles.segmentButton,
+                !useQR && { backgroundColor: colors.surface, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, elevation: 2 }
+              ]}
+              onPress={() => switchMethod(false)}
+              disabled={loading}
+            >
+              <Key size={18} color={!useQR ? colors.primary : colors.textSecondary} />
+              <Text style={[
+                styles.segmentText, 
+                { color: !useQR ? colors.primary : colors.textSecondary, fontWeight: !useQR ? '600' : '500' }
+              ]}>
+                Access Code
+              </Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[
+                styles.segmentButton,
+                useQR && { backgroundColor: colors.surface, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, elevation: 2 }
+              ]}
+              onPress={() => switchMethod(true)}
+              disabled={loading}
+            >
+              <QrCode size={18} color={useQR ? colors.primary : colors.textSecondary} />
+              <Text style={[
+                styles.segmentText, 
+                { color: useQR ? colors.primary : colors.textSecondary, fontWeight: useQR ? '600' : '500' }
+              ]}>
+                Scan QR
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          {!useQR ? (
-            <View style={styles.inputGroup}>
-              <Text style={[styles.label, { color: colors.text }]}>Access Code</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-                placeholder="Enter 6-digit code"
-                placeholderTextColor={colors.textSecondary}
-                value={code}
-                onChangeText={(text) => {
-                  const digitsOnly = text.replace(/[^0-9]/g, '').slice(0, 6);
-                  setCode(digitsOnly);
-                }}
-                keyboardType="number-pad"
-                maxLength={6}
-                editable={!loading}
-              />
-              <Text style={[styles.hint, { color: colors.textSecondary }]}>
-                Enter the 6-digit code provided by your employer
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.inputGroup}>
-              <Text style={[styles.label, { color: colors.text }]}>QR Code Status</Text>
-              {qrData ? (
-                <View style={[styles.qrStatusCard, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}>
-                  <View style={styles.qrStatusLeft}>
-                    <CheckCircle2 size={24} color={colors.primary} />
-                    <View style={styles.qrStatusTextContainer}>
+          <Animated.View style={[
+            styles.contentContainer, 
+            { 
+              opacity: fadeAnim,
+              transform: [{ translateX: slideAnim }]
+            }
+          ]}>
+            {!useQR ? (
+              <View style={styles.inputSection}>
+                <Text style={[styles.label, { color: colors.text }]}>Enter 6-Digit Code</Text>
+                <TextInput
+                  style={[
+                    styles.input, 
+                    { 
+                      backgroundColor: colors.background, 
+                      color: colors.text, 
+                      borderColor: code.length === 6 ? colors.primary : colors.border 
+                    }
+                  ]}
+                  placeholder="000000"
+                  placeholderTextColor={colors.textSecondary}
+                  value={code}
+                  onChangeText={(text) => {
+                    const digitsOnly = text.replace(/[^0-9]/g, '').slice(0, 6);
+                    setCode(digitsOnly);
+                  }}
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  editable={!loading}
+                  textAlign="center"
+                />
+                <Text style={[styles.hint, { color: colors.textSecondary }]}>
+                  Ask your employer for the access code
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.inputSection}>
+                <Text style={[styles.label, { color: colors.text }]}>Scan Invitation QR</Text>
+                
+                {qrData ? (
+                  <View style={[styles.qrStatusCard, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}>
+                    <View style={styles.qrStatusContent}>
+                      <CheckCircle2 size={32} color={colors.primary} />
                       <Text style={[styles.qrStatusTitle, { color: colors.text }]}>QR Code Scanned</Text>
-                      <Text style={[styles.qrStatusSub, { color: colors.textSecondary }]}>Ready for registration</Text>
+                      <Text style={[styles.qrStatusSub, { color: colors.textSecondary }]}>Ready to connect</Text>
                     </View>
+                    <TouchableOpacity 
+                      style={[styles.rescanButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                      onPress={handleQRScan}
+                      disabled={loading}
+                    >
+                      <RefreshCcw size={14} color={colors.textSecondary} />
+                      <Text style={[styles.rescanText, { color: colors.textSecondary }]}>Scan Again</Text>
+                    </TouchableOpacity>
                   </View>
-                  <TouchableOpacity 
-                    style={[styles.rescanButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                ) : (
+                  <TouchableOpacity
+                    style={[styles.scanPlaceholder, { borderColor: colors.border, backgroundColor: colors.background }]}
                     onPress={handleQRScan}
                     disabled={loading}
                   >
-                    <RefreshCcw size={16} color={colors.textSecondary} />
-                    <Text style={[styles.rescanText, { color: colors.textSecondary }]}>Rescan</Text>
+                    <View style={[styles.scanIconCircle, { backgroundColor: colors.primary + '15' }]}>
+                      <QrCode size={32} color={colors.primary} />
+                    </View>
+                    <Text style={[styles.scanPlaceholderText, { color: colors.primary }]}>Tap to Scan QR Code</Text>
                   </TouchableOpacity>
-                </View>
-              ) : (
-                <TouchableOpacity
-                  style={[styles.scanButton, { backgroundColor: colors.primary }]}
-                  onPress={handleQRScan}
-                  disabled={loading}
-                >
-                  <QrCode size={20} color="#fff" />
-                  <Text style={styles.scanButtonText}>Scan QR Code</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
+                )}
+              </View>
+            )}
+          </Animated.View>
 
           <TouchableOpacity
-            style={[styles.submitButton, { backgroundColor: colors.primary }]}
+            style={[
+              styles.submitButton, 
+              { 
+                backgroundColor: colors.primary,
+                opacity: (loading || (!useQR && code.length !== 6) || (useQR && !qrData)) ? 0.6 : 1
+              }
+            ]}
             onPress={handleRegister}
             disabled={
               loading || 
-              (!useQR && !code.trim()) || 
-              (useQR && !qrData.trim())
+              (!useQR && code.length !== 6) || 
+              (useQR && !qrData)
             }
           >
             {loading ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={styles.submitButtonText}>Access Account</Text>
+              <>
+                <Text style={styles.submitButtonText}>Connect Account</Text>
+                <ArrowRight size={20} color="#fff" />
+              </>
             )}
           </TouchableOpacity>
-
-          {onCancel && (
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={onCancel}
-              disabled={loading}
-            >
-              <Text style={[styles.cancelButtonText, { color: colors.textSecondary }]}>Cancel</Text>
-            </TouchableOpacity>
-          )}
         </View>
+
+        {onCancel && (
+          <TouchableOpacity
+            style={styles.cancelButton}
+            onPress={onCancel}
+            disabled={loading}
+          >
+            <Text style={[styles.cancelButtonText, { color: colors.textSecondary }]}>Cancel</Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -297,118 +355,150 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    padding: 20,
-    paddingTop: 60,
+    padding: 24,
+    justifyContent: 'center',
   },
   header: {
-    marginBottom: 32,
+    marginBottom: 40,
+    alignItems: 'center',
   },
   title: {
-    fontSize: 32,
-    fontWeight: '700',
+    fontSize: 28,
+    fontWeight: '800',
     marginBottom: 8,
+    textAlign: 'center',
+    letterSpacing: -0.5,
   },
   subtitle: {
     fontSize: 16,
-    lineHeight: 22,
+    textAlign: 'center',
+    maxWidth: '80%',
+    lineHeight: 24,
   },
-  form: {
-    flex: 1,
-  },
-  inputGroup: {
-    marginBottom: 24,
-  },
-  label: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  input: {
+  card: {
+    borderRadius: 24,
+    padding: 24,
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.05,
+    shadowRadius: 20,
+    elevation: 5,
   },
-  hint: {
-    fontSize: 12,
-    marginTop: 4,
-  },
-  methodButtons: {
+  segmentedControl: {
     flexDirection: 'row',
-    gap: 12,
+    padding: 4,
+    borderRadius: 16,
+    marginBottom: 32,
   },
-  methodButton: {
+  segmentButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    padding: 16,
+    paddingVertical: 12,
     borderRadius: 12,
-    borderWidth: 1,
+    gap: 8,
   },
-  methodButtonText: {
+  segmentText: {
+    fontSize: 14,
+  },
+  contentContainer: {
+    minHeight: 180,
+  },
+  inputSection: {
+    alignItems: 'center',
+    width: '100%',
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 16,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    opacity: 0.7,
+  },
+  input: {
+    width: '100%',
+    borderWidth: 2,
+    borderRadius: 16,
+    padding: 20,
+    fontSize: 32,
+    fontWeight: '700',
+    letterSpacing: 8,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  hint: {
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  scanPlaceholder: {
+    width: '100%',
+    height: 160,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 16,
+  },
+  scanIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scanPlaceholderText: {
     fontSize: 16,
     fontWeight: '600',
   },
   qrStatusCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    borderRadius: 16,
+    width: '100%',
+    padding: 24,
+    borderRadius: 20,
     borderWidth: 1,
-    marginTop: 8,
-  },
-  qrStatusLeft: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 16,
   },
-  qrStatusTextContainer: {
-    flex: 1,
+  qrStatusContent: {
+    alignItems: 'center',
+    gap: 8,
   },
   qrStatusTitle: {
-    fontSize: 15,
+    fontSize: 18,
     fontWeight: '700',
   },
   qrStatusSub: {
-    fontSize: 12,
-    marginTop: 1,
+    fontSize: 14,
   },
   rescanButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
     borderWidth: 1,
   },
   rescanText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  scanButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    padding: 16,
-    borderRadius: 12,
-    marginTop: 8,
-  },
-  scanButtonText: {
-    color: '#fff',
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: '600',
   },
   submitButton: {
-    padding: 18,
-    borderRadius: 12,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 16,
+    padding: 20,
+    borderRadius: 16,
+    marginTop: 32,
+    gap: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 4,
   },
   submitButtonText: {
     color: '#fff',
@@ -416,12 +506,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   cancelButton: {
-    padding: 16,
+    padding: 20,
     alignItems: 'center',
     marginTop: 12,
   },
   cancelButtonText: {
     fontSize: 16,
+    fontWeight: '500',
   },
 });
 

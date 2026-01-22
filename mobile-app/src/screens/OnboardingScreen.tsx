@@ -14,11 +14,13 @@ import {
   TextInput,
 } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
-import { Sparkles, Shield, Globe, ArrowRight, Building2, Check, ChevronDown, X, Search } from 'lucide-react-native';
+import { Sparkles, Shield, Globe, ArrowRight, Building2, Check, ChevronDown, X, Search, Lock, Fingerprint } from 'lucide-react-native';
 import { getBuiltInPatterns } from '../services/builtInPatterns';
 import { getBanksForCountryCode } from '../utils/countries';
 import { detectCountryFromLocale } from '../utils/smsUtils';
 import { storage } from '../services/storage';
+import { securityService } from '../services/securityService';
+import PINSetupScreen from './PINSetupScreen';
 
 const { width, height } = Dimensions.get('window');
 
@@ -72,6 +74,11 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
   const [loadingBanks, setLoadingBanks] = useState(false);
   const [showBankDropdown, setShowBankDropdown] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  // Security setup state
+  const [showSecuritySetup, setShowSecuritySetup] = useState(false);
+  const [showPINSetup, setShowPINSetup] = useState(false);
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [biometricName, setBiometricName] = useState('Biometrics');
 
   const viewableItemsChanged = useRef(({ viewableItems }: any) => {
     if (viewableItems && viewableItems.length > 0) {
@@ -84,7 +91,14 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
   useEffect(() => {
     // Load available banks when component mounts
     loadAvailableBanks();
+    checkBiometric();
   }, []);
+
+  const checkBiometric = async () => {
+    const info = await securityService.getBiometricInfo();
+    setBiometricAvailable(info.isAvailable && info.hasEnrolledBiometrics);
+    setBiometricName(securityService.getBiometricTypeName(info.biometricTypes));
+  };
 
   const loadAvailableBanks = async () => {
     try {
@@ -143,8 +157,26 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
   );
 
   const handleContinueFromBankSelection = () => {
+    // Show security setup after bank selection
+    setShowBankSelection(false);
+    setShowSecuritySetup(true);
+  };
+
+  const handleSecuritySetupComplete = async () => {
+    await securityService.setOnboardingPrompted();
     const finalCountryCode = countryCode || 'ET'; // Default to ET if not detected
     onComplete(finalCountryCode, selectedBanks);
+  };
+
+  const handleSkipSecuritySetup = async () => {
+    await securityService.setOnboardingPrompted();
+    const finalCountryCode = countryCode || 'ET'; // Default to ET if not detected
+    onComplete(finalCountryCode, selectedBanks);
+  };
+
+  const handlePINSetupComplete = () => {
+    setShowPINSetup(false);
+    handleSecuritySetupComplete();
   };
 
   const renderItem = ({ item }: { item: OnboardingItem }) => {
@@ -197,6 +229,86 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
       </View>
     );
   };
+
+  // PIN Setup Screen
+  if (showPINSetup) {
+    return (
+      <PINSetupScreen
+        onComplete={handlePINSetupComplete}
+        onCancel={() => setShowPINSetup(false)}
+        showBiometricOption={biometricAvailable}
+      />
+    );
+  }
+
+  // Security Setup Screen
+  if (showSecuritySetup) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <StatusBar barStyle="light-content" />
+        
+        <View style={styles.securitySetupContainer}>
+          <View style={[styles.securityIconContainer, { backgroundColor: colors.primary + '20' }]}>
+            <Lock size={48} color={colors.primary} />
+          </View>
+          
+          <Text style={[styles.securityTitle, { color: colors.text }]}>
+            Secure Your App
+          </Text>
+          <Text style={[styles.securitySubtitle, { color: colors.textSecondary }]}>
+            Add an extra layer of security with a PIN or biometric lock. 
+            This is optional and can be changed anytime in settings.
+          </Text>
+
+          <View style={styles.securityOptions}>
+            <TouchableOpacity
+              style={[styles.securityOption, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              onPress={() => setShowPINSetup(true)}
+            >
+              <View style={[styles.securityOptionIcon, { backgroundColor: colors.primary + '20' }]}>
+                <Lock size={24} color={colors.primary} />
+              </View>
+              <View style={styles.securityOptionContent}>
+                <Text style={[styles.securityOptionTitle, { color: colors.text }]}>
+                  Set Up PIN
+                </Text>
+                <Text style={[styles.securityOptionDesc, { color: colors.textSecondary }]}>
+                  Create a 4-digit PIN to lock your app
+                </Text>
+              </View>
+              <ArrowRight size={20} color={colors.textSecondary} />
+            </TouchableOpacity>
+
+            {biometricAvailable && (
+              <View style={[styles.biometricInfo, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Fingerprint size={20} color={colors.primary} />
+                <Text style={[styles.biometricInfoText, { color: colors.textSecondary }]}>
+                  {biometricName} will be available after setting up PIN
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+
+        <View style={styles.securityFooter}>
+          <TouchableOpacity
+            style={[styles.button, { backgroundColor: colors.primary }]}
+            onPress={() => setShowPINSetup(true)}
+          >
+            <Lock size={20} color="#fff" style={{ marginRight: 8 }} />
+            <Text style={styles.buttonText}>Set Up PIN</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.skipButton} 
+            onPress={handleSkipSecuritySetup}
+          >
+            <Text style={[styles.skipText, { color: colors.textSecondary }]}>Skip for now</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   // Bank Selection Screen
   if (showBankSelection) {
@@ -634,5 +746,82 @@ const styles = StyleSheet.create({
   dropdownItemText: {
     fontSize: 16,
     fontWeight: '500',
+  },
+  // Security Setup Styles
+  securitySetupContainer: {
+    flex: 1,
+    padding: 24,
+    paddingTop: 80,
+    alignItems: 'center',
+  },
+  securityIconContainer: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  securityTitle: {
+    fontSize: 28,
+    fontWeight: '800',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  securitySubtitle: {
+    fontSize: 16,
+    lineHeight: 24,
+    textAlign: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 40,
+  },
+  securityOptions: {
+    width: '100%',
+    gap: 16,
+  },
+  securityOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 12,
+  },
+  securityOptionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  securityOptionContent: {
+    flex: 1,
+  },
+  securityOptionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  securityOptionDesc: {
+    fontSize: 14,
+  },
+  biometricInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 10,
+  },
+  biometricInfoText: {
+    flex: 1,
+    fontSize: 13,
+  },
+  securityFooter: {
+    padding: 20,
+    paddingBottom: 50,
+    width: '100%',
+    alignItems: 'center',
+    gap: 16,
   },
 });

@@ -71,20 +71,48 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
           // Filter to only show unverified transactions (verifiedAt is null or undefined)
           const unverifiedTxs: Transaction[] = backendTxs
             .filter((tx: any) => !tx.verifiedAt)
-            .map((tx: any) => ({
-              id: tx.id || `backend_${tx.txnId}`,
-              txnId: tx.txnId || tx.id,
-              amount: tx.amount || 0,
-              sender: tx.sender || '',
-              sendFrom: tx.sendFrom || null,
-              sendTo: tx.sendTo || null,
-              bank: tx.bank || tx.receiverBank || null,
-              pattern: tx.pattern?.name || 'Unknown Pattern',
-              smsText: '', // SMS text is not stored in Transaction model
-              receivedAt: tx.receivedAt || tx.createdAt || new Date().toISOString(),
-              createdAt: tx.createdAt || new Date().toISOString(),
-              verifiedAt: tx.verifiedAt || null,
-            }));
+            .map((tx: any) => {
+              // Handle sender - can be string or object {name, bank}
+              let senderValue = '';
+              if (typeof tx.sender === 'string') {
+                senderValue = tx.sender;
+              } else if (tx.sender && typeof tx.sender === 'object') {
+                senderValue = tx.sender.name || tx.sender.bank || '';
+              }
+              
+              // Handle bank - can be string or object
+              let bankValue = null;
+              if (typeof tx.bank === 'string') {
+                bankValue = tx.bank;
+              } else if (tx.bank && typeof tx.bank === 'object') {
+                bankValue = tx.bank.name || tx.bank.bank || null;
+              } else if (tx.receiverBank) {
+                bankValue = typeof tx.receiverBank === 'string' ? tx.receiverBank : tx.receiverBank?.name || null;
+              }
+              
+              // Handle pattern - can be string or object
+              let patternValue = 'Unknown Pattern';
+              if (typeof tx.pattern === 'string') {
+                patternValue = tx.pattern;
+              } else if (tx.pattern && typeof tx.pattern === 'object') {
+                patternValue = tx.pattern.name || 'Unknown Pattern';
+              }
+              
+              return {
+                id: tx.id || `backend_${tx.txnId}`,
+                txnId: tx.txnId || tx.id,
+                amount: tx.amount || 0,
+                sender: senderValue,
+                sendFrom: tx.sendFrom || null,
+                sendTo: tx.sendTo || null,
+                bank: bankValue,
+                pattern: patternValue,
+                smsText: '', // SMS text is not stored in Transaction model
+                receivedAt: tx.receivedAt || tx.createdAt || new Date().toISOString(),
+                createdAt: tx.createdAt || new Date().toISOString(),
+                verifiedAt: tx.verifiedAt || null,
+              };
+            });
           
           // Sort by most recent first
           unverifiedTxs.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
@@ -167,9 +195,13 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
     if (diffMins < 1) return 'Just now';
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) {
-      const hours = date.getHours();
-      const mins = date.getMinutes();
-      return `Today, ${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+      let hours = date.getHours();
+      const minutes = date.getMinutes();
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      hours = hours % 12;
+      hours = hours ? hours : 12; // the hour '0' should be '12'
+      const minutesStr = minutes.toString().padStart(2, '0');
+      return `Today, ${hours}:${minutesStr} ${ampm}`;
     }
     if (diffDays === 1) return 'Yesterday';
     if (diffDays < 7) return `${diffDays}d ago`;
@@ -191,12 +223,20 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
             )}
           </View>
           <View style={styles.transactionInfo}>
-            <Text style={[styles.transactionBank, { color: colors.text }]}>
-              {item.bank || item.sender || 'Transaction'}
-            </Text>
-            <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>
-              {formatDate(item.receivedAt)}
-            </Text>
+            {item.sender && item.sender !== 'Unknown' && (
+              <Text style={[styles.transactionSender, { color: colors.text }]}>
+                {item.sender}
+              </Text>
+            )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={[styles.transactionBank, { color: colors.textSecondary }]}>
+                {item.bank || 'Unknown Bank'}
+              </Text>
+              <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>·</Text>
+              <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>
+                {formatDate(item.receivedAt)}
+              </Text>
+            </View>
             <Text style={[styles.transactionId, { color: colors.textSecondary }]}>
               ID: {item.txnId}
             </Text>
@@ -348,10 +388,14 @@ const styles = StyleSheet.create({
   transactionInfo: {
     flex: 1,
   },
-  transactionBank: {
+  transactionSender: {
     fontSize: 16,
     fontWeight: '600',
     marginBottom: 4,
+  },
+  transactionBank: {
+    fontSize: 12,
+    fontWeight: '500',
   },
   transactionTime: {
     fontSize: 12,

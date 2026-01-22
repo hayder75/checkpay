@@ -146,6 +146,46 @@ api.interceptors.response.use(
         // Keep API key as it might still be valid
       }
     }
+    
+    // Handle 403 Token Exhaustion errors
+    if (error.response?.status === 403) {
+      const errorMessage = error.response?.data?.error || '';
+      const url = error.config?.url || '';
+      
+      // Token exhausted - show appropriate message based on token type
+      if (errorMessage.includes('out of credit') || errorMessage.includes('exhausted') || errorMessage.includes('limit reached')) {
+        log.warn('API', `403 Forbidden - Token exhausted for ${url}`, { errorMessage });
+        
+        // Determine which type of token is exhausted
+        const isPhoneToken = errorMessage.toLowerCase().includes('phone') || url.includes('/ingest');
+        const isVerifiedToken = errorMessage.toLowerCase().includes('verif');
+        
+        // Show user-friendly alert with upgrade option
+        setTimeout(() => {
+          const { Alert } = require('react-native');
+          const tokenType = isPhoneToken ? 'phone sync' : isVerifiedToken ? 'verification' : 'transaction';
+          
+          Alert.alert(
+            'Out of Credits',
+            `You have used all your ${tokenType} credits.\n\nUpgrade your package to continue processing transactions.`,
+            [
+              { text: 'Later', style: 'cancel' },
+              { 
+                text: 'View Packages', 
+                onPress: () => {
+                  // Emit event for navigation (handled by app navigation)
+                  log.info('API', 'User requested to view packages from token exhaustion alert');
+                }
+              }
+            ]
+          );
+        }, 100);
+      } else {
+        // Other 403 errors (business access, permissions, etc.)
+        log.warn('API', `403 Forbidden for ${url}`, { errorMessage });
+      }
+    }
+    
     return Promise.reject(error);
   }
 );
@@ -180,6 +220,62 @@ export const authAPI = {
   },
   getMe: async () => {
     const response = await api.get('/auth/me');
+    return response.data;
+  },
+  completeProfile: async (data: { country: string; firstName?: string; lastName?: string; role?: string }) => {
+    const response = await api.post('/auth/complete-profile', data);
+    return response;
+  },
+};
+
+// OTP Auth API (Passwordless login via Telegram)
+export const otpAuthAPI = {
+  requestOTP: async (data: { phone?: string; username?: string; email?: string }) => {
+    const response = await api.post('/auth/otp/request', data);
+    return response.data;
+  },
+  verifyOTP: async (data: { phone?: string; username?: string; email?: string; code: string }) => {
+    const response = await api.post('/auth/otp/verify', data);
+    return response.data;
+  },
+  resendOTP: async (data: { phone?: string; username?: string; email?: string }) => {
+    const response = await api.post('/auth/otp/resend', data);
+    return response.data;
+  },
+  requestPasswordReset: async (data: { phone?: string; username?: string; email?: string }) => {
+    const response = await api.post('/auth/otp/reset-password/request', data);
+    return response.data;
+  },
+  verifyPasswordReset: async (data: { phone?: string; username?: string; email?: string; code: string; newPassword: string }) => {
+    const response = await api.post('/auth/otp/reset-password/verify', data);
+    return response.data;
+  },
+};
+
+// Telegram Auth API
+export const telegramAuthAPI = {
+  init: async () => {
+    const response = await api.post('/auth/telegram/init');
+    return response.data;
+  },
+  checkStatus: async (token: string) => {
+    const response = await api.get(`/auth/telegram/check/${token}`);
+    return response.data;
+  },
+  link: async () => {
+    const response = await api.post('/auth/telegram/link');
+    return response.data;
+  },
+  unlink: async () => {
+    const response = await api.delete('/auth/telegram/link');
+    return response.data;
+  },
+  getStatus: async () => {
+    const response = await api.get('/auth/telegram/status');
+    return response.data;
+  },
+  getBotInfo: async () => {
+    const response = await api.get('/auth/telegram/bot-info');
     return response.data;
   },
 };
@@ -263,6 +359,10 @@ export const employeeAPI = {
   },
   reauthorize: async (businessId: string, employeeId: string) => {
     const response = await api.post(`/businesses/${businessId}/employees/${employeeId}/reauthorize`);
+    return response.data;
+  },
+  update: async (businessId: string, employeeId: string, data: { name?: string; isActive?: boolean; allowAccessAllTransactions?: boolean }) => {
+    const response = await api.put(`/businesses/${businessId}/employees/${employeeId}`, data);
     return response.data;
   },
 };
@@ -607,6 +707,11 @@ export const packageAPI = {
   // Purchase a package
   purchasePackage: async (data: { packageId: string; transactionNumber: string }) => {
     const response = await api.post('/user-packages/purchase', data);
+    return response.data;
+  },
+  // Get user's purchase history (pending, verified, rejected)
+  getMyPurchases: async () => {
+    const response = await api.get('/user-packages/purchases');
     return response.data;
   },
 };

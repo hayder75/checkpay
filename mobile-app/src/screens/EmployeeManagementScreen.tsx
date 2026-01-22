@@ -7,13 +7,14 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
-  Alert,
   Modal,
 } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
+import { usePopup } from '../contexts/PopupContext';
 import { businessAPI, employeeAPI } from '../services/api';
 import { storage } from '../services/storage';
 import { ArrowLeft, Users, User, CheckCircle2, XCircle, TrendingUp, UserPlus, QrCode, Copy, X as CloseIcon, Trash2, Wallet, BarChart3, Key } from 'lucide-react-native';
+import * as Clipboard from 'expo-clipboard';
 import QRCode from 'react-native-qrcode-svg';
 
 interface Props {
@@ -24,6 +25,7 @@ interface Props {
 export default function EmployeeManagementScreen({ onBack, onViewTransactions }: Props) {
   console.log('EmployeeManagementScreen: Rendering...');
   const { colors } = useTheme();
+  const { showError, showSuccess, showConfirm } = usePopup();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState<any>(null);
@@ -32,6 +34,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
   const [employeeOTP, setEmployeeOTP] = useState('');
   const [generatingOTP, setGeneratingOTP] = useState(false);
   const [isReauthorizing, setIsReauthorizing] = useState(false);
+  const [updatingSettings, setUpdatingSettings] = useState<{ [key: string]: boolean }>({});
 
   const loadData = async () => {
     try {
@@ -60,7 +63,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
       }
     } catch (error) {
       console.error('Error loading employee stats:', error);
-      Alert.alert('Error', 'Failed to load employee data');
+      showError('Error', 'Failed to load employee data');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -82,7 +85,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
     try {
       const bId = businessId || await storage.getBusinessId();
       if (!bId) {
-        Alert.alert('Error', 'No business associated with this account');
+        showError('Error', 'No business associated with this account');
         return;
       }
       const response = await employeeAPI.generateCode(bId);
@@ -91,11 +94,11 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
         setIsReauthorizing(false);
         setShowAddEmployeeModal(true);
       } else {
-        Alert.alert('Error', 'Failed to generate access code');
+        showError('Error', 'Failed to generate access code');
       }
     } catch (error) {
       console.error('Error generating employee code:', error);
-      Alert.alert('Error', 'Failed to generate access code');
+      showError('Error', 'Failed to generate access code');
     } finally {
       setGeneratingOTP(false);
     }
@@ -106,7 +109,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
     try {
       const bId = businessId || await storage.getBusinessId();
       if (!bId) {
-        Alert.alert('Error', 'No business associated with this account');
+        showError('Error', 'No business associated with this account');
         return;
       }
       const response = await employeeAPI.reauthorize(bId, employeeId);
@@ -115,44 +118,63 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
         setIsReauthorizing(true);
         setShowAddEmployeeModal(true);
       } else {
-        Alert.alert('Error', 'Failed to generate login code');
+        showError('Error', 'Failed to generate login code');
       }
     } catch (error) {
       console.error('Error generating login code:', error);
-      Alert.alert('Error', 'Failed to generate login code');
+      showError('Error', 'Failed to generate login code');
     } finally {
       setGeneratingOTP(false);
     }
   };
 
+  const handleToggleEmployeeAccess = async (employeeId: string, currentValue: boolean) => {
+    setUpdatingSettings({ ...updatingSettings, [employeeId]: true });
+    try {
+      const bId = businessId || await storage.getBusinessId();
+      if (!bId) {
+        showError('Error', 'No business associated with this account');
+        return;
+      }
+      const response = await employeeAPI.update(bId, employeeId, {
+        allowAccessAllTransactions: !currentValue,
+      });
+      if (response.success) {
+        // Reload data to get updated employee settings
+        await loadData();
+        showSuccess('Success', `Employee access ${!currentValue ? 'enabled' : 'disabled'}`);
+      } else {
+        showError('Error', response.message || 'Failed to update setting');
+      }
+    } catch (error) {
+      console.error('Error updating employee access setting:', error);
+      showError('Error', 'Failed to update setting');
+    } finally {
+      setUpdatingSettings({ ...updatingSettings, [employeeId]: false });
+    }
+  };
+
   const handleDeleteEmployee = async (employeeId: string, employeeName: string) => {
-    Alert.alert(
+    showConfirm(
       'Delete Employee',
       `Are you sure you want to delete ${employeeName}? This action cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const bId = businessId || await storage.getBusinessId();
-              if (!bId) return;
-              
-              const response = await employeeAPI.delete(bId, employeeId);
-              if (response.success) {
-                Alert.alert('Success', 'Employee deleted successfully');
-                loadData();
-              } else {
-                Alert.alert('Error', response.message || 'Failed to delete employee');
-              }
-            } catch (error) {
-              console.error('Error deleting employee:', error);
-              Alert.alert('Error', 'Failed to delete employee');
-            }
-          },
-        },
-      ]
+      async () => {
+        try {
+          const bId = businessId || await storage.getBusinessId();
+          if (!bId) return;
+          
+          const response = await employeeAPI.delete(bId, employeeId);
+          if (response.success) {
+            showSuccess('Success', 'Employee deleted successfully');
+            loadData();
+          } else {
+            showError('Error', response.message || 'Failed to delete employee');
+          }
+        } catch (error) {
+          console.error('Error deleting employee:', error);
+          showError('Error', 'Failed to delete employee');
+        }
+      }
     );
   };
 
@@ -297,6 +319,41 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
 
               <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
+              {/* Employee Access Toggle */}
+              <View style={styles.accessToggleRow}>
+                <View style={styles.accessToggleInfo}>
+                  <Text style={[styles.accessToggleLabel, { color: colors.text }]}>
+                    Access All Picked Transactions
+                  </Text>
+                  <Text style={[styles.accessToggleDescription, { color: colors.textSecondary }]}>
+                    Allow this employee to view all picked transactions
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.toggle,
+                    { backgroundColor: employee.allowAccessAllTransactions ? colors.primary : colors.border },
+                  ]}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    handleToggleEmployeeAccess(employee.id, employee.allowAccessAllTransactions || false);
+                  }}
+                  disabled={updatingSettings[employee.id]}
+                >
+                  <View
+                    style={[
+                      styles.toggleThumb,
+                      {
+                        backgroundColor: '#fff',
+                        transform: [{ translateX: employee.allowAccessAllTransactions ? 20 : 0 }],
+                      },
+                    ]}
+                  />
+                </TouchableOpacity>
+              </View>
+
+              <View style={[styles.divider, { backgroundColor: colors.border }]} />
+
               <View style={styles.statsRow}>
                 <View style={styles.statItem}>
                   <Text style={[styles.statValue, { color: colors.text }]}>
@@ -374,9 +431,14 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
                 <View style={[styles.otpBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                   <Text style={[styles.otpText, { color: colors.primary }]}>{employeeOTP}</Text>
                   <TouchableOpacity 
-                    onPress={() => {
-                      // Copy to clipboard logic would go here
-                      Alert.alert('Copied', 'Invite code copied to clipboard');
+                    onPress={async () => {
+                      try {
+                        await Clipboard.setStringAsync(employeeOTP);
+                        showSuccess('Copied', 'Invite code copied to clipboard');
+                      } catch (error) {
+                        console.error('Error copying to clipboard:', error);
+                        showError('Error', 'Failed to copy to clipboard');
+                      }
                     }}
                     style={styles.copyButton}
                   >
@@ -694,5 +756,65 @@ const styles = StyleSheet.create({
   doneButtonText: {
     fontSize: 15,
     fontWeight: '600',
+  },
+  settingsCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
+    marginBottom: 16,
+  },
+  settingsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  settingsInfo: {
+    flex: 1,
+    marginRight: 16,
+  },
+  settingsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  settingsDescription: {
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  toggle: {
+    width: 50,
+    height: 30,
+    borderRadius: 15,
+    justifyContent: 'center',
+    padding: 2,
+  },
+  toggleThumb: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  accessToggleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  accessToggleInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  accessToggleLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  accessToggleDescription: {
+    fontSize: 11,
+    lineHeight: 14,
   },
 });

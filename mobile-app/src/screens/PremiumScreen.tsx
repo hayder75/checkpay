@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
@@ -12,7 +11,8 @@ import {
 } from 'react-native';
 import { packageAPI } from '../services/api';
 import { useTheme } from '../contexts/ThemeContext';
-import { Crown, Check, CreditCard, Clock, Shield, Zap } from 'lucide-react-native';
+import { Crown, Check, Clock, Shield, AlertCircle, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react-native';
+import PaymentModal from '../components/PaymentModal';
 
 interface Props {
   apiKey: string;
@@ -39,15 +39,32 @@ interface UserPackage {
   verifiedTxnsRemaining: number | null;
 }
 
+interface PurchaseRequest {
+  id: string;
+  packageId: string;
+  transactionNumber: string;
+  status: 'PENDING' | 'VERIFIED' | 'REJECTED';
+  adminNotes?: string;
+  createdAt: string;
+  package: {
+    id: string;
+    name: string;
+    price: number;
+    tier?: string;
+    billingCycle?: string;
+  };
+}
+
 export default function PremiumScreen({ apiKey }: Props) {
   const { colors } = useTheme();
   const [currentPackage, setCurrentPackage] = useState<UserPackage | null>(null);
   const [availablePackages, setAvailablePackages] = useState<Package[]>([]);
+  const [pendingPurchases, setPendingPurchases] = useState<PurchaseRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [purchasing, setPurchasing] = useState<string | null>(null);
+  const [purchasing, setPurchasing] = useState(false);
   const [selectedPackage, setSelectedPackage] = useState<Package | null>(null);
-  const [transactionId, setTransactionId] = useState('');
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -55,9 +72,10 @@ export default function PremiumScreen({ apiKey }: Props) {
 
   const loadData = async () => {
     try {
-      const [myPackageRes, packagesRes] = await Promise.all([
+      const [myPackageRes, packagesRes, purchasesRes] = await Promise.all([
         packageAPI.getMyPackage(),
-        packageAPI.getPackages() // Get all packages
+        packageAPI.getPackages(),
+        packageAPI.getMyPurchases(),
       ]);
 
       if (myPackageRes.success) {
@@ -65,11 +83,19 @@ export default function PremiumScreen({ apiKey }: Props) {
       }
 
       if (packagesRes.success) {
-        // Filter out free packages and current package
-        const upgrades = packagesRes.data.filter((p: Package) => 
-          !p.price || p.price > 0 // Only paid packages
+        // Only show BUSINESS tier packages
+        const businessPackages = packagesRes.data.filter((p: Package) => 
+          p.tier === 'BUSINESS' && p.price && p.price > 0
         );
-        setAvailablePackages(upgrades);
+        setAvailablePackages(businessPackages);
+      }
+
+      if (purchasesRes.success) {
+        // Show pending purchases so user knows their request is being processed
+        const pending = purchasesRes.data.filter(
+          (p: PurchaseRequest) => p.status === 'PENDING'
+        );
+        setPendingPurchases(pending);
       }
     } catch (error) {
       console.error('Error loading premium data:', error);
@@ -85,38 +111,48 @@ export default function PremiumScreen({ apiKey }: Props) {
     loadData();
   };
 
-  const handlePurchase = async () => {
-    if (!selectedPackage || !transactionId.trim()) {
-      Alert.alert('Error', 'Please select a package and enter transaction ID');
-      return;
-    }
+  const handlePurchaseSubmit = async (transactionNumber: string) => {
+    if (!selectedPackage) return;
 
-    setPurchasing(selectedPackage.id);
+    setPurchasing(true);
     try {
       const response = await packageAPI.purchasePackage({
         packageId: selectedPackage.id,
-        transactionNumber: transactionId.trim()
+        transactionNumber,
       });
 
       if (response.success) {
+        setShowPaymentModal(false);
+        setSelectedPackage(null);
         Alert.alert(
-          'Success', 
-          'Purchase request submitted! Your package will be activated once the transaction is verified.',
-          [{ text: 'OK', onPress: () => {
-            setTransactionId('');
-            setSelectedPackage(null);
-            loadData();
-          }}]
+          'Request Submitted!', 
+          'Your purchase request has been submitted. Your package will be activated once the transaction is verified by admin.',
+          [{ text: 'OK' }]
         );
+        loadData(); // Refresh to show the pending purchase
       } else {
-        Alert.alert('Error', response.error || 'Failed to submit purchase request');
+        throw new Error(response.error || 'Failed to submit purchase request');
       }
     } catch (error: any) {
       console.error('Purchase error:', error);
-      Alert.alert('Error', error.response?.data?.error || 'Failed to submit purchase request');
+      Alert.alert('Error', error.response?.data?.error || error.message || 'Failed to submit purchase request');
     } finally {
-      setPurchasing(null);
+      setPurchasing(false);
     }
+  };
+
+  const handleSelectPackage = (pkg: Package) => {
+    // Check if there's already a pending purchase for this package
+    const hasPending = pendingPurchases.some(p => p.packageId === pkg.id);
+    if (hasPending) {
+      Alert.alert(
+        'Pending Purchase',
+        'You already have a pending purchase request for this package. Please wait for admin verification.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    setSelectedPackage(pkg);
   };
 
   if (loading) {
@@ -130,157 +166,139 @@ export default function PremiumScreen({ apiKey }: Props) {
   const isPremium = currentPackage?.package?.tier !== 'FREE';
 
   return (
-    <ScrollView 
-      style={[styles.container, { backgroundColor: colors.background }]}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.primary} />
-      }
-    >
-      <View style={styles.header}>
-        <Text style={[styles.title, { color: colors.text }]}>Premium Access</Text>
-        <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-          Unlock the full potential of CheckPay
-        </Text>
-      </View>
+    <View style={[styles.container, { backgroundColor: '#f7f7f7' }]}>
+      <ScrollView 
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#ff5a5f" />
+        }
+      >
+        <TouchableOpacity style={styles.backButton}>
+          <ChevronLeft size={24} color="#000" />
+        </TouchableOpacity>
 
-      {/* Current Status */}
-      <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>CURRENT PLAN</Text>
-        <View style={styles.currentPlanRow}>
-          <View>
-            <Text style={[styles.planName, { color: colors.text }]}>
-              {currentPackage?.package?.name || 'Free Plan'}
-            </Text>
-            <Text style={[styles.planStatus, { color: isPremium ? colors.primary : colors.textSecondary }]}>
-              {currentPackage?.status || 'Active'}
-            </Text>
-          </View>
-          {isPremium && <Crown size={32} color={colors.primary} fill={colors.primary + '20'} />}
+        <View style={styles.header}>
+          <Text style={styles.title}>Upgrade to Next-Level</Text>
+          <Text style={styles.subtitle}>
+            Unlock access to the plan that matches your needs. You can cancel anytime!
+          </Text>
         </View>
-        
-        <View style={[styles.usageStats, { backgroundColor: colors.background }]}>
-          <View style={styles.usageItem}>
-            <Text style={[styles.usageLabel, { color: colors.textSecondary }]}>Phone Txns</Text>
-            <Text style={[styles.usageValue, { color: colors.text }]}>
-              {currentPackage?.phoneTxnsRemaining === null ? '∞' : currentPackage?.phoneTxnsRemaining}
-            </Text>
-          </View>
-          <View style={[styles.divider, { backgroundColor: colors.border }]} />
-          <View style={styles.usageItem}>
-            <Text style={[styles.usageLabel, { color: colors.textSecondary }]}>Verified Txns</Text>
-            <Text style={[styles.usageValue, { color: colors.text }]}>
-              {currentPackage?.verifiedTxnsRemaining === null ? '∞' : currentPackage?.verifiedTxnsRemaining}
-            </Text>
-          </View>
-        </View>
-      </View>
 
-      {/* Available Packages */}
-      <Text style={[styles.sectionHeader, { color: colors.text }]}>Available Upgrades</Text>
-      
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.packagesScroll}>
-        {availablePackages.map((pkg) => (
-          <TouchableOpacity
-            key={pkg.id}
-            style={[
-              styles.packageCard, 
-              { 
-                backgroundColor: selectedPackage?.id === pkg.id ? colors.primary + '10' : colors.surface,
-                borderColor: selectedPackage?.id === pkg.id ? colors.primary : colors.border
-              }
-            ]}
-            onPress={() => setSelectedPackage(pkg)}
-          >
-            <View style={styles.packageHeader}>
-              <Text style={[styles.packageName, { color: colors.text }]}>{pkg.name}</Text>
-              {pkg.tier === 'BUSINESS' && (
-                <View style={[styles.badge, { backgroundColor: '#f59e0b20' }]}>
-                  <Text style={[styles.badgeText, { color: '#f59e0b' }]}>BIZ</Text>
-                </View>
-              )}
-            </View>
+        <View style={styles.plansList}>
+          {availablePackages.map((pkg, index) => {
+            const isSelected = selectedPackage?.id === pkg.id;
+            const hasPending = pendingPurchases.some(p => p.packageId === pkg.id);
             
-            <Text style={[styles.packagePrice, { color: colors.primary }]}>
-              ${pkg.price}
-              <Text style={[styles.billingCycle, { color: colors.textSecondary }]}>
-                /{pkg.billingCycle?.toLowerCase().replace('_', ' ') || 'mo'}
-              </Text>
-            </Text>
+            return (
+              <TouchableOpacity
+                key={pkg.id}
+                style={[
+                  styles.planCard,
+                  isSelected && styles.planCardSelected
+                ]}
+                onPress={() => handleSelectPackage(pkg)}
+                activeOpacity={0.9}
+              >
+                <View style={styles.planCardHeader}>
+                  <View style={styles.planInfo}>
+                    <View style={styles.planTitleRow}>
+                      <Text style={styles.planTitle}>{pkg.name}</Text>
+                      {isSelected && (
+                        <View style={styles.tierBadge}>
+                          <Text style={styles.tierBadgeText}>
+                            {pkg.tier || 'Basic'}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={styles.planSubtitle}>
+                      {pkg.description || 'Flexible monthly access, cancel anytime'}
+                    </Text>
+                    <Text style={styles.planPrice}>
+                      ${pkg.price} <Text style={styles.planPeriod}>/ {pkg.billingCycle?.toLowerCase().replace('_', ' ') || 'month'}</Text>
+                    </Text>
+                  </View>
+                  {!isSelected && <ChevronRight size={20} color="#ccc" />}
+                </View>
 
-            <View style={styles.featuresList}>
-              <View style={styles.featureRow}>
-                <Check size={16} color={colors.primary} />
-                <Text style={[styles.featureText, { color: colors.textSecondary }]}>
-                  {pkg.maxPhoneTxns === null ? 'Unlimited' : pkg.maxPhoneTxns} Phone Txns
-                </Text>
-              </View>
-              <View style={styles.featureRow}>
-                <Check size={16} color={colors.primary} />
-                <Text style={[styles.featureText, { color: colors.textSecondary }]}>
-                  {pkg.maxVerifiedTxns === null ? 'Unlimited' : pkg.maxVerifiedTxns} Verified Txns
-                </Text>
-              </View>
-              {pkg.description && (
-                <Text style={[styles.description, { color: colors.textSecondary }]} numberOfLines={2}>
-                  {pkg.description}
-                </Text>
-              )}
-            </View>
+                {isSelected && (
+                  <View style={styles.expandedContent}>
+                    <View style={styles.featuresList}>
+                      <View style={styles.featureItem}>
+                        <Check size={16} color="#000" />
+                        <Text style={styles.featureText}>
+                          {pkg.maxPhoneTxns === null ? 'Unlimited' : pkg.maxPhoneTxns} Phone transactions
+                        </Text>
+                      </View>
+                      <View style={styles.featureItem}>
+                        <Check size={16} color="#000" />
+                        <Text style={styles.featureText}>
+                          {pkg.maxVerifiedTxns === null ? 'Unlimited' : pkg.maxVerifiedTxns} Verified transactions
+                        </Text>
+                      </View>
+                      <View style={styles.featureItem}>
+                        <Check size={16} color="#000" />
+                        <Text style={styles.featureText}>
+                          Secure verification
+                        </Text>
+                      </View>
+                      <View style={styles.featureItem}>
+                        <Check size={16} color="#000" />
+                        <Text style={styles.featureText}>
+                          Priority support
+                        </Text>
+                      </View>
+                    </View>
+                    
+                    <Text style={styles.upgradeHint}>
+                      Need higher limits? Upgrade to Plus.
+                    </Text>
+                  </View>
+                )}
+
+                {hasPending && (
+                  <View style={styles.pendingOverlay}>
+                    <Clock size={16} color="#f59e0b" />
+                    <Text style={styles.pendingText}>Verification Pending</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <View style={styles.actionsContainer}>
+          <TouchableOpacity
+            style={[
+              styles.primaryButton,
+              !selectedPackage && styles.primaryButtonDisabled
+            ]}
+            onPress={() => selectedPackage && setShowPaymentModal(true)}
+            disabled={!selectedPackage}
+          >
+            <Text style={styles.primaryButtonText}>
+              {selectedPackage ? `Unlock ${selectedPackage.name}` : 'Select a Plan'}
+            </Text>
           </TouchableOpacity>
-        ))}
+
+          <TouchableOpacity 
+            style={styles.secondaryButton}
+            onPress={() => setSelectedPackage(null)}
+          >
+            <Text style={styles.secondaryButtonText}>Maybe Later</Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
 
-      {/* Payment Form */}
-      {selectedPackage && (
-        <View style={[styles.paymentSection, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <Text style={[styles.paymentTitle, { color: colors.text }]}>Complete Purchase</Text>
-          <Text style={[styles.paymentSubtitle, { color: colors.textSecondary }]}>
-            Send payment to <Text style={{ fontWeight: 'bold', color: colors.text }}>CBE 1000123456789</Text> and enter the transaction ID below.
-          </Text>
-
-          <View style={styles.inputContainer}>
-            <Text style={[styles.label, { color: colors.textSecondary }]}>Transaction ID</Text>
-            <TextInput
-              style={[styles.input, { 
-                backgroundColor: colors.background, 
-                color: colors.text, 
-                borderColor: colors.border 
-              }]}
-              placeholder="e.g. FT12345678"
-              placeholderTextColor={colors.textSecondary}
-              value={transactionId}
-              onChangeText={setTransactionId}
-              autoCapitalize="characters"
-            />
-          </View>
-
-          <TouchableOpacity
-            style={[
-              styles.purchaseButton, 
-              { backgroundColor: colors.primary },
-              (!transactionId.trim() || purchasing) && { opacity: 0.6 }
-            ]}
-            onPress={handlePurchase}
-            disabled={!transactionId.trim() || !!purchasing}
-          >
-            {purchasing === selectedPackage.id ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.purchaseButtonText}>
-                Confirm Purchase
-              </Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      )}
-
-      <View style={styles.footer}>
-        <Shield size={16} color={colors.textSecondary} />
-        <Text style={[styles.footerText, { color: colors.textSecondary }]}>
-          Secure payment processing. Purchases are manually verified.
-        </Text>
-      </View>
-    </ScrollView>
+      <PaymentModal
+        visible={showPaymentModal}
+        selectedPackage={selectedPackage}
+        onSubmit={handlePurchaseSubmit}
+        onClose={() => setShowPaymentModal(false)}
+        isSubmitting={purchasing}
+      />
+    </View>
   );
 }
 
@@ -292,184 +310,175 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 40,
+  },
+  backButton: {
+    padding: 20,
+    paddingTop: 50,
+  },
   header: {
-    padding: 24,
-    paddingBottom: 16,
+    paddingHorizontal: 24,
+    marginBottom: 32,
+    alignItems: 'center',
   },
   title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    marginBottom: 8,
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#000',
+    marginBottom: 12,
+    textAlign: 'center',
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 15,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 22,
+    paddingHorizontal: 20,
   },
-  section: {
-    margin: 20,
-    marginTop: 0,
+  plansList: {
+    paddingHorizontal: 24,
+    gap: 16,
+  },
+  planCard: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
     padding: 20,
-    borderRadius: 16,
     borderWidth: 1,
+    borderColor: '#eee',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: 12,
+  planCardSelected: {
+    borderColor: '#ff5a5f',
+    borderWidth: 2,
   },
-  currentPlanRow: {
+  planCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
   },
-  planName: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  planStatus: {
-    fontSize: 14,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-  },
-  usageStats: {
-    flexDirection: 'row',
-    borderRadius: 12,
-    padding: 16,
-  },
-  usageItem: {
+  planInfo: {
     flex: 1,
-    alignItems: 'center',
   },
-  usageLabel: {
-    fontSize: 12,
-    marginBottom: 4,
-  },
-  usageValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  divider: {
-    width: 1,
-    height: '100%',
-    marginHorizontal: 16,
-  },
-  sectionHeader: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginLeft: 24,
-    marginBottom: 16,
-  },
-  packagesScroll: {
-    paddingLeft: 24,
-    marginBottom: 24,
-  },
-  packageCard: {
-    width: 280,
-    padding: 20,
-    borderRadius: 16,
-    borderWidth: 1,
-    marginRight: 16,
-  },
-  packageHeader: {
+  planTitleRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 4,
+    gap: 8,
   },
-  packageName: {
+  planTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: '700',
+    color: '#000',
   },
-  badge: {
-    paddingHorizontal: 8,
+  tierBadge: {
+    backgroundColor: '#000',
+    paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: 12,
   },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: 'bold',
+  tierBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
   },
-  packagePrice: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    marginBottom: 16,
-  },
-  billingCycle: {
+  planSubtitle: {
     fontSize: 14,
-    fontWeight: 'normal',
+    color: '#888',
+    marginBottom: 8,
+  },
+  planPrice: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#000',
+  },
+  planPeriod: {
+    fontSize: 14,
+    fontWeight: '400',
+    color: '#888',
+  },
+  expandedContent: {
+    marginTop: 20,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
   },
   featuresList: {
     gap: 12,
+    marginBottom: 20,
   },
-  featureRow: {
+  featureItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
   featureText: {
     fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
   },
-  description: {
-    fontSize: 12,
-    marginTop: 8,
+  upgradeHint: {
+    fontSize: 13,
+    color: '#999',
     fontStyle: 'italic',
   },
-  paymentSection: {
-    margin: 20,
-    padding: 20,
-    borderRadius: 16,
-    borderWidth: 1,
-  },
-  paymentTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  paymentSubtitle: {
-    fontSize: 14,
-    marginBottom: 20,
-    lineHeight: 20,
-  },
-  inputContainer: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 8,
-    textTransform: 'uppercase',
-  },
-  input: {
-    height: 50,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    borderWidth: 1,
-  },
-  purchaseButton: {
-    height: 50,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  purchaseButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  footer: {
+  pendingOverlay: {
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 40,
-    paddingHorizontal: 40,
+    marginTop: 12,
+    backgroundColor: '#fffbeb',
+    padding: 8,
+    borderRadius: 8,
   },
-  footerText: {
+  pendingText: {
     fontSize: 12,
-    textAlign: 'center',
+    color: '#d97706',
+    fontWeight: '600',
+  },
+  actionsContainer: {
+    padding: 24,
+    marginTop: 20,
+    gap: 12,
+  },
+  primaryButton: {
+    backgroundColor: '#ff5a5f',
+    height: 56,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#ff5a5f',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  primaryButtonDisabled: {
+    backgroundColor: '#ccc',
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  primaryButtonText: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  secondaryButton: {
+    height: 56,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  secondaryButtonText: {
+    color: '#666',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

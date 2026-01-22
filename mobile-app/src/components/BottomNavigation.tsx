@@ -5,6 +5,14 @@ import { useTheme } from '../contexts/ThemeContext';
 
 export type Tab = 'home' | 'banks' | 'transactions' | 'ocr' | 'profile' | 'employee-management';
 
+const allTabs: { id: Tab; label: string; Icon: any }[] = [
+  { id: 'home', label: 'Home', Icon: Home },
+  { id: 'banks', label: 'Banks', Icon: Building2 },
+  { id: 'transactions', label: 'History', Icon: History },
+  { id: 'ocr', label: 'Scan', Icon: ScanLine },
+  { id: 'profile', label: 'Profile', Icon: User },
+];
+
 interface Props {
   currentTab: Tab;
   onTabChange: (tab: Tab) => void;
@@ -14,21 +22,15 @@ interface Props {
 export default function BottomNavigation({ currentTab, onTabChange, isEmployee = false }: Props) {
   const { colors } = useTheme();
 
-  const allTabs: { id: Tab; label: string; Icon: any }[] = [
-    { id: 'home', label: 'Home', Icon: Home },
-    { id: 'transactions', label: 'History', Icon: History },
-    { id: 'banks', label: 'Banks', Icon: Building2 },
-    { id: 'ocr', label: 'Scan', Icon: ScanLine },
-  ];
-
-  // For employees, only show OCR tab
+  // For employees, show OCR, Transactions, and Profile
+  // For business owners, show all tabs except Profile
   const tabs = isEmployee 
-    ? allTabs.filter(tab => tab.id === 'ocr')
-    : allTabs;
+    ? allTabs.filter(tab => ['ocr', 'transactions', 'profile'].includes(tab.id))
+    : allTabs.filter(tab => tab.id !== 'profile');
 
   const handleTabChange = (tab: Tab) => {
-    // If employee tries to access non-OCR tab, force OCR
-    if (isEmployee && tab !== 'ocr') {
+    // If employee tries to access restricted tabs, force OCR (though UI should prevent this now)
+    if (isEmployee && !['ocr', 'transactions', 'profile'].includes(tab)) {
       onTabChange('ocr');
     } else {
       onTabChange(tab);

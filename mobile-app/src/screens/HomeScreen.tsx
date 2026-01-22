@@ -12,24 +12,27 @@ import {
   Image,
   Alert,
 } from 'react-native';
-import { ArrowDown, ArrowUp, ChevronDown, Settings, Users, X } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, ChevronDown, Settings, Users, X, Bell } from 'lucide-react-native';
 import { LineChart } from 'react-native-chart-kit';
 import { useTheme } from '../contexts/ThemeContext';
 import { storage } from '../services/storage';
 import { smsService, LocalTransaction } from '../services/smsService';
 import { dashboardAPI } from '../services/api';
 import { log } from '../utils/logger';
+import TransactionDetailsModal from '../components/TransactionDetailsModal';
+import { getDisplayName } from '../utils/userUtils';
 
 interface Props {
   apiKey?: string | null;
   onNavigateToProfile?: () => void;
   onNavigateToTransactions?: () => void;
   onNavigateToEmployeeManagement?: () => void;
+  onNavigateToNotifications?: () => void;
 }
 
 const { width } = Dimensions.get('window');
 
-export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactions, onNavigateToEmployeeManagement }: Props) {
+export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactions, onNavigateToEmployeeManagement, onNavigateToNotifications }: Props) {
   const { theme, colors } = useTheme();
   // const navigation = useNavigation(); // Removed
   const [transactions, setTransactions] = useState<LocalTransaction[]>([]);
@@ -89,21 +92,49 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
             log.debug('HomeScreen', `Extracted ${backendTxs.length} transactions from backend response`);
             
             // Convert backend transactions to LocalTransaction format
-            const convertedTxs: LocalTransaction[] = backendTxs.map((tx: any) => ({
-              id: tx.id || `backend_${tx.txnId}`,
-              txnId: tx.txnId || tx.id,
-              amount: tx.amount || 0,
-              sender: tx.sender || '',
-              sendFrom: tx.sendFrom || null,
-              sendTo: tx.sendTo || null,
-              bank: tx.bank || tx.receiverBank || null,
-              pattern: tx.pattern || 'Backend Pattern',
-              smsText: tx.smsText || '',
-              receivedAt: tx.createdAt || tx.receivedAt || new Date().toISOString(),
-              synced: true,
-              isValidated: tx.isValidated || false,
-              createdAt: tx.createdAt || new Date().toISOString(),
-            }));
+            const convertedTxs: LocalTransaction[] = backendTxs.map((tx: any) => {
+              // Handle sender - can be string or object {name, bank}
+              let senderValue = '';
+              if (typeof tx.sender === 'string') {
+                senderValue = tx.sender;
+              } else if (tx.sender && typeof tx.sender === 'object') {
+                senderValue = tx.sender.name || tx.sender.bank || '';
+              }
+              
+              // Handle bank - can be string or object
+              let bankValue = null;
+              if (typeof tx.bank === 'string') {
+                bankValue = tx.bank;
+              } else if (tx.bank && typeof tx.bank === 'object') {
+                bankValue = tx.bank.name || tx.bank.bank || null;
+              } else if (tx.receiverBank) {
+                bankValue = typeof tx.receiverBank === 'string' ? tx.receiverBank : tx.receiverBank?.name || null;
+              }
+              
+              // Handle pattern - can be string or object
+              let patternValue = 'Backend Pattern';
+              if (typeof tx.pattern === 'string') {
+                patternValue = tx.pattern;
+              } else if (tx.pattern && typeof tx.pattern === 'object') {
+                patternValue = tx.pattern.name || tx.pattern.bank || 'Backend Pattern';
+              }
+              
+              return {
+                id: tx.id || `backend_${tx.txnId}`,
+                txnId: tx.txnId || tx.id,
+                amount: tx.amount || 0,
+                sender: senderValue,
+                sendFrom: tx.sendFrom || null,
+                sendTo: tx.sendTo || null,
+                bank: bankValue,
+                pattern: patternValue,
+                smsText: tx.smsText || '',
+                receivedAt: tx.createdAt || tx.receivedAt || new Date().toISOString(),
+                synced: true,
+                isValidated: tx.isValidated || false,
+                createdAt: tx.createdAt || new Date().toISOString(),
+              };
+            });
             
             // Use backend transactions as primary source, merge with local unsynced ones
             const backendTxnIds = new Set(convertedTxs.map(t => t.txnId));
@@ -232,7 +263,11 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
         
         const periodTotal = periodTransactions.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
         dataPoints.push(periodTotal);
-        labels.push(`${date.getHours()}:00`);
+        let hours = date.getHours();
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        hours = hours % 12;
+        hours = hours ? hours : 12;
+        labels.push(`${hours}:00 ${ampm}`);
       }
     } else if (timeFilter === '7d') {
       // Last 7 days
@@ -342,9 +377,7 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
 
   // Memoize user name
   const userName = useMemo(() => {
-    if (user?.username) return user.username;
-    if (user?.phone) return user.phone;
-    return 'User';
+    return getDisplayName(user);
   }, [user]);
 
   // Extract sender name from SMS text if not already captured
@@ -369,21 +402,34 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
     return null;
   }, []);
 
+  // Helper to safely convert any value to string (handles objects)
+  const safeString = useCallback((value: any, fallback: string = ''): string => {
+    if (value === null || value === undefined) return fallback;
+    if (typeof value === 'string') return value;
+    if (typeof value === 'object') {
+      return value.name || value.bank || value.value || fallback;
+    }
+    return String(value);
+  }, []);
+
   // Memoize display name function
-  const getDisplayName = useCallback((item: LocalTransaction): string => {
+  const getTransactionDisplayName = useCallback((item: LocalTransaction): string => {
     // First try to extract sender from SMS text if sender is Unknown or empty
-    if ((!item.sender || item.sender === 'Unknown' || item.sender === '') && item.smsText) {
+    const senderStr = safeString(item.sender);
+    if ((!senderStr || senderStr === 'Unknown' || senderStr === '') && item.smsText) {
       const extractedSender = extractSenderFromSMS(item.smsText);
       if (extractedSender) return extractedSender;
     }
     
     // Prefer sender name (if valid), then bank name, then sendFrom, then pattern name
-    if (item.sender && item.sender !== 'Unknown' && item.sender !== '') return item.sender;
-    if (item.bank && item.bank !== 'Unknown') return item.bank;
-    if (item.sendFrom) return item.sendFrom;
-    if (item.pattern && item.pattern !== 'Institution Pattern') return item.pattern;
+    if (senderStr && senderStr !== 'Unknown' && senderStr !== '') return senderStr;
+    const bankStr = safeString(item.bank);
+    if (bankStr && bankStr !== 'Unknown') return bankStr;
+    if (item.sendFrom) return safeString(item.sendFrom);
+    const patternStr = safeString(item.pattern);
+    if (patternStr && patternStr !== 'Institution Pattern') return patternStr;
     return 'Transaction';
-  }, [extractSenderFromSMS]);
+  }, [extractSenderFromSMS, safeString]);
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: colors.background }]} showsVerticalScrollIndicator={false}>
@@ -421,6 +467,19 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
               <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Employee</Text>
             </TouchableOpacity>
           )}
+
+          <TouchableOpacity 
+            onPress={onNavigateToNotifications}
+            style={{ 
+              padding: 8, 
+              backgroundColor: colors.surface, 
+              borderRadius: 20,
+              borderWidth: 1,
+              borderColor: colors.border
+            }}
+          >
+            <Bell size={20} color={colors.text} />
+          </TouchableOpacity>
 
           <TouchableOpacity 
             onPress={onNavigateToProfile}
@@ -580,7 +639,7 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
         </View>
         {transactions.slice(0, 5).map((tx) => {
           const isIncome = tx.amount > 0;
-          const displayName = getDisplayName(tx);
+          const displayName = getTransactionDisplayName(tx);
           return (
             <TouchableOpacity 
               key={tx.id} 
@@ -634,118 +693,11 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
       </View>
 
       {/* Transaction Detail Modal */}
-      <Modal
+      <TransactionDetailsModal
         visible={selectedTransaction !== null}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setSelectedTransaction(null)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Transaction Details</Text>
-              <TouchableOpacity
-                onPress={() => setSelectedTransaction(null)}
-                style={styles.closeButton}
-              >
-                <X size={24} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            
-            {selectedTransaction && (() => {
-              // Get the best sender name for display
-              const getSenderForDisplay = () => {
-                if (selectedTransaction.sender && selectedTransaction.sender !== 'Unknown' && selectedTransaction.sender !== '') {
-                  return selectedTransaction.sender;
-                }
-                if (selectedTransaction.smsText) {
-                  const extracted = extractSenderFromSMS(selectedTransaction.smsText);
-                  if (extracted) return extracted;
-                }
-                return null;
-              };
-              const displaySender = getSenderForDisplay();
-              
-              return (
-              <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-                <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Amount</Text>
-                  <Text style={[styles.detailValue, { color: colors.text, fontSize: 24, fontWeight: '700' }]}>
-                    {selectedTransaction.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    <Text style={{ fontSize: 14, fontWeight: '600', opacity: 0.6 }}> Br</Text>
-                  </Text>
-                </View>
-
-                {selectedTransaction.bank && (
-                  <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Bank/Institution</Text>
-                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.bank}</Text>
-                  </View>
-                )}
-
-                {displaySender && (
-                  <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Sender</Text>
-                    <Text style={[styles.detailValue, { color: colors.text }]}>{displaySender}</Text>
-                  </View>
-                )}
-
-                {selectedTransaction.sendFrom && (
-                  <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>From (Phone)</Text>
-                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.sendFrom}</Text>
-                  </View>
-                )}
-
-                {selectedTransaction.sendTo && (
-                  <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>To</Text>
-                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.sendTo}</Text>
-                  </View>
-                )}
-
-                <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Transaction ID</Text>
-                  <Text style={[styles.detailValue, { color: colors.text, fontFamily: 'monospace' }]}>
-                    {selectedTransaction.txnId}
-                  </Text>
-                </View>
-
-                <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Date & Time</Text>
-                  <Text style={[styles.detailValue, { color: colors.text }]}>
-                    {new Date(selectedTransaction.receivedAt).toLocaleString()}
-                  </Text>
-                </View>
-
-                <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Status</Text>
-                  <Text style={[styles.detailValue, { color: selectedTransaction.isValidated ? colors.darkGreen : '#c2410c' }]}>
-                    {selectedTransaction.isValidated ? 'Verified' : 'Pending'}
-                  </Text>
-                </View>
-
-                {selectedTransaction.pattern && (
-                  <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Pattern</Text>
-                    <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.pattern}</Text>
-                  </View>
-                )}
-
-                {selectedTransaction.smsText && (
-                  <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Original SMS</Text>
-                    <View style={[styles.smsTextContainer, { backgroundColor: colors.background }]}>
-                      <Text style={[styles.smsText, { color: colors.text }]}>{selectedTransaction.smsText}</Text>
-                    </View>
-                  </View>
-                )}
-              </ScrollView>
-              );
-            })()}
-          </View>
-        </View>
-      </Modal>
+        transaction={selectedTransaction}
+        onClose={() => setSelectedTransaction(null)}
+      />
     </ScrollView>
   );
 }
@@ -968,54 +920,6 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     fontStyle: 'italic',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '90%',
-    paddingBottom: 40,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  closeButton: {
-    padding: 4,
-  },
-  modalBody: {
-    padding: 20,
-  },
-  detailSection: {
-    marginBottom: 20,
-  },
-  detailLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  detailValue: {
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  smsTextContainer: {
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 4,
   },
   smsText: {
     fontSize: 14,

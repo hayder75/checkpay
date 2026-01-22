@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,22 +10,24 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Linking,
 } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
-import { authAPI } from '../services/api';
+import { authAPI, telegramAuthAPI } from '../services/api';
 import { patternsAPI } from '../services/api';
 import PhoneInput from '../components/PhoneInput';
 import { parsePhoneNumber } from '../utils/phoneCodes';
 import { Pattern } from '../types';
 import { storage } from '../services/storage';
 import { signInWithGoogle, completeGoogleAuth } from '../services/googleAuth';
+import Svg, { Path } from 'react-native-svg';
 
 interface Props {
   onRegisterSuccess: (user: any, apiKey: string, patterns: Pattern[]) => void;
   onSwitchToLogin: () => void;
 }
 
-type AccountType = 'USER' | 'BUSINESS_OWNER' | 'DEVELOPER';
+type AccountType = 'BUSINESS_OWNER' | 'DEVELOPER';
 
 export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: Props) {
   const { colors } = useTheme();
@@ -34,9 +36,119 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [country, setCountry] = useState('');
-  const [accountType, setAccountType] = useState<AccountType>('USER');
+  const [accountType, setAccountType] = useState<AccountType>('BUSINESS_OWNER');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [telegramLoading, setTelegramLoading] = useState(false);
+  const [botUsername, setBotUsername] = useState<string>('');
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Load Telegram bot info on mount
+  useEffect(() => {
+    telegramAuthAPI.getBotInfo()
+      .then((res) => {
+        if (res?.data?.botUsername) {
+          setBotUsername(res.data.botUsername);
+        }
+      })
+      .catch(() => {
+        // Telegram not configured
+      });
+
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+    };
+  }, []);
+
+  // Complete registration/login with user data
+  const completeAuth = async (token: string, user: any) => {
+    await storage.setToken(token);
+    await storage.setUser(user);
+    
+    const apiKey = user.apiKey;
+    if (apiKey) {
+      await storage.setApiKey(apiKey);
+      
+      // Fetch patterns
+      try {
+        const patternsResponse = await patternsAPI.getAll();
+        const patterns = patternsResponse?.success && patternsResponse?.data 
+          ? (Array.isArray(patternsResponse.data) ? patternsResponse.data : [])
+          : [];
+        onRegisterSuccess(user, apiKey, patterns);
+      } catch (error) {
+        onRegisterSuccess(user, apiKey, []);
+      }
+    } else {
+      Alert.alert('Error', 'No API key found for this account.');
+    }
+  };
+
+  // Handle Telegram deep link authentication
+  const handleTelegramAuth = async () => {
+    if (!botUsername) {
+      Alert.alert('Error', 'Telegram registration is not configured');
+      return;
+    }
+
+    setTelegramLoading(true);
+    try {
+      // Get auth token from backend
+      const initResponse = await telegramAuthAPI.init();
+      if (!initResponse?.success || !initResponse?.data?.token) {
+        Alert.alert('Error', 'Failed to initialize Telegram authentication');
+        return;
+      }
+
+      const { token, deepLink } = initResponse.data;
+
+      // Open Telegram with deep link
+      const supported = await Linking.canOpenURL(deepLink);
+      if (supported) {
+        await Linking.openURL(deepLink);
+      } else {
+        // Fallback to web link
+        await Linking.openURL(`https://t.me/${botUsername}?start=${token}`);
+      }
+
+      // Start polling for auth completion
+      let attempts = 0;
+      const maxAttempts = 60; // 5 minutes with 5 second intervals
+
+      pollingIntervalRef.current = setInterval(async () => {
+        attempts++;
+        
+        try {
+          const statusResponse = await telegramAuthAPI.checkStatus(token);
+          
+          if (statusResponse?.status === 'COMPLETED' && statusResponse?.data) {
+            if (pollingIntervalRef.current) {
+              clearInterval(pollingIntervalRef.current);
+            }
+            
+            await completeAuth(statusResponse.data.token, statusResponse.data.user);
+            setTelegramLoading(false);
+          } else if (statusResponse?.status === 'EXPIRED' || attempts >= maxAttempts) {
+            if (pollingIntervalRef.current) {
+              clearInterval(pollingIntervalRef.current);
+            }
+            setTelegramLoading(false);
+            if (attempts >= maxAttempts) {
+              Alert.alert('Timeout', 'Telegram authentication timed out. Please try again.');
+            }
+          }
+        } catch (error) {
+          // Continue polling on error
+        }
+      }, 5000);
+
+    } catch (error: any) {
+      setTelegramLoading(false);
+      Alert.alert('Error', error.message || 'Failed to start Telegram authentication');
+    }
+  };
 
   const handleRegister = async () => {
     if (!username.trim() && !phone.trim()) {
@@ -264,48 +376,30 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
                 style={[
                   styles.accountTypeOption,
                   { 
-                    backgroundColor: accountType === 'USER' ? colors.primary : colors.surface,
-                    borderColor: accountType === 'USER' ? colors.primary : colors.border,
-                  }
-                ]}
-                onPress={() => setAccountType('USER')}
-              >
-                <Text style={[
-                  styles.accountTypeText,
-                  { color: accountType === 'USER' ? colors.primaryText : colors.text }
-                ]}>
-                  User
-                </Text>
-                <Text style={[
-                  styles.accountTypeDescription,
-                  { color: accountType === 'USER' ? colors.primaryText + 'CC' : colors.textSecondary }
-                ]}>
-                  Personal use
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.accountTypeOption,
-                  { 
                     backgroundColor: accountType === 'BUSINESS_OWNER' ? colors.primary : colors.surface,
                     borderColor: accountType === 'BUSINESS_OWNER' ? colors.primary : colors.border,
                   }
                 ]}
                 onPress={() => setAccountType('BUSINESS_OWNER')}
               >
-                <Text style={[
-                  styles.accountTypeText,
-                  { color: accountType === 'BUSINESS_OWNER' ? colors.primaryText : colors.text }
-                ]}>
-                  Business Owner
-                </Text>
-                <Text style={[
-                  styles.accountTypeDescription,
-                  { color: accountType === 'BUSINESS_OWNER' ? colors.primaryText + 'CC' : colors.textSecondary }
-                ]}>
-                  Manage businesses
-                </Text>
+                <Text style={styles.accountTypeIcon}>🏢</Text>
+                <View style={styles.accountTypeTextContainer}>
+                  <Text style={[
+                    styles.accountTypeText,
+                    { color: accountType === 'BUSINESS_OWNER' ? colors.primaryText : colors.text }
+                  ]}>
+                    Business Owner
+                  </Text>
+                  <Text style={[
+                    styles.accountTypeDescription,
+                    { color: accountType === 'BUSINESS_OWNER' ? colors.primaryText + 'CC' : colors.textSecondary }
+                  ]}>
+                    Manage businesses & employees
+                  </Text>
+                </View>
+                {accountType === 'BUSINESS_OWNER' && (
+                  <Text style={styles.accountTypeCheck}>✓</Text>
+                )}
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -318,26 +412,34 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
                 ]}
                 onPress={() => setAccountType('DEVELOPER')}
               >
-                <Text style={[
-                  styles.accountTypeText,
-                  { color: accountType === 'DEVELOPER' ? colors.primaryText : colors.text }
-                ]}>
-                  Developer
-                </Text>
-                <Text style={[
-                  styles.accountTypeDescription,
-                  { color: accountType === 'DEVELOPER' ? colors.primaryText + 'CC' : colors.textSecondary }
-                ]}>
-                  Build projects
-                </Text>
+                <Text style={styles.accountTypeIcon}>💻</Text>
+                <View style={styles.accountTypeTextContainer}>
+                  <Text style={[
+                    styles.accountTypeText,
+                    { color: accountType === 'DEVELOPER' ? colors.primaryText : colors.text }
+                  ]}>
+                    Developer
+                  </Text>
+                  <Text style={[
+                    styles.accountTypeDescription,
+                    { color: accountType === 'DEVELOPER' ? colors.primaryText + 'CC' : colors.textSecondary }
+                  ]}>
+                    Build projects & integrations
+                  </Text>
+                </View>
+                {accountType === 'DEVELOPER' && (
+                  <Text style={styles.accountTypeCheck}>✓</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={[styles.label, { color: colors.text }]}>Country (Optional)</Text>
+            <Text style={[styles.label, { color: colors.text }]}>
+              Country <Text style={{ color: colors.primary }}>*</Text>
+            </Text>
             <TextInput
-              style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
+              style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: country ? colors.primary : colors.border }]}
               placeholder="ET, KE, NG, etc."
               placeholderTextColor={colors.textSecondary}
               value={country}
@@ -345,16 +447,19 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
               autoCapitalize="characters"
               maxLength={2}
             />
+            <Text style={[styles.hintSmall, { color: colors.textSecondary }]}>
+              2-letter country code (required for pattern matching)
+            </Text>
           </View>
 
           <Text style={[styles.hint, { color: colors.textSecondary }]}>
-            At least one of username or phone is required. Password must be at least 6 characters.
+            At least one of username or phone is required. Password must be at least 8 characters.
           </Text>
 
           <TouchableOpacity
-            style={[styles.button, { backgroundColor: colors.primary }, (loading || (!username && !phone) || !password || password !== confirmPassword) && styles.buttonDisabled]}
+            style={[styles.button, { backgroundColor: colors.primary }, (loading || (!username && !phone) || !password || password !== confirmPassword || !country) && styles.buttonDisabled]}
             onPress={handleRegister}
-            disabled={loading || (!username && !phone) || !password || password !== confirmPassword}
+            disabled={loading || (!username && !phone) || !password || password !== confirmPassword || !country}
           >
             {loading ? (
               <ActivityIndicator color={colors.primaryText} />
@@ -374,7 +479,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
           <TouchableOpacity
             style={[styles.googleButton, { borderColor: colors.border }, googleLoading && styles.buttonDisabled]}
             onPress={handleGoogleSignIn}
-            disabled={googleLoading || loading}
+            disabled={googleLoading || loading || telegramLoading}
           >
             {googleLoading ? (
               <ActivityIndicator color={colors.text} />
@@ -389,6 +494,38 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
               </>
             )}
           </TouchableOpacity>
+
+          {/* Telegram Register Button */}
+          {botUsername && (
+            <TouchableOpacity
+              style={[styles.telegramButton, telegramLoading && styles.buttonDisabled]}
+              onPress={handleTelegramAuth}
+              disabled={telegramLoading || loading || googleLoading}
+            >
+              {telegramLoading ? (
+                <>
+                  <ActivityIndicator color="#FFFFFF" style={{ marginRight: 8 }} />
+                  <Text style={styles.telegramButtonText}>
+                    Waiting for Telegram...
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <View style={styles.telegramIcon}>
+                    <Svg width="20" height="20" viewBox="0 0 24 24">
+                      <Path
+                        d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"
+                        fill="#FFFFFF"
+                      />
+                    </Svg>
+                  </View>
+                  <Text style={styles.telegramButtonText}>
+                    Continue with Telegram
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity
             style={styles.switchButton}
@@ -477,17 +614,32 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 12,
     borderWidth: 2,
-    alignItems: 'flex-start',
-    justifyContent: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  accountTypeIcon: {
+    fontSize: 24,
+    marginRight: 12,
+  },
+  accountTypeTextContainer: {
+    flex: 1,
   },
   accountTypeText: {
     fontSize: 16,
     fontWeight: '600',
-    marginBottom: 4,
   },
   accountTypeDescription: {
     fontSize: 12,
-    textAlign: 'center',
+    marginTop: 2,
+  },
+  accountTypeCheck: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  hintSmall: {
+    fontSize: 11,
+    marginTop: 4,
   },
   divider: {
     flexDirection: 'row',
@@ -529,6 +681,23 @@ const styles = StyleSheet.create({
   googleButtonText: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  telegramButton: {
+    height: 50,
+    borderRadius: 8,
+    backgroundColor: '#0088CC',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  telegramIcon: {
+    marginRight: 12,
+  },
+  telegramButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });
 

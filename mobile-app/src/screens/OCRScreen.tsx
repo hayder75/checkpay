@@ -22,7 +22,6 @@ import { matchInstitutionPattern, InstitutionPattern, findMatchingInstitutionPat
 import { Pattern } from '../types';
 import { storage } from '../services/storage';
 import CameraOCRScanner from '../components/CameraOCRScanner';
-import { getBuiltInPatterns } from '../services/builtInPatterns';
 import { 
   Camera, 
   Image as ImageIcon, 
@@ -219,7 +218,41 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
       });
     } catch (error: any) {
       console.error('❌ [OCR] Error sending transaction to backend:', error);
-      Alert.alert('Error', error.response?.data?.error || error.message || 'Failed to save transaction');
+      
+      const errorMessage = error.response?.data?.error || error.message || '';
+      const errorStatus = error.response?.status;
+      
+      // Handle 403 Token Exhaustion - verification credits depleted
+      if (errorStatus === 403) {
+        const isTokenExhausted = errorMessage.includes('out of credit') || 
+                                  errorMessage.includes('exhausted') || 
+                                  errorMessage.includes('verification credit') ||
+                                  errorMessage.includes('limit reached');
+        
+        if (isTokenExhausted) {
+          Alert.alert(
+            'Out of Verification Credits',
+            'You have used all your verification credits for this billing period.\n\nUpgrade your package to continue verifying transactions.',
+            [
+              { text: 'Later', style: 'cancel' },
+              { 
+                text: 'View Packages', 
+                style: 'default',
+                onPress: () => {
+                  // User can navigate to premium/packages screen
+                  console.log('📦 [OCR] User wants to view packages');
+                }
+              }
+            ]
+          );
+        } else {
+          Alert.alert('Access Denied', errorMessage || 'You do not have permission to verify this transaction.');
+        }
+      } else if (errorStatus === 401) {
+        Alert.alert('Authentication Required', 'Your session has expired. Please log in again.');
+      } else {
+        Alert.alert('Error', errorMessage || 'Failed to save transaction');
+      }
     } finally {
       setLoading(false);
     }
@@ -699,7 +732,7 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
           <View style={styles.actionCardsContainer}>
             <Text style={styles.sectionTitle}>Select Institution</Text>
             <View style={styles.institutionGrid}>
-              {getBuiltInPatterns().map((pattern) => (
+              {patterns.map((pattern) => (
                 <TouchableOpacity 
                   key={pattern.id}
                   style={[
@@ -713,23 +746,6 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
                   </View>
                   <Text style={styles.institutionName} numberOfLines={1}>{pattern.bank || pattern.name}</Text>
                   <Text style={styles.institutionType}>{pattern.name.split(' ')[0]}</Text>
-                </TouchableOpacity>
-              ))}
-              
-              {patterns.filter(p => !getBuiltInPatterns().some(bp => bp.id === p.id)).map((pattern) => (
-                <TouchableOpacity 
-                  key={pattern.id}
-                  style={[
-                    styles.institutionCard,
-                    selectedInstitution?.id === pattern.id && { borderColor: colors.primary, borderWidth: 2 }
-                  ]}
-                  onPress={() => selectInstitution(pattern)}
-                >
-                  <View style={[styles.institutionIconContainer, { backgroundColor: colors.primary + '15' }]}>
-                    <ImageIcon color={colors.primary} size={24} />
-                  </View>
-                  <Text style={styles.institutionName} numberOfLines={1}>{pattern.bank || pattern.name}</Text>
-                  <Text style={styles.institutionType}>Custom</Text>
                 </TouchableOpacity>
               ))}
             </View>
