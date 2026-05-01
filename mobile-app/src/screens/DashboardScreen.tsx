@@ -15,6 +15,7 @@ import { storage } from '../services/storage';
 import { smsService, LocalTransaction } from '../services/smsService';
 import { Pattern } from '../types';
 import { useTheme } from '../contexts/ThemeContext';
+import { dedupeTransactionsByIdentity } from '../utils/transactionDedup';
 
 interface Props {
   apiKey?: string | null;
@@ -150,6 +151,7 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
       
       // Filter out withdrawals - only show deposits (positive amounts)
       txs = txs.filter(t => t.amount > 0);
+      txs = dedupeTransactionsByIdentity(txs);
       
       // Sort by most recent first
       txs.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
@@ -173,7 +175,7 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
     // Also sync unsynced transactions if authenticated
     if (isAuthenticated) {
       try {
-        await syncUnsyncedTransactions();
+        await syncUnsyncedTransactions(false);
       } catch (error) {
         // Error already handled in syncUnsyncedTransactions
       }
@@ -181,7 +183,7 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
     setRefreshing(false);
   };
 
-  const syncUnsyncedTransactions = async () => {
+  const syncUnsyncedTransactions = async (showSuccessAlert: boolean = true) => {
     const token = await storage.getToken();
     if (!token) {
       Alert.alert('Not Signed In', 'Please sign in to sync transactions');
@@ -202,7 +204,9 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
       // Force reload transactions from backend
       await loadTransactions();
       
-      Alert.alert('Success', `Successfully synced ${unsyncedCount} transaction(s) to the backend!`);
+      if (showSuccessAlert) {
+        Alert.alert('Success', `Successfully synced ${unsyncedCount} transaction(s) to the backend!`);
+      }
     } catch (error: any) {
       console.error('Error syncing transactions:', error);
       Alert.alert(

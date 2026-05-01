@@ -3,6 +3,125 @@ import { API_BASE_URL } from '../config';
 import { storage } from './storage';
 import { log } from '../utils/logger';
 
+export type NetworkStatus = 'online' | 'offline';
+type NetworkStatusListener = (status: NetworkStatus) => void;
+
+const networkStatusListeners = new Set<NetworkStatusListener>();
+let currentNetworkStatus: NetworkStatus = 'online';
+
+const emitNetworkStatus = (status: NetworkStatus) => {
+  if (currentNetworkStatus === status) {
+    return;
+  }
+
+  currentNetworkStatus = status;
+  networkStatusListeners.forEach((listener) => {
+    try {
+      listener(status);
+    } catch (error) {
+      log.error('API', 'Network status listener error', error);
+    }
+  });
+};
+
+export const subscribeNetworkStatus = (listener: NetworkStatusListener): (() => void) => {
+  networkStatusListeners.add(listener);
+  listener(currentNetworkStatus);
+
+  return () => {
+    networkStatusListeners.delete(listener);
+  };
+};
+
+const alertCooldownMsByKey: Record<string, number> = {
+  network: 45000,
+  credits: 120000,
+  package: 120000,
+};
+const lastAlertAtByKey = new Map<string, number>();
+const interactiveHttpMethods = new Set(['post', 'put', 'patch', 'delete']);
+
+const shouldShowAlert = (key: keyof typeof alertCooldownMsByKey): boolean => {
+  const now = Date.now();
+  const cooldown = alertCooldownMsByKey[key] ?? 60000;
+  const lastShown = lastAlertAtByKey.get(key) ?? 0;
+
+  if (now - lastShown < cooldown) {
+    return false;
+  }
+
+  lastAlertAtByKey.set(key, now);
+  return true;
+};
+
+const isNetworkRelatedError = (error: any): boolean => {
+  const code = String(error?.code || '').toUpperCase();
+  const message = String(error?.message || '').toLowerCase();
+
+  return (
+    code === 'ERR_NETWORK' ||
+    code === 'ECONNABORTED' ||
+    code === 'ETIMEDOUT' ||
+    message.includes('network error') ||
+    message.includes('timeout') ||
+    (!error?.response && !!error?.request)
+  );
+};
+
+const getFriendlyNetworkMessage = (error: any): string => {
+  const code = String(error?.code || '').toUpperCase();
+  const message = String(error?.message || '').toLowerCase();
+
+  if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || message.includes('timeout')) {
+    return 'The server is taking too long to respond. Please try again in a moment.';
+  }
+
+  return 'Unable to reach the server right now. Check your internet connection and try again.';
+};
+
+const shouldShowNetworkAlert = (error: any): boolean => {
+  if (!shouldShowAlert('network')) {
+    return false;
+  }
+
+  const appState = require('react-native').AppState?.currentState;
+  if (appState && appState !== 'active') {
+    return false;
+  }
+
+  const method = String(error?.config?.method || '').toLowerCase();
+  return interactiveHttpMethods.has(method);
+};
+
+const isPublicEndpoint = (url: string): boolean => {
+  const normalizedUrl = String(url || '').toLowerCase();
+
+  return (
+    normalizedUrl.startsWith('/auth/register') ||
+    normalizedUrl.startsWith('/auth/login') ||
+    normalizedUrl.startsWith('/auth/verify-otp') ||
+    normalizedUrl.startsWith('/auth/resend-otp') ||
+    normalizedUrl.startsWith('/auth/otp/') ||
+    normalizedUrl.startsWith('/auth/telegram/init') ||
+    normalizedUrl.startsWith('/auth/telegram/check/') ||
+    normalizedUrl.startsWith('/auth/telegram/bot-info') ||
+    normalizedUrl.startsWith('/countries') ||
+    normalizedUrl.startsWith('/patterns/institutions')
+  );
+};
+
+const annotateNetworkError = (error: any): any => {
+  if (!isNetworkRelatedError(error)) {
+    return error;
+  }
+
+  error.isNetworkError = true;
+  error.originalCode = error.code;
+  error.code = 'NETWORK_ERROR';
+  error.userMessage = getFriendlyNetworkMessage(error);
+  return error;
+};
+
 // Log API configuration (only in dev mode)
 if (__DEV__) {
   log.debug('API', 'API Configuration', {
@@ -27,9 +146,23 @@ api.interceptors.request.use(
   async (config) => {
     const token = await storage.getToken();
     const apiKey = await storage.getApiKey();
+    const url = String(config.url || '');
+    const publicEndpoint = isPublicEndpoint(url);
+    (config as any)._publicEndpoint = publicEndpoint;
+    (config as any)._hadToken = !!token;
+
+    // Do not attach auth for explicitly public endpoints.
+    if (publicEndpoint) {
+      if (config.headers?.Authorization) {
+        delete config.headers.Authorization;
+      }
+      if (__DEV__) {
+        log.debug('API', 'Skipping auth for public endpoint', { url });
+      }
+    }
     
     // OCR verify endpoint requires JWT token (not API key)
-    if (config.url?.includes('/ocr/verify')) {
+    if (!publicEndpoint && config.url?.includes('/ocr/verify')) {
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
         log.debug('API', 'Using JWT token for OCR verify endpoint');
@@ -39,7 +172,7 @@ api.interceptors.request.use(
     }
     // Use API key for verify and ingest endpoints (they require API key authentication)
     // But allow JWT fallback for authenticated users
-    else if (config.url?.includes('/verify') || config.url?.includes('/ingest')) {
+    else if (!publicEndpoint && (config.url?.includes('/verify') || config.url?.includes('/ingest'))) {
       if (apiKey) {
         config.headers['X-API-Key'] = apiKey;
         log.debug('API', `Using API key for ${config.url?.includes('/verify') ? 'verification' : 'ingest'} endpoint`);
@@ -52,10 +185,10 @@ api.interceptors.request.use(
       }
     } else {
       // Use JWT token for all other endpoints
-      if (token) {
+      if (!publicEndpoint && token) {
         config.headers.Authorization = `Bearer ${token}`;
         log.debug('API', 'Using JWT token for authentication');
-      } else {
+      } else if (!publicEndpoint) {
         log.warn('API', 'No authentication token found');
       }
     }
@@ -92,6 +225,8 @@ api.interceptors.request.use(
 // Response interceptor - Handle 401 errors
 api.interceptors.response.use(
   (response) => {
+    emitNetworkStatus('online');
+
     if (__DEV__) {
       log.debug('API', 'API Response', {
         status: response.status,
@@ -101,9 +236,17 @@ api.interceptors.response.use(
     return response;
   },
   async (error) => {
+    annotateNetworkError(error);
+
+    if (error.isNetworkError) {
+      emitNetworkStatus('offline');
+    } else if (error?.response) {
+      emitNetworkStatus('online');
+    }
+
     // Enhanced error logging (no sensitive data)
     const errorDetails = {
-      message: error.message,
+      message: error.userMessage || error.message,
       code: error.code,
       status: error.response?.status,
       url: error.config?.url,
@@ -112,25 +255,34 @@ api.interceptors.response.use(
     log.error('API', 'API Error', errorDetails);
     
     // Provide helpful error messages
-    if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
+    if (error.isNetworkError) {
       log.error('API', 'Network Error', {
         baseURL: API_BASE_URL,
+        originalCode: error.originalCode,
       });
-      // Show user-friendly alert for network errors
-      // We use a timeout to prevent blocking the UI immediately if multiple requests fail
-      setTimeout(() => {
-        // Import Alert dynamically to avoid circular dependencies if any
-        const { Alert } = require('react-native');
-        Alert.alert(
-          'Connection Error',
-          'Unable to connect to the server. Please check your internet connection and try again.'
-        );
-      }, 100);
+      // Only show alerts for interactive requests while app is active.
+      if (shouldShowNetworkAlert(error)) {
+        setTimeout(() => {
+          // Import Alert dynamically to avoid circular dependencies if any
+          const { Alert } = require('react-native');
+          Alert.alert(
+            'Connection Issue',
+            error.userMessage
+          );
+        }, 100);
+      }
     }
     
     if (error.response?.status === 401) {
       const errorMessage = error.response?.data?.error || '';
       const url = error.config?.url || '';
+      const publicEndpoint = Boolean((error.config as any)?._publicEndpoint) || isPublicEndpoint(url);
+      const hadToken = Boolean((error.config as any)?._hadToken);
+
+      if (publicEndpoint || !hadToken) {
+        log.warn('API', `401 Unauthorized for ${url} - skipping token clear (public/no-token request)`);
+        return Promise.reject(error);
+      }
       
       // Only clear JWT token if it's a JWT authentication error (not API key error)
       // Don't clear token for /ingest or /verify endpoints - they use API keys
@@ -151,35 +303,56 @@ api.interceptors.response.use(
     if (error.response?.status === 403) {
       const errorMessage = error.response?.data?.error || '';
       const url = error.config?.url || '';
+      const normalized = String(errorMessage).toLowerCase();
       
       // Token exhausted - show appropriate message based on token type
-      if (errorMessage.includes('out of credit') || errorMessage.includes('exhausted') || errorMessage.includes('limit reached')) {
+      if (normalized.includes('out of credit') || normalized.includes('exhausted') || normalized.includes('limit reached')) {
         log.warn('API', `403 Forbidden - Token exhausted for ${url}`, { errorMessage });
         
         // Determine which type of token is exhausted
         const isPhoneToken = errorMessage.toLowerCase().includes('phone') || url.includes('/ingest');
         const isVerifiedToken = errorMessage.toLowerCase().includes('verif');
+        const isIngestEndpoint = url.includes('/ingest');
         
         // Show user-friendly alert with upgrade option
-        setTimeout(() => {
-          const { Alert } = require('react-native');
-          const tokenType = isPhoneToken ? 'phone sync' : isVerifiedToken ? 'verification' : 'transaction';
-          
-          Alert.alert(
-            'Out of Credits',
-            `You have used all your ${tokenType} credits.\n\nUpgrade your package to continue processing transactions.`,
-            [
-              { text: 'Later', style: 'cancel' },
-              { 
-                text: 'View Packages', 
-                onPress: () => {
-                  // Emit event for navigation (handled by app navigation)
-                  log.info('API', 'User requested to view packages from token exhaustion alert');
+        if (shouldShowAlert('credits')) {
+          setTimeout(() => {
+            const { Alert } = require('react-native');
+            const tokenType = isPhoneToken ? 'phone sync' : isVerifiedToken ? 'verification' : 'transaction';
+            const message = isIngestEndpoint
+              ? `Package limit reached for ${tokenType} credits.\n\nPlease upgrade the active package to continue processing transactions.`
+              : `You have used all your ${tokenType} credits.\n\nUpgrade your package to continue processing transactions.`;
+            
+            Alert.alert(
+              'Out of Credits',
+              message,
+              [
+                { text: 'Later', style: 'cancel' },
+                { 
+                  text: 'View Packages', 
+                  onPress: () => {
+                    // Emit event for navigation (handled by app navigation)
+                    log.info('API', 'User requested to view packages from token exhaustion alert');
+                  }
                 }
-              }
-            ]
-          );
-        }, 100);
+              ]
+            );
+          }, 100);
+        }
+      } else if (normalized.includes('package')) {
+        log.warn('API', `403 Forbidden - Package restriction for ${url}`, { errorMessage });
+        if (shouldShowAlert('package')) {
+          setTimeout(() => {
+            const { Alert } = require('react-native');
+            Alert.alert(
+              'No Active Package',
+              'Your current account package does not allow this action right now. Please upgrade to continue.',
+              [
+                { text: 'OK', style: 'cancel' },
+              ]
+            );
+          }, 100);
+        }
       } else {
         // Other 403 errors (business access, permissions, etc.)
         log.warn('API', `403 Forbidden for ${url}`, { errorMessage });
@@ -202,7 +375,7 @@ export const removeApiKey = () => {
 
 // Auth API
 export const authAPI = {
-  register: async (data: { username?: string; phone?: string; country?: string; password: string; role?: string }) => {
+  register: async (data: { username?: string; phone?: string; country?: string; password?: string; role?: string }) => {
     const response = await api.post('/auth/register', data);
     return response.data;
   },
@@ -301,12 +474,97 @@ export const patternsAPI = {
   },
   getAll: async () => {
     const response = await api.get('/patterns');
-    return response.data;
+    const base = response.data;
+
+    if (!base?.success || !Array.isArray(base?.data)) {
+      return base;
+    }
+
+    const user = await storage.getUser();
+    const role = user?.role;
+    const shouldMergeTemplates = role === 'BUSINESS_OWNER' || role === 'DEVELOPER';
+
+    if (!shouldMergeTemplates) {
+      return {
+        ...base,
+        data: dedupePatternsForDisplay(base.data),
+      };
+    }
+
+    const countryRaw = (user?.country || await storage.getCountryCode() || '').toString().trim();
+    const countryCode = countryRaw.toUpperCase();
+
+    if (!/^[A-Z]{2}$/.test(countryCode)) {
+      return {
+        ...base,
+        data: dedupePatternsForDisplay(base.data),
+      };
+    }
+
+    try {
+      const templatesResponse = await api.get(`/patterns/country/${countryCode}`);
+      const templates = templatesResponse?.data?.success && Array.isArray(templatesResponse?.data?.data)
+        ? templatesResponse.data.data
+        : [];
+
+      return {
+        ...base,
+        data: dedupePatternsForDisplay([...base.data, ...templates]),
+      };
+    } catch (mergeError) {
+      // Fall back to user/business patterns if template fetch fails.
+      return {
+        ...base,
+        data: dedupePatternsForDisplay(base.data),
+      };
+    }
   },
   validate: async (data: { smsText: string; name: string; useAI?: boolean }) => {
     const response = await api.post('/patterns/validate', data);
     return response.data;
   },
+};
+
+const normalizePatternToken = (value: any): string => {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+const normalizeRegexSignature = (value: any): string => {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\(\?i\)/g, '')
+    .replace(/\s+/g, '')
+    .trim();
+};
+
+const dedupePatternsForDisplay = (patterns: any[]): any[] => {
+  const bySignature = new Map<string, any>();
+
+  for (const pattern of patterns) {
+    const regex = normalizeRegexSignature(pattern?.regex);
+    const bank = normalizePatternToken(pattern?.bank || pattern?.institution);
+    const country = normalizePatternToken(pattern?.countryCode);
+    const signature = `${regex}|${bank}|${country}`;
+
+    if (!bySignature.has(signature)) {
+      bySignature.set(signature, pattern);
+      continue;
+    }
+
+    const existing = bySignature.get(signature);
+
+    // Prefer business/user-specific patterns over templates when content is identical.
+    const existingIsTemplate = existing?.isTemplate === true;
+    const incomingIsTemplate = pattern?.isTemplate === true;
+    if (existingIsTemplate && !incomingIsTemplate) {
+      bySignature.set(signature, pattern);
+    }
+  }
+
+  return Array.from(bySignature.values());
 };
 
 
@@ -336,7 +594,7 @@ export const employeeAPI = {
   register: async (data: { 
     code?: string; 
     qrData?: string; 
-    name: string;
+    name?: string;
     username?: string;
     phone?: string;
     password?: string;
@@ -425,6 +683,11 @@ export const institutionPatternsAPI = {
   // Get list of institutions with patterns for a country
   getInstitutions: async (countryCode: string) => {
     const response = await api.get(`/patterns/institutions?country=${countryCode}`);
+    return response.data;
+  },
+  // Get list of institutions across all countries
+  getAllInstitutions: async () => {
+    const response = await api.get('/patterns/institutions');
     return response.data;
   },
   // Get all patterns for a country (for local matching)
@@ -540,9 +803,11 @@ export const testAPIConnection = async (): Promise<{ success: boolean; message: 
       },
     };
   } catch (error: any) {
+    annotateNetworkError(error);
+
     const errorDetails = {
       baseURL: API_BASE_URL,
-      error: error.message,
+      error: error.userMessage || error.message,
       code: error.code,
       status: error.response?.status,
     };
@@ -550,8 +815,8 @@ export const testAPIConnection = async (): Promise<{ success: boolean; message: 
     log.error('API', 'Connection test failed', errorDetails);
     
     let message = 'Connection failed';
-    if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
-      message = `Cannot reach backend at ${API_BASE_URL}. Check if backend is running.`;
+    if (error.isNetworkError) {
+      message = error.userMessage;
     } else if (error.response?.status === 401) {
       message = 'Authentication failed. Please sign in again.';
     } else if (error.response?.status === 404) {

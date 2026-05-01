@@ -13,6 +13,7 @@ import { CheckCircle2, RefreshCw, ArrowDown, ArrowUp, Clock } from 'lucide-react
 import { storage } from '../services/storage';
 import { useTheme } from '../contexts/ThemeContext';
 import { dashboardAPI, verifyTransaction } from '../services/api';
+import { dedupeTransactionsByIdentity } from '../utils/transactionDedup';
 
 interface Props {
   apiKey?: string | null;
@@ -114,9 +115,11 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
               };
             });
           
+          const dedupedTransactions = dedupeTransactionsByIdentity(unverifiedTxs);
+
           // Sort by most recent first
-          unverifiedTxs.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
-          setTransactions(unverifiedTxs);
+          dedupedTransactions.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
+          setTransactions(dedupedTransactions);
         }
       } catch (error) {
         console.error('Error fetching transactions from backend:', error);
@@ -141,7 +144,7 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
 
     Alert.alert(
       'Verify Payment',
-      `Are you sure you want to verify this payment of ${transaction.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Br from ${transaction.sender}?`,
+      `Verify transaction number ${transaction.txnId}?`,
       [
         {
           text: 'Cancel',
@@ -157,7 +160,7 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
               if (result.success && result.data?.confirmed) {
                 Alert.alert(
                   'Success',
-                  `Payment of ${result.data.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Br from ${result.data.sender || transaction.sender} has been verified.`,
+                  `Transaction number ${transaction.txnId} has been verified.`,
                   [{ text: 'OK', onPress: () => loadTransactions() }]
                 );
               } else {

@@ -3,13 +3,14 @@
  * Monitors incoming SMS in real-time and extracts transactions
  */
 
-import { Platform, AppState, AppStateStatus } from 'react-native';
+import { Platform, AppState, AppStateStatus, Alert } from 'react-native';
 import { storage } from './storage';
 import { matchInstitutionPattern, InstitutionPattern } from '../utils/patternMatcher';
 import { maskPhone } from '../utils/maskPhone';
 import { ingestTransaction } from './api';
 import { installationService } from './installation';
 import { log } from '../utils/logger';
+import { dedupeTransactionsByIdentity, normalizeTxnId } from '../utils/transactionDedup';
 // Patterns are now always fetched from backend, no local caching
 
 export interface LocalTransaction {
@@ -37,8 +38,28 @@ class SMSService {
   private checkInterval: NodeJS.Timeout | null = null;
   private appStateSubscription: any = null; // Subscription for AppState changes
   private lastSyncTime: number = 0;
+  private syncInProgress: boolean = false;
+  private lastPackageNoticeAt: number = 0;
   private installationDate: Date | null = null; // Cache installation date
   private stateLoaded: boolean = false;
+
+  private notifyPackageLimit(errorMessage: string): void {
+    const now = Date.now();
+    if (now - this.lastPackageNoticeAt < 120000) {
+      return;
+    }
+    this.lastPackageNoticeAt = now;
+
+    const appState = require('react-native').AppState?.currentState;
+    if (appState && appState !== 'active') {
+      return;
+    }
+
+    Alert.alert(
+      'Package Limit Reached',
+      errorMessage || 'Phone sync credits for the active package are exhausted. New SMS will be stored locally and will sync after package credits are available.'
+    );
+  }
 
   /**
    * Load persisted state from storage (processed SMS IDs and timestamp)
@@ -799,19 +820,36 @@ class SMSService {
    */
   private async saveLocalTransaction(transaction: LocalTransaction): Promise<void> {
     const transactions = await this.getLocalTransactions();
+    const incomingTxnId = normalizeTxnId(transaction.txnId);
+    const normalizedIncoming = {
+      ...transaction,
+      txnId: incomingTxnId || transaction.txnId,
+    };
     
-    // Check if transaction already exists (by txnId)
-    const existingIndex = transactions.findIndex(t => t.txnId === transaction.txnId);
+    // Check if transaction already exists (normalized txnId first, then exact fallback)
+    const existingIndex = transactions.findIndex((t) => {
+      const currentTxnId = normalizeTxnId(t.txnId);
+      if (incomingTxnId && currentTxnId) {
+        return currentTxnId === incomingTxnId;
+      }
+      return t.txnId === transaction.txnId;
+    });
+
     if (existingIndex >= 0) {
       // Update existing transaction
-      transactions[existingIndex] = transaction;
+      transactions[existingIndex] = {
+        ...transactions[existingIndex],
+        ...normalizedIncoming,
+      };
     } else {
       // Add new transaction
-      transactions.unshift(transaction); // Add to beginning
+      transactions.unshift(normalizedIncoming); // Add to beginning
     }
 
+    const dedupedTransactions = dedupeTransactionsByIdentity(transactions);
+
     // Keep only last 1000 transactions locally
-    const limitedTransactions = transactions.slice(0, 1000);
+    const limitedTransactions = dedupedTransactions.slice(0, 1000);
     
     await storage.setLocalTransactions(limitedTransactions);
   }
@@ -875,6 +913,40 @@ class SMSService {
       const errorMessage = error.response?.data?.error || error.message;
       const errorStatus = error.response?.status;
       const errorCode = error.code;
+
+      const normalizedErrorMessage = String(errorMessage || '').toLowerCase();
+      const isTokenExhausted = errorStatus === 403 && (
+        normalizedErrorMessage.includes('out of credit') ||
+        normalizedErrorMessage.includes('exhausted') ||
+        normalizedErrorMessage.includes('limit reached') ||
+        normalizedErrorMessage.includes('token')
+      );
+      const isPackageRestricted = errorStatus === 403 && normalizedErrorMessage.includes('package');
+
+      // For expected package/token limits, store locally and notify user once (throttled).
+      if (isTokenExhausted || isPackageRestricted) {
+        const notice = 'Phone sync credits for the active package are exhausted. Transactions are saved locally and will sync after package credits are available.';
+        this.notifyPackageLimit(notice);
+
+        if (isTokenExhausted) {
+          log.warn('SMS Service', 'Token exhausted - storing transaction locally', {
+            txnId: transaction.txnId,
+            errorMessage,
+          });
+          (transaction as any).tokenExhausted = true;
+          (transaction as any).tokenExhaustedAt = new Date().toISOString();
+        } else {
+          log.warn('SMS Service', 'Package restriction - storing transaction locally', {
+            txnId: transaction.txnId,
+            errorMessage,
+          });
+          (transaction as any).packageRestricted = true;
+          (transaction as any).packageRestrictedAt = new Date().toISOString();
+        }
+
+        await this.updateLocalTransaction(transaction);
+        return;
+      }
       
       console.error('❌ [SMS Service] Error syncing transaction to backend:', {
         txnId: transaction.txnId,
@@ -886,30 +958,8 @@ class SMSService {
         hasApiKey: !!await storage.getApiKey(),
       });
       
-      // Handle 403 Token Exhaustion - don't retry, store locally and wait for upgrade
+      // Handle other 403 responses
       if (errorStatus === 403) {
-        const isTokenExhausted = errorMessage.includes('out of credit') || 
-                                  errorMessage.includes('exhausted') || 
-                                  errorMessage.includes('limit reached');
-        
-        if (isTokenExhausted) {
-          console.warn('💳 [SMS Service] Phone sync credits exhausted - transaction stored locally');
-          console.warn('   Transaction will be synced when credits are available');
-          log.warn('SMS Service', 'Token exhausted - storing transaction locally', {
-            txnId: transaction.txnId,
-            errorMessage,
-          });
-          
-          // Mark transaction with special flag for token exhaustion (don't retry automatically)
-          // The transaction stays local but won't be retried until user has tokens
-          (transaction as any).tokenExhausted = true;
-          (transaction as any).tokenExhaustedAt = new Date().toISOString();
-          await this.updateLocalTransaction(transaction);
-          
-          // Don't throw - let the transaction stay local without constant retries
-          return;
-        }
-        
         console.error('🚫 [SMS Service] Access forbidden - check business permissions');
       }
       
@@ -958,74 +1008,79 @@ class SMSService {
    * Sync all unsynced transactions to backend (uses JWT token authentication)
    */
   async syncAllUnsyncedTransactions(): Promise<void> {
-    const token = await storage.getToken();
-    if (!token) {
-      // console.warn('⚠️ [SMS Service] No authentication token, skipping sync');
-      // console.warn('⚠️ [SMS Service] User needs to sign in to sync transactions');
-      throw new Error('No authentication token. Please sign in to sync transactions.');
-    }
-
-    const transactions = await this.getLocalTransactions();
-    const unsynced = transactions.filter(t => !t.synced);
-
-    if (unsynced.length === 0) {
-      // console.log('✅ [SMS Service] No unsynced transactions to sync');
+    if (this.syncInProgress) {
       return;
     }
 
-    // console.log(`🔄 [SMS Service] Syncing ${unsynced.length} unsynced transactions...`);
-
-    let successCount = 0;
-    let failCount = 0;
-    const errors: string[] = [];
-
-    for (const transaction of unsynced) {
-      try {
-        await this.syncTransactionToBackend(transaction);
-        successCount++;
-        console.log(`✅ [SMS Service] Synced transaction ${transaction.txnId} (${successCount}/${unsynced.length})`);
-      } catch (error: any) {
-        failCount++;
-        const errorMsg = error.response?.data?.error || error.message || 'Unknown error';
-        const errorStatus = error.response?.status;
-        const errorCode = error.code;
-        
-        // Build detailed error message
-        let detailedError = `${transaction.txnId}: ${errorMsg}`;
-        if (errorStatus) {
-          detailedError += ` (HTTP ${errorStatus})`;
-        }
-        if (errorCode === 'ERR_NETWORK' || errorCode === 'ECONNREFUSED') {
-          detailedError += ' [Network Error]';
-        }
-        
-        errors.push(detailedError);
-        console.error(`❌ [SMS Service] Failed to sync transaction ${transaction.txnId}:`, {
-          error: errorMsg,
-          status: errorStatus,
-          code: errorCode,
-          txnId: transaction.txnId,
-          amount: transaction.amount,
-          bank: transaction.bank,
-        });
-      }
+    const token = await storage.getToken();
+    if (!token) {
+      // User may not be logged in yet (or just logged out). Skip background sync quietly.
+      return;
     }
 
-    console.log(`✅ [SMS Service] Sync complete: ${successCount} succeeded, ${failCount} failed`);
-    
-    if (failCount > 0) {
-      // Log detailed error information for debugging
-      console.warn('⚠️ [SMS Service] Some transactions failed to sync:', {
-        failedCount: failCount,
-        totalCount: unsynced.length,
-        errors: errors.slice(0, 5), // Show first 5 errors
-        message: `${failCount} of ${unsynced.length} transaction(s) failed to sync`,
-      });
+    this.syncInProgress = true;
+
+    try {
+
+      const transactions = await this.getLocalTransactions();
+      const unsyncedCandidates = transactions.filter(
+        (t: any) => !t.synced && !t.tokenExhausted && !t.packageRestricted
+      );
+      const unsynced = dedupeTransactionsByIdentity(unsyncedCandidates);
+
+      if (unsynced.length === 0) {
+        return;
+      }
+
+    // console.log(`🔄 [SMS Service] Syncing ${unsynced.length} unsynced transactions...`);
+
+      let successCount = 0;
+      let failCount = 0;
+      const errors: string[] = [];
+
+      for (const transaction of unsynced) {
+        try {
+          await this.syncTransactionToBackend(transaction);
+          successCount++;
+          console.log(`✅ [SMS Service] Synced transaction ${transaction.txnId} (${successCount}/${unsynced.length})`);
+        } catch (error: any) {
+          failCount++;
+          const errorMsg = error.response?.data?.error || error.message || 'Unknown error';
+          const errorStatus = error.response?.status;
+          const errorCode = error.code;
+          
+          let detailedError = `${transaction.txnId}: ${errorMsg}`;
+          if (errorStatus) {
+            detailedError += ` (HTTP ${errorStatus})`;
+          }
+          if (errorCode === 'ERR_NETWORK' || errorCode === 'ECONNREFUSED') {
+            detailedError += ' [Network Error]';
+          }
+          
+          errors.push(detailedError);
+          console.error(`❌ [SMS Service] Failed to sync transaction ${transaction.txnId}:`, {
+            error: errorMsg,
+            status: errorStatus,
+            code: errorCode,
+            txnId: transaction.txnId,
+            amount: transaction.amount,
+            bank: transaction.bank,
+          });
+        }
+      }
+
+      console.log(`✅ [SMS Service] Sync complete: ${successCount} succeeded, ${failCount} failed`);
       
-      // Provide more detailed error message
-      const errorSummary = errors.slice(0, 3).join('; ');
-      const remainingErrors = errors.length > 3 ? ` and ${errors.length - 3} more` : '';
-      throw new Error(`${failCount} transaction(s) failed to sync${remainingErrors}. ${errorSummary}`);
+      if (failCount > 0) {
+        console.warn('⚠️ [SMS Service] Some transactions failed to sync:', {
+          failedCount: failCount,
+          totalCount: unsynced.length,
+          errors: errors.slice(0, 5),
+          message: `${failCount} of ${unsynced.length} transaction(s) failed to sync`,
+        });
+      }
+    } finally {
+      this.syncInProgress = false;
     }
   }
 

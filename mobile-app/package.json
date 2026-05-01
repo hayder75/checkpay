@@ -1,6 +1,6 @@
 {
   "name": "mobile-app",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "index.ts",
   "scripts": {
     "start": "expo start --dev-client",
@@ -9,6 +9,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "build:android": "eas build --platform android --profile development",
+    "build:android:production": "eas build --platform android --profile production",
     "build:ios": "eas build --platform ios --profile development"
   },
   "dependencies": {
@@ -21,7 +22,7 @@
     "expo-clipboard": "^8.0.7",
     "expo-contacts": "~15.0.11",
     "expo-crypto": "^15.0.8",
-    "expo-dev-client": "^6.0.18",
+    "expo-dev-client": "^6.0.21",
     "expo-device": "^8.0.9",
     "expo-image-manipulator": "^14.0.8",
     "expo-image-picker": "^17.0.10",

@@ -30,6 +30,8 @@ interface Props {
   onSwitchToEmployeeRegister?: () => void;
 }
 
+const PENDING_TELEGRAM_AUTH_TOKEN_KEY = 'pending_telegram_auth_token';
+
 export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwitchToEmployeeRegister }: Props) {
   const { theme, colors } = useTheme();
   const [phone, setPhone] = useState('');
@@ -68,6 +70,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
 
   // Complete login with user data
   const completeLogin = async (token: string, user: any) => {
+    await storage.removeItem(PENDING_TELEGRAM_AUTH_TOKEN_KEY);
     await storage.setToken(token);
     await storage.setUser(user);
     
@@ -107,6 +110,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
       }
 
       const { token, deepLink } = initResponse.data;
+      await storage.setItem(PENDING_TELEGRAM_AUTH_TOKEN_KEY, token);
 
       // Open Telegram with deep link
       const supported = await Linking.canOpenURL(deepLink);
@@ -138,6 +142,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
             if (pollingIntervalRef.current) {
               clearInterval(pollingIntervalRef.current);
             }
+            await storage.removeItem(PENDING_TELEGRAM_AUTH_TOKEN_KEY);
             setTelegramLoading(false);
             if (attempts >= maxAttempts) {
               Alert.alert('Timeout', 'Telegram authentication timed out. Please try again.');
@@ -149,6 +154,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
       }, 5000);
 
     } catch (error: any) {
+      await storage.removeItem(PENDING_TELEGRAM_AUTH_TOKEN_KEY);
       setTelegramLoading(false);
       Alert.alert('Error', error.message || 'Failed to start Telegram login');
     }
@@ -374,10 +380,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
       >
         <View style={styles.header}>
           <Image 
-            source={theme === 'dark' 
-              ? require('../../assets/logo/logo - Asset 1.png') 
-              : require('../../assets/logo/logo - Asset 2.png')
-            } 
+            source={require('../../assets/logo/logo - Asset 10.png')} 
             style={styles.logo} 
             resizeMode="contain"
           />
@@ -522,7 +525,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
               onPress={onSwitchToEmployeeRegister}
             >
               <Text style={[styles.switchText, { color: colors.textSecondary }]}>
-                Login as Employee
+                Employee Access with Code or QR
               </Text>
             </TouchableOpacity>
           )}

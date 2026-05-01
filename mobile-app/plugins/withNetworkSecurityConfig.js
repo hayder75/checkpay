@@ -7,6 +7,29 @@ const path = require('path');
  * Required for apps that need to communicate with HTTP (non-HTTPS) servers
  */
 function withNetworkSecurityConfig(config) {
+  const buildProfile = (process.env.EAS_BUILD_PROFILE || process.env.APP_ENV || '').toLowerCase();
+  const isProduction = buildProfile === 'production';
+
+  if (isProduction) {
+    return withAndroidManifest(config, (config) => {
+      const manifest = config.modResults.manifest;
+
+      if (!manifest.application || !manifest.application[0]) {
+        manifest.application = [{ $: {} }];
+      }
+
+      const application = manifest.application[0];
+      if (!application.$) {
+        application.$ = {};
+      }
+
+      delete application.$['android:networkSecurityConfig'];
+      application.$['android:usesCleartextTraffic'] = 'false';
+
+      return config;
+    });
+  }
+
   // Step 1: Create network_security_config.xml
   config = withDangerousMod(config, [
     'android',

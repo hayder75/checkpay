@@ -4,7 +4,6 @@ import {
   Text,
   ScrollView,
   StyleSheet,
-  TextInput,
   TouchableOpacity,
   Alert,
   FlatList,
@@ -24,7 +23,6 @@ export default function BanksScreen({ apiKey }: Props) {
   const { colors } = useTheme();
   const [banks, setBanks] = useState<string[]>([]);
   const [availableInstitutions, setAvailableInstitutions] = useState<string[]>([]);
-  const [newBank, setNewBank] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -159,30 +157,6 @@ export default function BanksScreen({ apiKey }: Props) {
     setRefreshing(false);
   };
 
-  const handleAddBank = async () => {
-    if (!newBank.trim()) {
-      Alert.alert('Error', 'Please enter an institution name');
-      return;
-    }
-
-    const bankName = newBank.trim();
-    if (banks.includes(bankName)) {
-      Alert.alert('Error', 'This institution is already in the list');
-      return;
-    }
-
-    const updatedBanks = [...banks, bankName];
-    setBanks(updatedBanks);
-    await storage.setSelectedBanks(updatedBanks);
-    
-    // Also add to available institutions if not already there
-    if (!availableInstitutions.includes(bankName)) {
-      setAvailableInstitutions([...availableInstitutions, bankName].sort());
-    }
-    
-    setNewBank('');
-  };
-
   const handleRemoveBank = async (bankName: string) => {
     Alert.alert(
       'Remove Bank',
@@ -203,7 +177,7 @@ export default function BanksScreen({ apiKey }: Props) {
   };
 
   const renderBankItem = ({ item }: { item: string }) => (
-    <View style={styles.bankItem}>
+    <View style={[styles.bankItem, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
       <View style={styles.bankInfo}>
         <View style={[styles.bankIcon, { backgroundColor: colors.surface }]}>
           <Building2 size={20} color={colors.primary} />
@@ -263,32 +237,13 @@ export default function BanksScreen({ apiKey }: Props) {
             />
           }
         >
-        {/* Add Bank Form */}
-        <View style={styles.addSection}>
-          <View style={[styles.inputContainer, { backgroundColor: colors.surface }]}>
-            <TextInput
-              style={[styles.input, { color: colors.text }]}
-              placeholder="Add bank name..."
-              placeholderTextColor={colors.textSecondary}
-              value={newBank}
-              onChangeText={setNewBank}
-              onSubmitEditing={handleAddBank}
-            />
-            <TouchableOpacity
-              style={[styles.addButton, { backgroundColor: colors.primary }]}
-              onPress={handleAddBank}
-            >
-              <Plus size={20} color="#fff" />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Banks List */}
+        {/* Selected Banks */}
         <View style={styles.listSection}>
+          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Selected Banks ({banks.length})</Text>
           {banks.length === 0 ? (
             <View style={styles.emptyState}>
               <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                No banks selected yet. Add banks below or pull to refresh.
+                No banks selected yet.
               </Text>
             </View>
           ) : (
@@ -302,22 +257,24 @@ export default function BanksScreen({ apiKey }: Props) {
         </View>
 
         {/* Available Banks */}
-        {availableInstitutions.length > 0 && (
-          <View style={styles.listSection}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
-              Add More Banks
-            </Text>
+        <View style={styles.listSection}>
+          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Available Banks</Text>
+
+          {availableInstitutions.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No banks available right now. Pull to refresh.</Text>
+            </View>
+          ) : (
             <View style={styles.availableList}>
               {availableInstitutions
                 .filter(inst => {
                   const isTracked = banks.some(b => b.toLowerCase() === inst.toLowerCase());
                   return !isTracked;
                 })
-                .slice(0, 10)
                 .map((institution) => (
                   <TouchableOpacity
                     key={institution}
-                    style={[styles.availableItem, { backgroundColor: colors.surface }]}
+                    style={[styles.availableItem, { backgroundColor: colors.surface, borderColor: colors.border }]}
                     onPress={async () => {
                       const updatedBanks = [...banks, institution];
                       setBanks(updatedBanks);
@@ -325,13 +282,19 @@ export default function BanksScreen({ apiKey }: Props) {
                     }}
                   >
                     <Building2 size={16} color={colors.primary} />
-                    <Text style={[styles.availableItemText, { color: colors.text }]}>
+                    <Text style={[styles.availableItemText, { color: colors.text }]}> 
                       {institution}
                     </Text>
                     <Plus size={16} color={colors.primary} />
                   </TouchableOpacity>
                 ))}
             </View>
+          )}
+        </View>
+
+        {availableInstitutions.length > 0 && (
+          <View style={styles.listSection}>
+            <Text style={[styles.moreText, { color: colors.textSecondary }]}>Tap a bank above to add it to your selected list.</Text>
           </View>
         )}
       </ScrollView>
@@ -400,29 +363,6 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
-  addSection: {
-    padding: 20,
-    paddingTop: 10,
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 12,
-    padding: 4,
-    paddingLeft: 16,
-  },
-  input: {
-    flex: 1,
-    height: 44,
-    fontSize: 16,
-  },
-  addButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   listSection: {
     padding: 20,
     paddingTop: 10,
@@ -437,9 +377,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
     paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#f0f0f0',
+    paddingHorizontal: 12,
+    marginBottom: 8,
   },
   bankInfo: {
     flexDirection: 'row',
@@ -483,6 +425,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 12,
     borderRadius: 8,
+    borderWidth: 1,
     gap: 12,
   },
   availableItemText: {

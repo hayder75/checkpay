@@ -202,7 +202,7 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
 
   // Memoize filtered transactions (only deposits, sorted)
   const filteredTransactions = useMemo(() => {
-    return transactions.filter(t => t.amount > 0)
+    return transactions.filter(t => t.amount > 0 && t.isValidated)
       .sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
   }, [transactions]);
 
@@ -375,9 +375,15 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
     return chartDataCopy;
   }, [chartData, getNiceMaxY]);
 
-  // Memoize user name
   const userName = useMemo(() => {
     return getDisplayName(user);
+  }, [user]);
+
+  // Check if we should show the greeting (only if name or username exists)
+  const shouldShowGreeting = useMemo(() => {
+    if (!user) return false;
+    const userData = user.user || user.data || user;
+    return !!(userData.firstName || userData.first_name || userData.name || userData.username);
   }, [user]);
 
   // Extract sender name from SMS text if not already captured
@@ -436,10 +442,12 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
       {/* Header (Separate) */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <View>
-            <Text style={[styles.greeting, { color: colors.textSecondary }]}>Hello,</Text>
-            <Text style={[styles.title, { color: colors.text }]}>{userName}</Text>
-          </View>
+          {shouldShowGreeting && (
+            <View>
+              <Text style={[styles.greeting, { color: colors.textSecondary }]}>Hello,</Text>
+              <Text style={[styles.title, { color: colors.text }]}>{userName}</Text>
+            </View>
+          )}
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           {/* Employee Management Button (Only for Business Owners) */}
@@ -637,7 +645,7 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
             </TouchableOpacity>
           )}
         </View>
-        {transactions.slice(0, 5).map((tx) => {
+        {filteredTransactions.slice(0, 5).map((tx) => {
           const isIncome = tx.amount > 0;
           const displayName = getTransactionDisplayName(tx);
           return (
@@ -685,7 +693,7 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
             </TouchableOpacity>
           );
         })}
-        {transactions.length === 0 && (
+        {filteredTransactions.length === 0 && (
           <View style={styles.emptyState}>
             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No transactions yet</Text>
           </View>

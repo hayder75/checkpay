@@ -1,4 +1,5 @@
 import { Platform, PermissionsAndroid, Alert, Linking, NativeModules } from 'react-native';
+import { isDefaultSMSApp, requestDefaultSMSRole } from './smsRole';
 
 // Try to import react-native-get-sms-android
 let SmsAndroid: any = null;
@@ -30,6 +31,26 @@ export async function requestSMSPermission(): Promise<boolean> {
   }
 
   try {
+    const isDefault = await isDefaultSMSApp();
+    if (!isDefault) {
+      Alert.alert(
+        'Default SMS App Required',
+        'For Google Play compliance, SMS auto import works only when CheckPay is your default SMS app. You can continue in manual mode.',
+        [
+          { text: 'Manual Mode', style: 'cancel' },
+          {
+            text: 'Enable SMS Import',
+            onPress: () => {
+              requestDefaultSMSRole().catch(() => {
+                // no-op
+              });
+            },
+          },
+        ]
+      );
+      return false;
+    }
+
     // Check if permission is already granted
     const hasPermission = await PermissionsAndroid.check(
       PermissionsAndroid.PERMISSIONS.READ_SMS
@@ -232,6 +253,7 @@ export async function checkSMSReadingCapability(): Promise<{
   available: boolean;
   hasPermission: boolean;
   hasNativeModule: boolean;
+  hasDefaultSMSRole: boolean;
   error?: string;
 }> {
   if (Platform.OS !== 'android') {
@@ -239,11 +261,13 @@ export async function checkSMSReadingCapability(): Promise<{
       available: false,
       hasPermission: false,
       hasNativeModule: false,
+      hasDefaultSMSRole: false,
       error: 'SMS reading is only available on Android',
     };
   }
 
   try {
+    const hasDefaultSMSRole = await isDefaultSMSApp();
     const hasPermission = await PermissionsAndroid.check(
       PermissionsAndroid.PERMISSIONS.READ_SMS
     );
@@ -252,16 +276,18 @@ export async function checkSMSReadingCapability(): Promise<{
     const moduleError = smsModuleLoadError ? smsModuleLoadError.message : null;
 
     return {
-      available: hasPermission && hasNativeModule,
+      available: hasPermission && hasNativeModule && hasDefaultSMSRole,
       hasPermission,
       hasNativeModule,
-      error: moduleError || (!hasNativeModule ? 'react-native-get-sms-android not available. Make sure the app has been rebuilt after installing the package.' : undefined),
+      hasDefaultSMSRole,
+      error: moduleError || (!hasNativeModule ? 'react-native-get-sms-android not available. Make sure the app has been rebuilt after installing the package.' : !hasDefaultSMSRole ? 'Set CheckPay as default SMS app to enable SMS auto import.' : undefined),
     };
   } catch (error: any) {
     return {
       available: false,
       hasPermission: false,
       hasNativeModule: false,
+      hasDefaultSMSRole: false,
       error: error.message || 'Unknown error checking SMS capability',
     };
   }

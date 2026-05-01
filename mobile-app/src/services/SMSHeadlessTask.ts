@@ -5,6 +5,7 @@
 
 import { AppRegistry } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isDefaultSMSApp } from '../utils/smsRole';
 
 // Storage keys (must match storage.ts and config.ts)
 const STORAGE_KEYS = {
@@ -49,6 +50,12 @@ async function SMSReceivedTask(taskData: SMSData): Promise<void> {
   });
 
   try {
+    const defaultRoleGranted = await isDefaultSMSApp();
+    if (!defaultRoleGranted) {
+      console.log('⏭️ [HeadlessJS] Skipping SMS processing: app is not default SMS app');
+      return;
+    }
+
     // Check installation date - skip SMS from before installation
     const installDateStr = await AsyncStorage.getItem(STORAGE_KEYS.INSTALLATION_DATE);
     if (installDateStr) {

@@ -12,13 +12,14 @@ import {
   AppState,
   AppStateStatus,
 } from 'react-native';
-import { CreditCard, RefreshCw, ArrowDown, ArrowUp, X, CheckCircle2 } from 'lucide-react-native';
+import { RefreshCw, ArrowDown, ArrowUp, X, CheckCircle2, Filter } from 'lucide-react-native';
 import { storage } from '../services/storage';
 import { smsService, LocalTransaction } from '../services/smsService';
 import { useTheme } from '../contexts/ThemeContext';
 import { dashboardAPI } from '../services/api';
 import TransactionDetailsModal from '../components/TransactionDetailsModal';
 import VerifyPaymentsScreen from './VerifyPaymentsScreen';
+import { dedupeTransactionsByIdentity } from '../utils/transactionDedup';
 
 interface Props {
   apiKey?: string | null;
@@ -26,14 +27,21 @@ interface Props {
 
 type TransactionsTab = 'transactions' | 'verify';
 
+type LocalTransactionWithMeta = LocalTransaction & {
+  businessId?: string | null;
+  businessName?: string | null;
+};
+
 export default function TransactionsScreen({ apiKey }: Props) {
   const { colors } = useTheme();
   const [activeTab, setActiveTab] = useState<TransactionsTab>('transactions');
-  const [transactions, setTransactions] = useState<LocalTransaction[]>([]);
+  const [transactions, setTransactions] = useState<LocalTransactionWithMeta[]>([]);
+  const [bankFilter, setBankFilter] = useState<string>('all');
+  const [businessFilter, setBusinessFilter] = useState<string>('all');
   const [refreshing, setRefreshing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [selectedTransaction, setSelectedTransaction] = useState<LocalTransaction | null>(null);
+  const [selectedTransaction, setSelectedTransaction] = useState<LocalTransactionWithMeta | null>(null);
 
   useEffect(() => {
     checkAuth();
@@ -62,7 +70,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
   const loadTransactions = async () => {
     try {
       // First load local transactions as fallback
-      let txs = await storage.getLocalTransactions();
+      let txs: LocalTransactionWithMeta[] = (await storage.getLocalTransactions()) as LocalTransactionWithMeta[];
       
       // Try to fetch from backend if authenticated (backend is source of truth)
       const token = await storage.getToken();
@@ -75,7 +83,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
               : response.data.transactions || [];
             
             // Convert backend transactions to LocalTransaction format
-            const convertedTxs: LocalTransaction[] = backendTxs.map((tx: any) => {
+            const convertedTxs: LocalTransactionWithMeta[] = backendTxs.map((tx: any) => {
               // Handle sender - can be string or object {name, bank}
               let senderValue = '';
               if (typeof tx.sender === 'string') {
@@ -116,6 +124,8 @@ export default function TransactionsScreen({ apiKey }: Props) {
                 synced: true,
                 isValidated: tx.isValidated || false,
                 createdAt: tx.createdAt || new Date().toISOString(),
+                businessId: tx.businessId || tx.business?.id || null,
+                businessName: tx.business?.name || tx.businessName || null,
               };
             });
             
@@ -138,6 +148,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
       
       // Filter out withdrawals - only show deposits (positive amounts)
       txs = txs.filter(t => t.amount > 0);
+      txs = dedupeTransactionsByIdentity(txs);
       
       // Sort by most recent first
       txs.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
@@ -161,7 +172,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
     }
     if (isAuthenticated) {
       try {
-        await syncUnsyncedTransactions();
+        await syncUnsyncedTransactions(false);
       } catch (error) {
         // Error already handled in syncUnsyncedTransactions
       }
@@ -169,7 +180,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
     setRefreshing(false);
   };
 
-  const syncUnsyncedTransactions = async () => {
+  const syncUnsyncedTransactions = async (showSuccessAlert: boolean = true) => {
     const token = await storage.getToken();
     if (!token) {
       Alert.alert('Not Signed In', 'Please sign in to sync transactions');
@@ -205,7 +216,9 @@ export default function TransactionsScreen({ apiKey }: Props) {
       await loadTransactions();
       
       console.log('✅ [TransactionsScreen] Sync complete, transactions refreshed');
-      Alert.alert('Success', `Successfully synced ${unsyncedCount} transaction(s) to the backend!`);
+      if (showSuccessAlert) {
+        Alert.alert('Success', `Successfully synced ${unsyncedCount} transaction(s) to the backend!`);
+      }
     } catch (error: any) {
       console.error('Error syncing transactions:', error);
       const errorMsg = error.response?.data?.error || error.message || 'Failed to sync transactions';
@@ -269,6 +282,39 @@ export default function TransactionsScreen({ apiKey }: Props) {
     return 'Transaction';
   };
 
+  const availableBanks = Array.from(
+    new Set(transactions.map(t => (t.bank && t.bank.trim() ? t.bank.trim() : 'Unknown Bank')))
+  ).sort((a, b) => a.localeCompare(b));
+
+  const availableBusinesses = Array.from(
+    new Set(
+      transactions
+        .map(t => {
+          if (t.businessName && t.businessName.trim()) return t.businessName.trim();
+          if (t.businessId && t.businessId.trim()) return `Business ${t.businessId.slice(0, 6)}`;
+          return 'No Business';
+        })
+    )
+  ).sort((a, b) => a.localeCompare(b));
+
+  const filteredTransactions = transactions.filter((t) => {
+    // Only show verified transactions in the Transactions tab
+    if (!t.isValidated) return false;
+
+    const txBank = t.bank && t.bank.trim() ? t.bank.trim() : 'Unknown Bank';
+    const txBusiness = t.businessName && t.businessName.trim()
+      ? t.businessName.trim()
+      : t.businessId && t.businessId.trim()
+      ? `Business ${t.businessId.slice(0, 6)}`
+      : 'No Business';
+
+    const bankOk = bankFilter === 'all' || txBank === bankFilter;
+    const businessOk = businessFilter === 'all' || txBusiness === businessFilter;
+    return bankOk && businessOk;
+  });
+
+  const hasActiveFilters = bankFilter !== 'all' || businessFilter !== 'all';
+
   const renderTransaction = ({ item }: { item: LocalTransaction }) => {
     const isIncome = item.amount > 0;
     const displayName = getDisplayName(item);
@@ -289,15 +335,22 @@ export default function TransactionsScreen({ apiKey }: Props) {
             </View>
             <View style={styles.transactionInfo}>
               {item.sender && item.sender !== 'Unknown' && item.sender !== '' && (
-                <Text style={[styles.transactionSender, { color: colors.text }]}>
+                <Text style={[styles.transactionSender, { color: colors.text }]} numberOfLines={1}>
                   {item.sender}
                 </Text>
               )}
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={[styles.transactionBank, { color: colors.textSecondary }]}>
-                  {item.bank || 'Unknown Bank'}
-                </Text>
-                <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>·</Text>
+              <Text style={[styles.transactionBank, { color: colors.textSecondary }]} numberOfLines={1}>
+                {item.bank || 'Unknown Bank'}
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                {(item as LocalTransactionWithMeta).businessName && (
+                  <>
+                    <Text style={[styles.transactionTime, { color: colors.textSecondary }]} numberOfLines={1}>
+                      {(item as LocalTransactionWithMeta).businessName}
+                    </Text>
+                    <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>·</Text>
+                  </>
+                )}
                 <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>
                   {formatDate(item.receivedAt)}
                 </Text>
@@ -378,7 +431,11 @@ export default function TransactionsScreen({ apiKey }: Props) {
       {activeTab === 'transactions' ? (
         <>
           <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.text }]}>Transactions</Text>
+            <View style={styles.headerLeft}>
+              <Text style={[styles.subtitleCount, { color: colors.textSecondary }]}>
+                {filteredTransactions.length} shown
+              </Text>
+            </View>
             {isAuthenticated && unsyncedCount > 0 && (
               <TouchableOpacity
                 onPress={syncUnsyncedTransactions}
@@ -397,13 +454,64 @@ export default function TransactionsScreen({ apiKey }: Props) {
             )}
           </View>
 
-          {transactions.length === 0 ? (
+          <View style={styles.filtersWrapper}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+              <View style={styles.filterIconWrap}>
+                <Filter size={12} color={colors.textSecondary} />
+              </View>
+              <TouchableOpacity
+                style={[styles.filterChip, bankFilter === 'all' && { borderColor: colors.primary, backgroundColor: colors.primary + '12' }]}
+                onPress={() => setBankFilter('all')}
+              >
+                <Text style={[styles.filterChipText, { color: bankFilter === 'all' ? colors.primary : colors.text }]}>All Banks</Text>
+              </TouchableOpacity>
+              {availableBanks.map((bank) => (
+                <TouchableOpacity
+                  key={`bank-${bank}`}
+                  style={[styles.filterChip, bankFilter === bank && { borderColor: colors.primary, backgroundColor: colors.primary + '12' }]}
+                  onPress={() => setBankFilter(bank)}
+                >
+                  <Text style={[styles.filterChipText, { color: bankFilter === bank ? colors.primary : colors.text }]}>{bank}</Text>
+                </TouchableOpacity>
+              ))}
+              <View style={styles.filterDivider} />
+              <TouchableOpacity
+                style={[styles.filterChip, businessFilter === 'all' && { borderColor: colors.primary, backgroundColor: colors.primary + '12' }]}
+                onPress={() => setBusinessFilter('all')}
+              >
+                <Text style={[styles.filterChipText, { color: businessFilter === 'all' ? colors.primary : colors.text }]}>All Business</Text>
+              </TouchableOpacity>
+              {availableBusinesses.map((business) => (
+                <TouchableOpacity
+                  key={`biz-${business}`}
+                  style={[styles.filterChip, businessFilter === business && { borderColor: colors.primary, backgroundColor: colors.primary + '12' }]}
+                  onPress={() => setBusinessFilter(business)}
+                >
+                  <Text style={[styles.filterChipText, { color: businessFilter === business ? colors.primary : colors.text }]}>{business}</Text>
+                </TouchableOpacity>
+              ))}
+              {hasActiveFilters && (
+                <TouchableOpacity
+                  style={[styles.clearFiltersButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
+                  onPress={() => {
+                    setBankFilter('all');
+                    setBusinessFilter('all');
+                  }}
+                >
+                  <X size={10} color={colors.textSecondary} />
+                  <Text style={[styles.clearFiltersText, { color: colors.textSecondary }]}>Clear</Text>
+                </TouchableOpacity>
+              )}
+            </ScrollView>
+          </View>
+
+          {filteredTransactions.length === 0 ? (
             <View style={styles.emptyState}>
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No transactions yet</Text>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No transactions match current filters</Text>
             </View>
           ) : (
             <FlatList
-              data={transactions}
+              data={filteredTransactions}
               renderItem={renderTransaction}
               keyExtractor={(item) => item.id}
               contentContainerStyle={styles.listContent}
@@ -459,13 +567,60 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 20,
-    paddingTop: 10,
-    paddingBottom: 10,
+    paddingTop: 12,
+    paddingBottom: 8,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    letterSpacing: -0.5,
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  subtitleCount: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  filtersWrapper: {
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 2,
+  },
+  filterIconWrap: {
+    marginRight: 2,
+  },
+  filterDivider: {
+    width: 1,
+    height: 16,
+    backgroundColor: '#d1d5db',
+    marginHorizontal: 2,
+  },
+  clearFiltersButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
+  clearFiltersText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  filterChip: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  filterChipText: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   currencyUnitSmall: {
     fontSize: 10,

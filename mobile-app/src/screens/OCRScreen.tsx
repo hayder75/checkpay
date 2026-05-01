@@ -36,6 +36,61 @@ interface OCRScreenProps {
   patterns?: Pattern[];
 }
 
+const normalizeInstitutionLabel = (pattern: Pattern): string => {
+  return String(pattern.bank || pattern.name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+};
+
+const choosePreferredInstitutionPattern = (current: Pattern, candidate: Pattern): Pattern => {
+  const currentHasBank = Boolean(current.bank);
+  const candidateHasBank = Boolean(candidate.bank);
+
+  if (!currentHasBank && candidateHasBank) {
+    return candidate;
+  }
+
+  const currentIsTemplate = (current as any)?.isTemplate === true;
+  const candidateIsTemplate = (candidate as any)?.isTemplate === true;
+  if (currentIsTemplate && !candidateIsTemplate) {
+    return candidate;
+  }
+
+  const currentUsage = Number((current as any)?.usageCount || 0);
+  const candidateUsage = Number((candidate as any)?.usageCount || 0);
+  if (candidateUsage > currentUsage) {
+    return candidate;
+  }
+
+  return current;
+};
+
+const getUniqueInstitutionPatterns = (patterns: Pattern[]): Pattern[] => {
+  const byInstitution = new Map<string, Pattern>();
+
+  for (const pattern of patterns) {
+    const key = normalizeInstitutionLabel(pattern);
+    if (!key) {
+      continue;
+    }
+
+    const existing = byInstitution.get(key);
+    if (!existing) {
+      byInstitution.set(key, pattern);
+      continue;
+    }
+
+    byInstitution.set(key, choosePreferredInstitutionPattern(existing, pattern));
+  }
+
+  return Array.from(byInstitution.values()).sort((left, right) => {
+    const leftLabel = String(left.bank || left.name || '');
+    const rightLabel = String(right.bank || right.name || '');
+    return leftLabel.localeCompare(rightLabel);
+  });
+};
+
 export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenProps) {
   const { theme, colors } = useTheme();
   const [loading, setLoading] = useState(false);
@@ -49,6 +104,7 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
   const [showInstitutionPicker, setShowInstitutionPicker] = useState(true);
   const [fadeAnim] = useState(new Animated.Value(1));
   const [slideAnim] = useState(new Animated.Value(0));
+  const institutionOptions = getUniqueInstitutionPatterns(patterns);
 
   // Load patterns from backend if not provided
   useEffect(() => {
@@ -703,10 +759,7 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
         <View style={styles.header}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
             <Image 
-              source={theme === 'dark' 
-                ? require('../../assets/logo/logo - Asset 1.png') 
-                : require('../../assets/logo/logo - Asset 2.png')
-              } 
+              source={require('../../assets/logo/logo - Asset 10.png')} 
               style={styles.headerLogo} 
               resizeMode="contain"
             />
@@ -732,7 +785,7 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
           <View style={styles.actionCardsContainer}>
             <Text style={styles.sectionTitle}>Select Institution</Text>
             <View style={styles.institutionGrid}>
-              {patterns.map((pattern) => (
+              {institutionOptions.map((pattern) => (
                 <TouchableOpacity 
                   key={pattern.id}
                   style={[

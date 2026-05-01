@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet, PermissionsAndroid, Platform, AppState, AppStateStatus, Modal } from 'react-native';
+import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet, PermissionsAndroid, Platform, AppState, AppStateStatus, Modal, Linking, Image } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import { PopupProvider } from './src/contexts/PopupContext';
@@ -24,10 +24,13 @@ import ProfileCompletionScreen from './src/screens/ProfileCompletionScreen';
 import { storage } from './src/services/storage';
 import { smsService } from './src/services/smsService';
 import { securityService } from './src/services/securityService';
+import { isDefaultSMSApp, requestDefaultSMSRole } from './src/utils/smsRole';
 import { Pattern } from './src/types';
 import { authAPI } from './src/services/api';
-import { patternsAPI } from './src/services/api';
+import { patternsAPI, telegramAuthAPI, subscribeNetworkStatus } from './src/services/api';
 import 'react-native-url-polyfill/auto';
+
+const PENDING_TELEGRAM_AUTH_TOKEN_KEY = 'pending_telegram_auth_token';
 
 function AppContent() {
   const { colors } = useTheme();
@@ -50,8 +53,10 @@ function AppContent() {
   const [showPINSetupFromPrompt, setShowPINSetupFromPrompt] = useState(false);
   const [biometricAvailableForPrompt, setBiometricAvailableForPrompt] = useState(false);
   const [showProfileCompletion, setShowProfileCompletion] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
   const appState = useRef(AppState.currentState);
   const backgroundTimestamp = useRef<number | null>(null);
+  const smsReminderShownThisLaunch = useRef(false);
 
   // Check if user is employee (only OCR access)
   const isEmployee = user?.role === 'EMPLOYEE';
@@ -79,6 +84,14 @@ function AppContent() {
   // Check security status on mount and when returning from background
   useEffect(() => {
     checkSecurityAndLock();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeNetworkStatus((status) => {
+      setIsOffline(status === 'offline');
+    });
+
+    return unsubscribe;
   }, []);
 
   // App state change listener for lock screen
@@ -122,9 +135,44 @@ function AppContent() {
           console.log('🔒 [App] Locking app after background');
         }
       }
+      await remindSMSRoleIfNeeded();
       backgroundTimestamp.current = null;
     }
     appState.current = nextAppState;
+  };
+
+  const remindSMSRoleIfNeeded = async () => {
+    if (Platform.OS !== 'android') {
+      return;
+    }
+
+    const onboardingCompleted = await storage.getOnboardingCompleted();
+    const token = await storage.getToken();
+    if (!onboardingCompleted || !token) {
+      return;
+    }
+
+    const isDefault = await isDefaultSMSApp();
+    if (isDefault || smsReminderShownThisLaunch.current) {
+      return;
+    }
+
+    smsReminderShownThisLaunch.current = true;
+    Alert.alert(
+      'Enable SMS Auto Import',
+      'To auto-detect transactions from SMS, set CheckPay as your default SMS app. You can continue using manual mode anytime.',
+      [
+        { text: 'Continue Manual Mode', style: 'cancel' },
+        {
+          text: 'Enable SMS Import',
+          onPress: () => {
+            requestDefaultSMSRole().catch((error) => {
+              console.error('Error requesting default SMS role:', error);
+            });
+          },
+        },
+      ]
+    );
   };
 
   const handleUnlock = () => {
@@ -227,9 +275,12 @@ function AppContent() {
     const startMonitoring = async () => {
       try {
         const onboardingCompleted = await storage.getOnboardingCompleted();
-        if (onboardingCompleted) {
+        const token = await storage.getToken();
+        if (onboardingCompleted && token) {
           // Delay SMS monitoring to not block app startup
           await smsService.startMonitoring();
+        } else if (onboardingCompleted && !token) {
+          console.log('ℹ️ [App] Skipping SMS monitoring startup: user is not authenticated yet');
         }
       } catch (error) {
         console.error('Error starting SMS monitoring:', error);
@@ -246,12 +297,78 @@ function AppContent() {
     };
   }, []);
 
+  useEffect(() => {
+    const handleIncomingUrl = async (url: string | null) => {
+      if (!url || !url.startsWith('checkpay://')) {
+        return;
+      }
+
+      console.log('🔗 [App] Deep link received:', url);
+
+      if (url.includes('auth/success')) {
+        await resumePendingTelegramAuth();
+      }
+    };
+
+    Linking.getInitialURL().then(handleIncomingUrl).catch((error) => {
+      console.error('Error reading initial URL:', error);
+    });
+
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      handleIncomingUrl(url).catch((error) => {
+        console.error('Error handling deep link:', error);
+      });
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  const resumePendingTelegramAuth = async () => {
+    try {
+      const pendingToken = await storage.getItem(PENDING_TELEGRAM_AUTH_TOKEN_KEY);
+      if (!pendingToken) {
+        return;
+      }
+
+      console.log('🔄 [App] Resuming pending Telegram authentication');
+      const statusResponse = await telegramAuthAPI.checkStatus(pendingToken);
+
+      if (statusResponse?.status !== 'COMPLETED' || !statusResponse?.data) {
+        return;
+      }
+
+      const { token, user } = statusResponse.data;
+      if (!token || !user?.apiKey) {
+        return;
+      }
+
+      await storage.removeItem(PENDING_TELEGRAM_AUTH_TOKEN_KEY);
+      await storage.setToken(token);
+      await storage.setUser(user);
+      await storage.setApiKey(user.apiKey);
+
+      let loadedPatterns: Pattern[] = [];
+      try {
+        const patternsResponse = await patternsAPI.getAll();
+        loadedPatterns = patternsResponse?.success && Array.isArray(patternsResponse?.data)
+          ? patternsResponse.data
+          : [];
+      } catch (error) {
+        console.error('Error loading patterns after Telegram auth resume:', error);
+      }
+
+      await handleLoginSuccess(user, user.apiKey, loadedPatterns);
+    } catch (error) {
+      console.error('Error resuming Telegram authentication:', error);
+    }
+  };
+
   const requestPermissions = async () => {
     if (Platform.OS === 'android') {
       try {
         const granted = await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.READ_SMS,
-          PermissionsAndroid.PERMISSIONS.RECEIVE_SMS,
           PermissionsAndroid.PERMISSIONS.CAMERA,
         ]);
         console.log('🔐 [App] Permissions status:', granted);
@@ -441,6 +558,9 @@ function AppContent() {
 
             // Setup notifications
             setupNotifications();
+
+            // Remind user about default SMS role (manual mode remains available)
+            await remindSMSRoleIfNeeded();
           } else { // Setup notifications
             setupNotifications();
             // Token invalid response
@@ -604,6 +724,9 @@ function AppContent() {
 
     // Setup notifications
     setupNotifications();
+
+    // Remind user about default SMS role on login
+    await remindSMSRoleIfNeeded();
   };
 
   const refreshPatterns = async () => {
@@ -760,6 +883,11 @@ function AppContent() {
   if (loading) {
     return (
       <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
+        <Image
+          source={require('./assets/logo/logo - Asset 10.png')}
+          style={styles.loadingLogo}
+          resizeMode="contain"
+        />
         <ActivityIndicator size="large" color={colors.primary} />
         <Text style={[styles.loadingText, { color: colors.text }]}>Loading...</Text>
       </View>
@@ -1020,6 +1148,14 @@ function AppContent() {
   return (
     <>
       <StatusBar style={colors.background === '#1a1a1a' ? 'light' : 'dark'} />
+
+      {isOffline && (
+        <View style={styles.offlineBannerWrap} pointerEvents="none">
+          <View style={styles.offlineBanner}>
+            <Text style={styles.offlineBannerText}>You are offline. Some features may be temporarily unavailable.</Text>
+          </View>
+        </View>
+      )}
       
       {/* Security Setup Prompt Modal */}
       <Modal
@@ -1101,10 +1237,39 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  offlineBannerWrap: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 54 : 16,
+    left: 12,
+    right: 12,
+    zIndex: 1000,
+  },
+  offlineBanner: {
+    backgroundColor: '#f59e0b',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  offlineBannerText: {
+    color: '#111827',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  loadingLogo: {
+    width: 120,
+    height: 120,
+    marginBottom: 20,
   },
   loadingText: {
     marginTop: 10,

@@ -14,6 +14,7 @@ import { ArrowLeft, ArrowDown, ArrowUp, X, Calendar, CreditCard, Search } from '
 import { useTheme } from '../contexts/ThemeContext';
 import { dashboardAPI } from '../services/api';
 import { LocalTransaction } from '../services/smsService';
+import { dedupeTransactionsByIdentity } from '../utils/transactionDedup';
 
 interface Props {
   employeeId: string;
@@ -84,7 +85,7 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
           };
         });
         
-        setTransactions(convertedTxs);
+        setTransactions(dedupeTransactionsByIdentity(convertedTxs));
       }
     } catch (error) {
       console.error('Error loading employee transactions:', error);

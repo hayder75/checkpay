@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -19,9 +19,10 @@ interface Props {
   onChangeText: (text: string) => void;
   placeholder?: string;
   autoFocus?: boolean;
+  onCountryChange?: (country: CountryCode) => void;
 }
 
-export default function PhoneInput({ value, onChangeText, placeholder, autoFocus }: Props) {
+export default function PhoneInput({ value, onChangeText, placeholder, autoFocus, onCountryChange }: Props) {
   const { colors } = useTheme();
   const [showCountryPicker, setShowCountryPicker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -57,6 +58,10 @@ export default function PhoneInput({ value, onChangeText, placeholder, autoFocus
   }
   
   const selectedCountry = countryCallingCodes.find(c => c.callingCode === selectedCallingCode) || countryCallingCodes[0];
+
+  useEffect(() => {
+    onCountryChange?.(selectedCountry);
+  }, [onCountryChange, selectedCountry]);
 
   const handleCountrySelect = (country: CountryCode) => {
     const formatted = formatPhoneNumber(country.callingCode, phoneNumber);

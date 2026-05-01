@@ -1,14 +1,14 @@
 {
   "expo": {
-    "name": "mobile-app",
-    "slug": "mobile-app",
-    "version": "1.0.0",
+    "name": "checkpay",
+    "slug": "checkpay",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/logo/logo - Asset 10.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/logo/aaaa.jpg",
+      "image": "./assets/logo/logo - Asset 10.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -30,6 +30,7 @@
       ],
       "./plugins/withMLKit.js",
       "./plugins/withSMSReceiver.js",
+      "./plugins/withSMSRoleManager.js",
       "./plugins/withNetworkSecurityConfig.js"
     ],
     "scheme": "checkpay",
@@ -43,7 +44,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/logo/logo - Asset 8.png",
+        "foregroundImage": "./assets/logo/logo - Asset 10.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
@@ -61,7 +62,7 @@
       ],
       "package": "com.checkpay.mobile",
       "splash": {
-        "image": "./assets/logo/logo - Asset 9.png",
+        "image": "./assets/logo/logo - Asset 10.png",
         "resizeMode": "contain",
         "backgroundColor": "#ffffff"
       }

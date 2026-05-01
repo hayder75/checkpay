@@ -11,12 +11,15 @@ import {
   Platform,
   ScrollView,
   Linking,
+  Modal,
+  Image,
+  FlatList,
 } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
-import { authAPI, telegramAuthAPI } from '../services/api';
+import { authAPI, telegramAuthAPI, institutionPatternsAPI } from '../services/api';
 import { patternsAPI } from '../services/api';
 import PhoneInput from '../components/PhoneInput';
-import { parsePhoneNumber } from '../utils/phoneCodes';
+import { CountryCode, getCountryByCode, countryCallingCodes } from '../utils/phoneCodes';
 import { Pattern } from '../types';
 import { storage } from '../services/storage';
 import { signInWithGoogle, completeGoogleAuth } from '../services/googleAuth';
@@ -27,21 +30,112 @@ interface Props {
   onSwitchToLogin: () => void;
 }
 
+const PENDING_TELEGRAM_AUTH_TOKEN_KEY = 'pending_telegram_auth_token';
+
 type AccountType = 'BUSINESS_OWNER' | 'DEVELOPER';
+type RegisterStep = 0 | 1 | 2;
+
+const REGISTER_STEPS = [
+  { title: 'Phone', subtitle: 'Use your phone number to create the account.' },
+  { title: 'Security', subtitle: 'Set an optional password (you can change it later).' },
+  { title: 'Banks', subtitle: 'Select the banks you want to monitor.' },
+] as const;
+
+const GLOBAL_BANK_FALLBACK = [
+  'Telebirr',
+  'CBE',
+  'Dashen Bank',
+  'Awash Bank',
+  'Bank of Abyssinia',
+  'M-Pesa',
+  'Equity Bank',
+  'KCB',
+  'Cooperative Bank',
+  'Access Bank',
+  'GTBank',
+  'Zenith Bank',
+  'UBA',
+  'First Bank',
+  'MTN MoMo',
+  'Airtel Money',
+  'Vodafone Cash',
+  'Standard Bank',
+  'FNB',
+  'Nedbank',
+  'Absa',
+  'Capitec',
+  'Orange Money',
+  'Free Money',
+  'Moov Money',
+].sort((a, b) => a.localeCompare(b));
 
 export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: Props) {
-  const { colors } = useTheme();
-  const [username, setUsername] = useState('');
+  const { theme, colors } = useTheme();
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [country, setCountry] = useState('');
   const [accountType, setAccountType] = useState<AccountType>('BUSINESS_OWNER');
+  const [currentStep, setCurrentStep] = useState<RegisterStep>(0);
+  const [selectedCountry, setSelectedCountry] = useState<CountryCode>(getCountryByCode('ET') || { code: 'ET', name: 'Ethiopia', callingCode: '+251', flag: '🇪🇹' });
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [telegramLoading, setTelegramLoading] = useState(false);
   const [botUsername, setBotUsername] = useState<string>('');
+  const [availableBanks, setAvailableBanks] = useState<string[]>([]);
+  const [selectedBanks, setSelectedBanks] = useState<string[]>([]);
+  const [banksLoading, setBanksLoading] = useState(false);
+  const [banksError, setBanksError] = useState<string | null>(null);
+  const [showPatternModal, setShowPatternModal] = useState(false);
+  const [patternInstitution, setPatternInstitution] = useState('');
+  const [patternSMS, setPatternSMS] = useState('');
+  const [patternTxnId, setPatternTxnId] = useState('');
+  const [patternDraft, setPatternDraft] = useState<{ institution: string; smsText: string; txnId: string } | null>(null);
+  const [showCountryPicker, setShowCountryPicker] = useState(false);
+  const [countrySearch, setCountrySearch] = useState('');
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const extractBanksFromResponse = (response: any): string[] => {
+    const candidates = [
+      response,
+      response?.data,
+      response?.data?.data,
+      response?.data?.banks,
+      response?.banks,
+      response?.results,
+      response?.items,
+    ];
+
+    const rawList = candidates.find((candidate) => Array.isArray(candidate)) || [];
+
+    return Array.from(new Set(
+      (rawList as any[])
+        .map((bank: any): string => {
+          if (typeof bank === 'string') return bank.trim();
+          return (bank?.name || bank?.institution || bank?.bankName || '').toString().trim();
+        })
+        .filter(Boolean)
+    )).sort((a: string, b: string) => a.localeCompare(b));
+  };
+
+  const loadGlobalBanks = async () => {
+    setBanksLoading(true);
+    setBanksError(null);
+
+    try {
+      let normalizedBanks = extractBanksFromResponse(await institutionPatternsAPI.getAllInstitutions());
+
+      if (normalizedBanks.length === 0) {
+        normalizedBanks = GLOBAL_BANK_FALLBACK;
+      }
+
+      setAvailableBanks(normalizedBanks);
+    } catch (error) {
+      console.error('Error loading banks for registration:', error);
+      setAvailableBanks(GLOBAL_BANK_FALLBACK);
+      setBanksError('Showing a built-in bank list. You can continue and edit banks later in My Banks.');
+    } finally {
+      setBanksLoading(false);
+    }
+  };
 
   // Load Telegram bot info on mount
   useEffect(() => {
@@ -62,8 +156,17 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
     };
   }, []);
 
+  useEffect(() => {
+    if (currentStep !== 2 || accountType !== 'BUSINESS_OWNER') {
+      return;
+    }
+
+    loadGlobalBanks();
+  }, [currentStep, accountType]);
+
   // Complete registration/login with user data
   const completeAuth = async (token: string, user: any) => {
+    await storage.removeItem(PENDING_TELEGRAM_AUTH_TOKEN_KEY);
     await storage.setToken(token);
     await storage.setUser(user);
     
@@ -103,6 +206,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
       }
 
       const { token, deepLink } = initResponse.data;
+      await storage.setItem(PENDING_TELEGRAM_AUTH_TOKEN_KEY, token);
 
       // Open Telegram with deep link
       const supported = await Linking.canOpenURL(deepLink);
@@ -134,6 +238,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
             if (pollingIntervalRef.current) {
               clearInterval(pollingIntervalRef.current);
             }
+            await storage.removeItem(PENDING_TELEGRAM_AUTH_TOKEN_KEY);
             setTelegramLoading(false);
             if (attempts >= maxAttempts) {
               Alert.alert('Timeout', 'Telegram authentication timed out. Please try again.');
@@ -145,78 +250,45 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
       }, 5000);
 
     } catch (error: any) {
+      await storage.removeItem(PENDING_TELEGRAM_AUTH_TOKEN_KEY);
       setTelegramLoading(false);
       Alert.alert('Error', error.message || 'Failed to start Telegram authentication');
     }
   };
 
   const handleRegister = async () => {
-    if (!username.trim() && !phone.trim()) {
-      Alert.alert('Error', 'Please enter your username or phone number');
+    if (!phone.trim()) {
+      Alert.alert('Error', 'Please enter your phone number');
       return;
     }
 
-    if (!password.trim()) {
-      Alert.alert('Error', 'Please enter a password');
-      return;
-    }
-
-    if (password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
+    if (!selectedCountry?.code) {
+      Alert.alert('Error', 'Please select your country from the phone field');
       return;
     }
 
     setLoading(true);
     try {
-      // Prepare registration data - only include fields that have values
       const registerData: {
-        username?: string;
         phone?: string;
         country?: string;
-        password: string;
+        password?: string;
         role?: AccountType;
       } = {
-        password: password.trim(),
+        phone: phone.trim(),
+        country: selectedCountry.code,
+        password: password,
         role: accountType,
       };
-      
-      // Add username if provided
-      if (username.trim()) {
-        registerData.username = username.trim();
-      }
-      
-      // Add phone if provided (must be at least 10 characters for backend validation)
-      if (phone.trim()) {
-        const cleanedPhone = phone.trim();
-        // Remove country code prefix if present for validation
-        const phoneWithoutCode = cleanedPhone.replace(/^\+\d{1,4}/, '');
-        if (phoneWithoutCode.length >= 10 || cleanedPhone.length >= 10) {
-          registerData.phone = cleanedPhone;
-        } else {
-          Alert.alert('Error', 'Phone number must be at least 10 digits');
-          setLoading(false);
-          return;
-        }
-      }
-      
-      // Add country if provided (use 2-letter country code, not calling code)
-      if (country.trim()) {
-        registerData.country = country.trim().toUpperCase().substring(0, 2);
-      }
-      
-      // Ensure at least username or phone is provided
-      if (!registerData.username && !registerData.phone) {
-        Alert.alert('Error', 'Please enter either username or phone number');
+
+      const cleanedPhone = phone.trim();
+      const phoneWithoutCode = cleanedPhone.replace(/^\+\d{1,4}/, '');
+      if (phoneWithoutCode.length < 7 && cleanedPhone.length < 10) {
+        Alert.alert('Error', 'Phone number looks too short');
         setLoading(false);
         return;
       }
-      
-      // Register user with password (no OTP)
+
       const response = await authAPI.register(registerData);
 
       if (response.success) {
@@ -236,6 +308,26 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
         const apiKey = user.apiKey;
         if (apiKey) {
           await storage.setApiKey(apiKey);
+
+          if (accountType === 'BUSINESS_OWNER') {
+            const normalizedSelectedBanks = Array.from(new Set(selectedBanks.map((bank) => bank.trim()).filter(Boolean)));
+            await storage.setSelectedBanks(normalizedSelectedBanks);
+
+            if (patternDraft) {
+              try {
+                await institutionPatternsAPI.createFromSample({
+                  institution: patternDraft.institution,
+                  countryCode: selectedCountry.code,
+                  smsText: patternDraft.smsText,
+                  txnId: patternDraft.txnId,
+                });
+                console.log('✅ Created bank pattern from registration sample SMS');
+              } catch (patternError: any) {
+                console.error('Pattern creation during registration failed:', patternError);
+                Alert.alert('Pattern Not Saved', 'Account created successfully, but we could not save the new bank pattern. You can add it later from the app.');
+              }
+            }
+          }
           
           // Fetch patterns from real API
           try {
@@ -302,6 +394,94 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
     }
   };
 
+  const validateStep = (step: RegisterStep) => {
+    if (step === 0) {
+      if (!phone.trim()) {
+        Alert.alert('Error', 'Phone number is required');
+        return false;
+      }
+
+      const cleanedPhone = phone.trim().replace(/^\+\d{1,4}/, '');
+      if (cleanedPhone.length < 7) {
+        Alert.alert('Error', 'Enter a valid phone number');
+        return false;
+      }
+
+      if (!selectedCountry?.code) {
+        Alert.alert('Error', 'Please select your country from the phone field');
+        return false;
+      }
+
+      return true;
+    }
+
+    if (step === 1) {
+      return true;
+    }
+
+    return true;
+  };
+
+  const toggleBankSelection = (bankName: string) => {
+    const normalized = bankName.trim();
+    if (!normalized) return;
+
+    setSelectedBanks((prev) => {
+      const exists = prev.some((bank) => bank.toLowerCase() === normalized.toLowerCase());
+      if (exists) {
+        return prev.filter((bank) => bank.toLowerCase() !== normalized.toLowerCase());
+      }
+      return [...prev, normalized];
+    });
+  };
+
+  const handleSavePatternDraft = () => {
+    if (!patternInstitution.trim()) {
+      Alert.alert('Bank Name Required', 'Please enter the bank/institution name.');
+      return;
+    }
+
+    if (!patternSMS.trim()) {
+      Alert.alert('Sample SMS Required', 'Please paste a sample SMS to continue.');
+      return;
+    }
+
+    if (!patternTxnId.trim()) {
+      Alert.alert('Transaction ID Required', 'Please enter the transaction ID found in the sample SMS.');
+      return;
+    }
+
+    const institution = patternInstitution.trim();
+    setPatternDraft({
+      institution,
+      smsText: patternSMS.trim(),
+      txnId: patternTxnId.trim(),
+    });
+
+    setSelectedBanks((prev) => {
+      const exists = prev.some((bank) => bank.toLowerCase() === institution.toLowerCase());
+      return exists ? prev : [...prev, institution];
+    });
+
+    setPatternInstitution('');
+    setPatternSMS('');
+    setPatternTxnId('');
+    setShowPatternModal(false);
+    Alert.alert('Saved', 'Sample SMS noted. We will create the bank pattern right after account creation.');
+  };
+
+  const handleNextStep = () => {
+    if (!validateStep(currentStep)) {
+      return;
+    }
+
+    setCurrentStep((prev) => Math.min(prev + 1, 2) as RegisterStep);
+  };
+
+  const handlePreviousStep = () => {
+    setCurrentStep((prev) => Math.max(prev - 1, 0) as RegisterStep);
+  };
+
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.background }]}
@@ -312,163 +492,198 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.text }]}>CheckPay</Text>
+          <Image 
+            source={require('../../assets/logo/logo - Asset 10.png')} 
+            style={styles.logo} 
+            resizeMode="contain"
+          />
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            Create an account
+            Create your account
           </Text>
         </View>
 
         <View style={styles.form}>
-          <View style={styles.inputGroup}>
-            <Text style={[styles.label, { color: colors.text }]}>Username (Optional)</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-              placeholder="johndoe"
-              placeholderTextColor={colors.textSecondary}
-              value={username}
-              onChangeText={(text) => setUsername(text.replace(/[^a-zA-Z0-9_]/g, ''))}
-              autoCapitalize="none"
-              autoCorrect={false}
-              maxLength={30}
-            />
-            <Text style={[styles.hint, { color: colors.textSecondary }]}>
-              3-30 characters, letters, numbers, and underscores only
-            </Text>
-          </View>
+          <View style={styles.stepper}>
+            {REGISTER_STEPS.map((step, index) => {
+              const isActive = index === currentStep;
+              const isCompleted = index < currentStep;
 
-          <View style={styles.inputGroup}>
-            <Text style={[styles.label, { color: colors.text }]}>Phone Number (Optional)</Text>
-            <PhoneInput
-              value={phone}
-              onChangeText={setPhone}
-              placeholder="712345678"
-            />
-          </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={[styles.label, { color: colors.text }]}>Password</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-              placeholder="Enter password (min 6 characters)"
-              placeholderTextColor={colors.textSecondary}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
-          </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={[styles.label, { color: colors.text }]}>Confirm Password</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-              placeholder="Confirm password"
-              placeholderTextColor={colors.textSecondary}
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-            />
-          </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={[styles.label, { color: colors.text }]}>Account Type</Text>
-            <View style={styles.accountTypeContainer}>
-              <TouchableOpacity
-                style={[
-                  styles.accountTypeOption,
-                  { 
-                    backgroundColor: accountType === 'BUSINESS_OWNER' ? colors.primary : colors.surface,
-                    borderColor: accountType === 'BUSINESS_OWNER' ? colors.primary : colors.border,
-                  }
-                ]}
-                onPress={() => setAccountType('BUSINESS_OWNER')}
-              >
-                <Text style={styles.accountTypeIcon}>🏢</Text>
-                <View style={styles.accountTypeTextContainer}>
-                  <Text style={[
-                    styles.accountTypeText,
-                    { color: accountType === 'BUSINESS_OWNER' ? colors.primaryText : colors.text }
-                  ]}>
-                    Business Owner
-                  </Text>
-                  <Text style={[
-                    styles.accountTypeDescription,
-                    { color: accountType === 'BUSINESS_OWNER' ? colors.primaryText + 'CC' : colors.textSecondary }
-                  ]}>
-                    Manage businesses & employees
+              return (
+                <View key={step.title} style={styles.stepperItem}>
+                  <View
+                    style={[
+                      styles.stepBadge,
+                      {
+                        backgroundColor: isActive || isCompleted ? colors.primary : colors.surface,
+                        borderColor: isActive || isCompleted ? colors.primary : colors.border,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.stepBadgeText, { color: isActive || isCompleted ? colors.primaryText : colors.textSecondary }]}>
+                      {index + 1}
+                    </Text>
+                  </View>
+                  <Text style={[styles.stepTitle, { color: isActive ? colors.text : colors.textSecondary }]}>
+                    {step.title}
                   </Text>
                 </View>
-                {accountType === 'BUSINESS_OWNER' && (
-                  <Text style={styles.accountTypeCheck}>✓</Text>
-                )}
-              </TouchableOpacity>
+              );
+            })}
+          </View>
 
-              <TouchableOpacity
-                style={[
-                  styles.accountTypeOption,
-                  { 
-                    backgroundColor: accountType === 'DEVELOPER' ? colors.primary : colors.surface,
-                    borderColor: accountType === 'DEVELOPER' ? colors.primary : colors.border,
-                  }
-                ]}
-                onPress={() => setAccountType('DEVELOPER')}
-              >
-                <Text style={styles.accountTypeIcon}>💻</Text>
-                <View style={styles.accountTypeTextContainer}>
-                  <Text style={[
-                    styles.accountTypeText,
-                    { color: accountType === 'DEVELOPER' ? colors.primaryText : colors.text }
-                  ]}>
-                    Developer
-                  </Text>
-                  <Text style={[
-                    styles.accountTypeDescription,
-                    { color: accountType === 'DEVELOPER' ? colors.primaryText + 'CC' : colors.textSecondary }
-                  ]}>
-                    Build projects & integrations
-                  </Text>
+          <View style={[styles.stepCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.stepCardTitle, { color: colors.text }]}>{REGISTER_STEPS[currentStep].title}</Text>
+            <Text style={[styles.stepCardSubtitle, { color: colors.textSecondary }]}>
+              {REGISTER_STEPS[currentStep].subtitle}
+            </Text>
+
+            {currentStep === 0 && (
+              <>
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.label, { color: colors.text }]}>Phone Number</Text>
+                  <PhoneInput
+                    value={phone}
+                    onChangeText={setPhone}
+                    placeholder="712345678"
+                  />
                 </View>
-                {accountType === 'DEVELOPER' && (
-                  <Text style={styles.accountTypeCheck}>✓</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
 
-          <View style={styles.inputGroup}>
-            <Text style={[styles.label, { color: colors.text }]}>
-              Country <Text style={{ color: colors.primary }}>*</Text>
-            </Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: country ? colors.primary : colors.border }]}
-              placeholder="ET, KE, NG, etc."
-              placeholderTextColor={colors.textSecondary}
-              value={country}
-              onChangeText={(text) => setCountry(text.toUpperCase().substring(0, 2))}
-              autoCapitalize="characters"
-              maxLength={2}
-            />
-            <Text style={[styles.hintSmall, { color: colors.textSecondary }]}>
-              2-letter country code (required for pattern matching)
-            </Text>
-          </View>
-
-          <Text style={[styles.hint, { color: colors.textSecondary }]}>
-            At least one of username or phone is required. Password must be at least 8 characters.
-          </Text>
-
-          <TouchableOpacity
-            style={[styles.button, { backgroundColor: colors.primary }, (loading || (!username && !phone) || !password || password !== confirmPassword || !country) && styles.buttonDisabled]}
-            onPress={handleRegister}
-            disabled={loading || (!username && !phone) || !password || password !== confirmPassword || !country}
-          >
-            {loading ? (
-              <ActivityIndicator color={colors.primaryText} />
-            ) : (
-              <Text style={[styles.buttonText, { color: colors.primaryText }]}>
-                Create Account
-              </Text>
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.label, { color: colors.text }]}>Country</Text>
+                  <TouchableOpacity
+                    style={[styles.countrySelector, { backgroundColor: colors.background, borderColor: colors.border }]}
+                    onPress={() => setShowCountryPicker(true)}
+                  >
+                    <Text style={styles.countrySelectorFlag}>{selectedCountry.flag}</Text>
+                    <Text style={[styles.countrySelectorText, { color: colors.text }]}>
+                      {selectedCountry.name} ({selectedCountry.code})
+                    </Text>
+                    <Text style={[styles.countrySelectorArrow, { color: colors.textSecondary }]}>▼</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
             )}
-          </TouchableOpacity>
+
+            {currentStep === 1 && (
+              <>
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.label, { color: colors.text }]}>Password</Text>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+                    placeholder="Optional password"
+                    placeholderTextColor={colors.textSecondary}
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry
+                  />
+                </View>
+              </>
+            )}
+
+            {currentStep === 2 && (
+              <>
+                <View style={[styles.summaryCard, { backgroundColor: colors.background, borderColor: colors.border, marginBottom: 20 }]}>
+                  <Text style={[styles.summaryLine, { color: colors.text }]}>Phone: {phone}</Text>
+                  <Text style={[styles.summaryLine, { color: colors.text }]}>Country: {selectedCountry.name} ({selectedCountry.code})</Text>
+                </View>
+
+                {accountType === 'BUSINESS_OWNER' && (
+                  <View style={styles.inputGroup}>
+                    <Text style={[styles.label, { color: colors.text }]}>Select Banks</Text>
+                    <Text style={[styles.hint, { color: colors.textSecondary }]}>Optional: choose banks to monitor now, or do it later from My Banks.</Text>
+
+                    {banksLoading && (
+                      <Text style={[styles.hint, { color: colors.textSecondary }]}>Loading banks...</Text>
+                    )}
+
+                    {!!banksError && (
+                      <View>
+                        <Text style={[styles.hint, { color: colors.textSecondary }]}>{banksError}</Text>
+                        <TouchableOpacity
+                          style={[styles.createPatternButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
+                          onPress={loadGlobalBanks}
+                        >
+                          <Text style={[styles.createPatternButtonText, { color: colors.text }]}>Retry loading banks</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+
+                    <View style={styles.bankChipsContainer}>
+                      {availableBanks.length === 0 ? (
+                        <Text style={[styles.hint, { color: colors.textSecondary }]}>No banks available right now.</Text>
+                      ) : (
+                        availableBanks.map((bank) => {
+                          const selected = selectedBanks.some((item) => item.toLowerCase() === bank.toLowerCase());
+                          return (
+                            <TouchableOpacity
+                              key={bank}
+                              style={[
+                                styles.bankChip,
+                                {
+                                  borderColor: selected ? colors.primary : colors.border,
+                                  backgroundColor: selected ? colors.primary + '18' : colors.surface,
+                                },
+                              ]}
+                              onPress={() => toggleBankSelection(bank)}
+                            >
+                              <Text style={[styles.bankChipText, { color: selected ? colors.primary : colors.text }]}>
+                                {bank}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })
+                      )}
+                    </View>
+
+                    <TouchableOpacity
+                      style={[styles.createPatternButton, { borderColor: colors.primary, backgroundColor: colors.primary + '10' }]}
+                      onPress={() => setShowPatternModal(true)}
+                    >
+                      <Text style={[styles.createPatternButtonText, { color: colors.primary }]}>Can't find your bank? Add with sample SMS</Text>
+                    </TouchableOpacity>
+
+                    {patternDraft && (
+                      <Text style={[styles.hint, { color: colors.textSecondary }]}>New bank draft ready: {patternDraft.institution}</Text>
+                    )}
+                  </View>
+                )}
+              </>
+            )}
+          </View>
+
+          <View style={styles.navigationRow}>
+            {currentStep > 0 && (
+              <TouchableOpacity
+                style={[styles.secondaryButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
+                onPress={handlePreviousStep}
+                disabled={loading}
+              >
+                <Text style={[styles.secondaryButtonText, { color: colors.text }]}>Back</Text>
+              </TouchableOpacity>
+            )}
+
+            {currentStep < 2 ? (
+              <TouchableOpacity
+                style={[styles.button, styles.primaryNavButton, { backgroundColor: colors.primary }]}
+                onPress={handleNextStep}
+                disabled={loading}
+              >
+                <Text style={[styles.buttonText, { color: colors.primaryText }]}>Next</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[styles.button, styles.primaryNavButton, { backgroundColor: colors.primary }, loading && styles.buttonDisabled]}
+                onPress={handleRegister}
+                disabled={loading}
+              >
+                {loading ? (
+                  <ActivityIndicator color={colors.primaryText} />
+                ) : (
+                  <Text style={[styles.buttonText, { color: colors.primaryText }]}>Create Account</Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
 
           <View style={styles.divider}>
             <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
@@ -484,14 +699,31 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
             {googleLoading ? (
               <ActivityIndicator color={colors.text} />
             ) : (
-              <>
+            <>
                 <View style={styles.googleIcon}>
-                  <Text style={styles.googleIconText}>G</Text>
+                  <Svg width="20" height="20" viewBox="0 0 24 24">
+                    <Path
+                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                      fill="#4285F4"
+                    />
+                    <Path
+                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-1 .67-2.28 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                      fill="#34A853"
+                    />
+                    <Path
+                      d="M5.84 14.09c-.22-.67-.35-1.39-.35-2.09s.13-1.42.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"
+                      fill="#FBBC05"
+                    />
+                    <Path
+                      d="M12 5.38c1.62 0 3.06.56 4.21 1.66l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                      fill="#EA4335"
+                    />
+                  </Svg>
                 </View>
                 <Text style={[styles.googleButtonText, { color: colors.text }]}>
                   Continue with Google
                 </Text>
-              </>
+            </>
             )}
           </TouchableOpacity>
 
@@ -537,6 +769,123 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      <Modal visible={showPatternModal} animationType="slide" transparent onRequestClose={() => setShowPatternModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface }]}> 
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Create Bank Pattern</Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>Paste one sample SMS and confirm the transaction ID to create a simple pattern.</Text>
+
+            <TextInput
+              style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+              placeholder="Bank or institution name"
+              placeholderTextColor={colors.textSecondary}
+              value={patternInstitution}
+              onChangeText={setPatternInstitution}
+            />
+
+            <TextInput
+              style={[styles.modalTextArea, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+              placeholder="Paste sample SMS"
+              placeholderTextColor={colors.textSecondary}
+              value={patternSMS}
+              onChangeText={setPatternSMS}
+              multiline
+              textAlignVertical="top"
+            />
+
+            <TextInput
+              style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+              placeholder="Transaction ID in that SMS"
+              placeholderTextColor={colors.textSecondary}
+              value={patternTxnId}
+              onChangeText={setPatternTxnId}
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.secondaryButton, { borderColor: colors.border, backgroundColor: colors.background }]}
+                onPress={() => setShowPatternModal(false)}
+              >
+                <Text style={[styles.secondaryButtonText, { color: colors.text }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.button, { backgroundColor: colors.primary }]}
+                onPress={handleSavePatternDraft}
+              >
+                <Text style={[styles.buttonText, { color: colors.primaryText }]}>Confirm</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Country Picker Modal */}
+      <Modal
+        visible={showCountryPicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCountryPicker(false)}
+      >
+        <View style={styles.countryPickerOverlay}>
+          <View style={[styles.countryPickerContent, { backgroundColor: colors.background }]}>
+            <View style={[styles.countryPickerHeader, { borderBottomColor: colors.border }]}>
+              <View style={styles.countryPickerHeaderTop}>
+                <Text style={[styles.countryPickerTitle, { color: colors.text }]}>Select Country</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    setShowCountryPicker(false);
+                    setCountrySearch('');
+                  }}
+                  style={{ padding: 4 }}
+                >
+                  <Text style={{ fontSize: 24, color: colors.textSecondary }}>×</Text>
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                style={[styles.countryPickerSearch, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
+                placeholder="Search country..."
+                placeholderTextColor={colors.textSecondary}
+                value={countrySearch}
+                onChangeText={setCountrySearch}
+                autoCorrect={false}
+              />
+            </View>
+            <FlatList
+              data={countryCallingCodes.filter(c =>
+                c.name.toLowerCase().includes(countrySearch.toLowerCase()) ||
+                c.code.toLowerCase().includes(countrySearch.toLowerCase())
+              )}
+              keyExtractor={(item) => item.code}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[styles.countryPickerItem, { borderBottomColor: colors.border }]}
+                  onPress={() => {
+                    setSelectedCountry(item);
+                    setShowCountryPicker(false);
+                    setCountrySearch('');
+                  }}
+                >
+                  <Text style={{ fontSize: 20, marginRight: 12 }}>{item.flag}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[{ fontSize: 16, fontWeight: '500' }, { color: colors.text }]}>{item.name}</Text>
+                    <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 1 }}>{item.code}</Text>
+                  </View>
+                  {selectedCountry.code === item.code && (
+                    <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.primary }}>✓</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <View style={{ padding: 20, alignItems: 'center' }}>
+                  <Text style={{ color: colors.textSecondary }}>No countries found</Text>
+                </View>
+              }
+            />
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -551,8 +900,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   header: {
-    marginBottom: 40,
+    marginBottom: 32,
     alignItems: 'center',
+  },
+  logo: {
+    width: 120,
+    height: 120,
+    marginBottom: 12,
   },
   title: {
     fontSize: 32,
@@ -564,6 +918,48 @@ const styles = StyleSheet.create({
   },
   form: {
     width: '100%',
+  },
+  stepper: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  stepperItem: {
+    alignItems: 'center',
+    flex: 1,
+    gap: 8,
+  },
+  stepBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepBadgeText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  stepTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  stepCard: {
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 16,
+  },
+  stepCardTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  stepCardSubtitle: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 18,
   },
   inputGroup: {
     marginBottom: 20,
@@ -584,6 +980,27 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
   },
+  countrySelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    height: 50,
+    paddingHorizontal: 14,
+  },
+  countrySelectorFlag: {
+    fontSize: 20,
+    marginRight: 10,
+  },
+  countrySelectorText: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  countrySelectorArrow: {
+    fontSize: 10,
+    marginLeft: 4,
+  },
   button: {
     height: 50,
     borderRadius: 8,
@@ -595,6 +1012,28 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   buttonText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  navigationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 8,
+  },
+  primaryNavButton: {
+    flex: 1,
+    marginTop: 0,
+  },
+  secondaryButton: {
+    flex: 1,
+    height: 50,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryButtonText: {
     fontSize: 16,
     fontWeight: '600',
   },
@@ -641,6 +1080,76 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 4,
   },
+  summaryCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+    gap: 6,
+  },
+  summaryLine: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  bankChipsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  bankChip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  bankChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  createPatternButton: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  createPatternButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    borderRadius: 14,
+    padding: 16,
+    gap: 12,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  modalTextArea: {
+    borderWidth: 1,
+    borderRadius: 8,
+    minHeight: 100,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -665,18 +1174,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   googleIcon: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#4285F4',
-    alignItems: 'center',
-    justifyContent: 'center',
     marginRight: 12,
-  },
-  googleIconText: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: 'bold',
   },
   googleButtonText: {
     fontSize: 16,
@@ -698,6 +1196,45 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  countryPickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  countryPickerContent: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    height: '70%',
+    paddingBottom: Platform.OS === 'ios' ? 34 : 0,
+    overflow: 'hidden',
+  },
+  countryPickerHeader: {
+    padding: 20,
+    borderBottomWidth: 1,
+  },
+  countryPickerHeaderTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  countryPickerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  countryPickerSearch: {
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    fontSize: 16,
+  },
+  countryPickerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
   },
 });
 

@@ -8,18 +8,16 @@ export const getDisplayName = (user: any): string => {
   // Handle cases where the user object might be nested (e.g., from API response)
   const userData = user.user || user.data || user;
   
-  // 1. Try username
-  if (userData.username) {
-    return userData.username;
-  }
-  
-  // 2. Try firstName/lastName (camelCase or snake_case)
+  // 1. Try firstName (camelCase or snake_case)
   const fName = userData.firstName || userData.first_name || userData.name;
-  const lName = userData.lastName || userData.last_name;
   
   if (fName) {
-    const fullName = `${fName} ${lName || ''}`.trim();
-    return fullName || 'User';
+    return fName;
+  }
+  
+  // 2. Try username as fallback
+  if (userData.username) {
+    return userData.username;
   }
   
   // 3. Try phone

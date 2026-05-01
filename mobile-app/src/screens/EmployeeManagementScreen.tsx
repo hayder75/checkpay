@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
+  TextInput,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
@@ -13,7 +14,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { usePopup } from '../contexts/PopupContext';
 import { businessAPI, employeeAPI } from '../services/api';
 import { storage } from '../services/storage';
-import { ArrowLeft, Users, User, CheckCircle2, XCircle, TrendingUp, UserPlus, QrCode, Copy, X as CloseIcon, Trash2, Wallet, BarChart3, Key } from 'lucide-react-native';
+import { ArrowLeft, Users, User, CheckCircle2, XCircle, TrendingUp, UserPlus, QrCode, Copy, X as CloseIcon, Trash2, Wallet, BarChart3, Key, Plus } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 import QRCode from 'react-native-qrcode-svg';
 
@@ -30,29 +31,70 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState<any>(null);
   const [businessId, setBusinessId] = useState<string | null>(null);
+  const [businesses, setBusinesses] = useState<any[]>([]);
+  const [selectedBusinessId, setSelectedBusinessId] = useState<string | null>(null);
   const [showAddEmployeeModal, setShowAddEmployeeModal] = useState(false);
   const [employeeOTP, setEmployeeOTP] = useState('');
   const [generatingOTP, setGeneratingOTP] = useState(false);
   const [isReauthorizing, setIsReauthorizing] = useState(false);
   const [updatingSettings, setUpdatingSettings] = useState<{ [key: string]: boolean }>({});
+  const [showCreateBusinessModal, setShowCreateBusinessModal] = useState(false);
+  const [creatingBusiness, setCreatingBusiness] = useState(false);
+  const [newBusinessName, setNewBusinessName] = useState('');
+  const [newBusinessDescription, setNewBusinessDescription] = useState('');
+
+  const buildDefaultBusinessName = async (): Promise<string> => {
+    const user = await storage.getUser();
+    const base = user?.firstName || user?.username || 'My';
+    return `${base} Business`;
+  };
+
+  const ensureBusinessContext = async (createIfMissing: boolean): Promise<string | null> => {
+    const response = await businessAPI.getAll();
+    const list = response?.success && Array.isArray(response.data) ? response.data : [];
+
+    if (list.length === 0 && createIfMissing) {
+      const defaultName = await buildDefaultBusinessName();
+      const createResponse = await businessAPI.create({
+        name: defaultName,
+        description: 'Default business created automatically',
+      });
+
+      if (!createResponse?.success) {
+        throw new Error(createResponse?.error || 'Failed to create default business');
+      }
+
+      const refreshed = await businessAPI.getAll();
+      const refreshedList = refreshed?.success && Array.isArray(refreshed.data) ? refreshed.data : [];
+      setBusinesses(refreshedList);
+
+      if (refreshedList.length === 0) {
+        return null;
+      }
+
+      const createdId = refreshedList[0].id;
+      setSelectedBusinessId(createdId);
+      setBusinessId(createdId);
+      await storage.setBusinessId(createdId);
+      return createdId;
+    }
+
+    setBusinesses(list);
+    if (list.length === 0) return null;
+
+    const storedBusinessId = await storage.getBusinessId();
+    const preferredBusinessId = selectedBusinessId || storedBusinessId;
+    const resolved = list.find((b: any) => b.id === preferredBusinessId)?.id || list[0].id;
+
+    setSelectedBusinessId(resolved);
+    setBusinessId(resolved);
+    await storage.setBusinessId(resolved);
+    return resolved;
+  };
 
   const loadData = async () => {
     try {
-      // Get business ID from storage or fetch user's businesses
-      let bId = await storage.getBusinessId();
-      
-      if (!bId) {
-        // Try to fetch businesses
-        const { businessAPI } = await import('../services/api');
-        const response = await businessAPI.getAll();
-        if (response.success && response.data && response.data.length > 0) {
-          bId = response.data[0].id;
-          if (bId) {
-            await storage.setBusinessId(bId);
-          }
-        }
-      }
-
+      const bId = await ensureBusinessContext(false);
       setBusinessId(bId);
 
       if (bId) {
@@ -80,10 +122,64 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
     loadData();
   };
 
+  const handleBusinessSelect = async (id: string) => {
+    setSelectedBusinessId(id);
+    setBusinessId(id);
+    await storage.setBusinessId(id);
+
+    try {
+      const response = await businessAPI.getStats(id);
+      if (response.success) {
+        setStats(response.data);
+      }
+    } catch (error) {
+      console.error('Error loading selected business stats:', error);
+      showError('Error', 'Failed to load selected business data');
+    }
+  };
+
+  const handleCreateBusiness = async () => {
+    const name = newBusinessName.trim();
+    if (!name) {
+      showError('Error', 'Business name is required');
+      return;
+    }
+
+    setCreatingBusiness(true);
+    try {
+      const response = await businessAPI.create({
+        name,
+        description: newBusinessDescription.trim() || undefined,
+      });
+
+      if (!response?.success) {
+        showError('Error', response?.error || 'Failed to create business');
+        return;
+      }
+
+      setNewBusinessName('');
+      setNewBusinessDescription('');
+      setShowCreateBusinessModal(false);
+
+      const resolved = await ensureBusinessContext(false);
+      if (resolved) {
+        await handleBusinessSelect(resolved);
+      }
+
+      showSuccess('Success', 'Business created successfully');
+      await loadData();
+    } catch (error) {
+      console.error('Error creating business:', error);
+      showError('Error', 'Failed to create business');
+    } finally {
+      setCreatingBusiness(false);
+    }
+  };
+
   const handleAddEmployee = async () => {
     setGeneratingOTP(true);
     try {
-      const bId = businessId || await storage.getBusinessId();
+      const bId = businessId || await ensureBusinessContext(true);
       if (!bId) {
         showError('Error', 'No business associated with this account');
         return;
@@ -107,7 +203,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
   const handleReauthorizeEmployee = async (employeeId: string, employeeName: string) => {
     setGeneratingOTP(true);
     try {
-      const bId = businessId || await storage.getBusinessId();
+      const bId = businessId || await ensureBusinessContext(true);
       if (!bId) {
         showError('Error', 'No business associated with this account');
         return;
@@ -131,7 +227,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
   const handleToggleEmployeeAccess = async (employeeId: string, currentValue: boolean) => {
     setUpdatingSettings({ ...updatingSettings, [employeeId]: true });
     try {
-      const bId = businessId || await storage.getBusinessId();
+      const bId = businessId || await ensureBusinessContext(true);
       if (!bId) {
         showError('Error', 'No business associated with this account');
         return;
@@ -160,7 +256,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
       `Are you sure you want to delete ${employeeName}? This action cannot be undone.`,
       async () => {
         try {
-          const bId = businessId || await storage.getBusinessId();
+          const bId = businessId || await ensureBusinessContext(true);
           if (!bId) return;
           
           const response = await employeeAPI.delete(bId, employeeId);
@@ -213,6 +309,38 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
             </>
           )}
         </TouchableOpacity>
+      </View>
+
+      <View style={[styles.businessToolbar, { borderBottomColor: colors.border, backgroundColor: colors.background }]}> 
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.businessChips}> 
+          {businesses.map((b: any) => {
+            const active = (selectedBusinessId || businessId) === b.id;
+            return (
+              <TouchableOpacity
+                key={b.id}
+                style={[
+                  styles.businessChip,
+                  {
+                    backgroundColor: active ? colors.primary : colors.surface,
+                    borderColor: active ? colors.primary : colors.border,
+                  },
+                ]}
+                onPress={() => handleBusinessSelect(b.id)}
+              >
+                <Text style={{ color: active ? colors.primaryText : colors.text, fontSize: 12, fontWeight: '600' }}>
+                  {b.name}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+          <TouchableOpacity
+            style={[styles.businessChip, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            onPress={() => setShowCreateBusinessModal(true)}
+          >
+            <Plus size={14} color={colors.primary} />
+            <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700', marginLeft: 6 }}>New Business</Text>
+          </TouchableOpacity>
+        </ScrollView>
       </View>
 
       <ScrollView 
@@ -414,7 +542,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
                     value={JSON.stringify({
                       businessId,
                       code: employeeOTP,
-                      type: 'employee_registration',
+                      type: isReauthorizing ? 'employee_login' : 'employee_registration',
                     })}
                     size={160}
                     color={colors.text}
@@ -423,11 +551,15 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
                 ) : (
                   <QrCode size={120} color={colors.primary} strokeWidth={1.5} />
                 )}
-                <Text style={[styles.qrHint, { color: colors.textSecondary }]}>Employee Invite QR</Text>
+                <Text style={[styles.qrHint, { color: colors.textSecondary }]}>
+                  {isReauthorizing ? 'Employee Login QR' : 'Employee Invite QR'}
+                </Text>
               </View>
 
               <View style={styles.otpContainer}>
-                <Text style={[styles.otpLabel, { color: colors.textSecondary }]}>Invite Code</Text>
+                <Text style={[styles.otpLabel, { color: colors.textSecondary }]}> 
+                  {isReauthorizing ? 'Employee Login Code' : 'Invite Code'}
+                </Text>
                 <View style={[styles.otpBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                   <Text style={[styles.otpText, { color: colors.primary }]}>{employeeOTP}</Text>
                   <TouchableOpacity 
@@ -456,6 +588,51 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
                 }}
               >
                 <Text style={[styles.doneButtonText, { color: colors.primaryText }]}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showCreateBusinessModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCreateBusinessModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.background }]}> 
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Create Business</Text>
+              <TouchableOpacity onPress={() => setShowCreateBusinessModal(false)}>
+                <CloseIcon size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ gap: 12 }}>
+              <TextInput
+                value={newBusinessName}
+                onChangeText={setNewBusinessName}
+                placeholder="Business name"
+                placeholderTextColor={colors.textSecondary}
+                style={[styles.businessInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
+              />
+              <TextInput
+                value={newBusinessDescription}
+                onChangeText={setNewBusinessDescription}
+                placeholder="Description (optional)"
+                placeholderTextColor={colors.textSecondary}
+                style={[styles.businessInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
+              />
+
+              <TouchableOpacity
+                style={[styles.doneButton, { backgroundColor: colors.primary, opacity: creatingBusiness ? 0.7 : 1 }]}
+                onPress={handleCreateBusiness}
+                disabled={creatingBusiness}
+              >
+                <Text style={[styles.doneButtonText, { color: colors.primaryText }]}> 
+                  {creatingBusiness ? 'Creating...' : 'Create Business'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -502,6 +679,24 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
+  },
+  businessToolbar: {
+    borderBottomWidth: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  businessChips: {
+    gap: 8,
+    paddingRight: 12,
+    alignItems: 'center',
+  },
+  businessChip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   summaryContainer: {
     flexDirection: 'row',
@@ -756,6 +951,13 @@ const styles = StyleSheet.create({
   doneButtonText: {
     fontSize: 15,
     fontWeight: '600',
+  },
+  businessInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
   },
   settingsCard: {
     borderRadius: 16,
