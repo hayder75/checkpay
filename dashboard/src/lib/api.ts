@@ -220,6 +220,7 @@ export const authAPI = {
   resetPassword: (data: { phone: string; newPassword: string; otp?: string }) =>
     api.post('/auth/reset-password', data),
   regenerateKey: () => api.post('/auth/regenerate-key'),
+    generateQrSignup: () => api.get('/auth/generate-device-link'),
 };
 
 // Admin API (Keep existing for backward compatibility)
@@ -305,4 +306,12 @@ export const clustersAPI = {
   rejectRequest: (id: string) => api.post("/clusters/requests/" + id + "/reject"),
   cancelRequest: (id: string) => api.post("/clusters/requests/" + id + "/cancel"),
   deleteRequest: (id: string) => api.delete("/clusters/requests/" + id),
+};
+
+// Pending Verification API (Developer API for pre-payment verification)
+export const pendingAPI = {
+  create: (data: { amount: number; webhookUrl?: string; referenceId?: string; businessId?: string; projectId?: string }) => 
+    api.post('/dashboard/pending-verifications', data),
+  getAll: (params?: { businessId?: string; projectId?: string }) => 
+    api.get('/dashboard/pending-verifications', { params }),
 };
