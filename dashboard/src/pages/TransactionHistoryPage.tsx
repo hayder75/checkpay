@@ -316,7 +316,10 @@ export default function TransactionHistoryPage() {
     return Array.from(sources).sort((a, b) => a.localeCompare(b));
   }, [allTransactions]);
 
-  const filteredTransactions = allTransactions.filter((t) => {
+  const validTransactions = allTransactions?.filter(t => t && t.id) || [];
+
+  const filteredTransactions = validTransactions.filter((t) => {
+    if (!t || !(t.id || t.transactionId || t.txnId)) return false;
     const search = searchTerm.toLowerCase();
     const txBank = String(t.bank || t.senderBank || t.receiverBank || "").trim();
 
@@ -597,7 +600,7 @@ export default function TransactionHistoryPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredTransactions.map((transaction) => (
+                    {validTransactions.map((transaction) => (
                       <TableRow
                         key={transaction.id || transaction.transactionId || transaction.txnId}
                         className="cursor-pointer hover:bg-muted/50"

@@ -10,7 +10,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { authAPI, auth, businessAPI } from '@/lib';
 import { COUNTRIES_LIST } from '@/utils/countries';
 import { useToast } from '@/components/ui/use-toast';
-import { Copy, RefreshCw, Save, Key, User, Lock, Eye, EyeOff, Building2, Bell, Shield, Palette } from 'lucide-react';
+import { Copy, RefreshCw, Save, Key, User, Lock, Eye, EyeOff, Building2, Bell, Shield, Palette, Smartphone, QrCode, Timer } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 
 export default function SettingsPage() {
   const { toast } = useToast();
@@ -31,6 +32,11 @@ export default function SettingsPage() {
   const [showPasswords, setShowPasswords] = useState({ current: false, new: false });
   const [countries] = useState(COUNTRIES_LIST);
 
+  const [qrCode, setQrCode] = useState<string | null>(null);
+  const [qrToken, setQrToken] = useState<string>('');
+  const [qrLoading, setQrLoading] = useState(false);
+  const [qrCountdown, setQrCountdown] = useState(0);
+
   const loadUser = async () => {
     try {
       const res = await authAPI.getMe();
@@ -46,6 +52,23 @@ export default function SettingsPage() {
   };
 
   useEffect(() => { loadUser(); }, []);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (qrCountdown > 0) {
+      interval = setInterval(() => {
+        setQrCountdown((prev) => {
+          if (prev <= 1) {
+            setQrCode(null);
+            setQrToken('');
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [qrCountdown]);
 
   const handleUpdateProfile = async () => {
     if (!username.trim()) {
@@ -107,6 +130,21 @@ export default function SettingsPage() {
     }
   };
 
+  const handleGenerateQrCode = async () => {
+    setQrLoading(true);
+    try {
+      const res = await authAPI.generateQrSignup();
+      setQrCode(res.data.data.qrCode);
+      setQrToken(res.data.data.token || '');
+      setQrCountdown(res.data.data.expiresIn);
+      toast({ title: "Success", description: "QR code generated. Scan with mobile app." });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to generate QR code", variant: "destructive" });
+    } finally {
+      setQrLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -130,10 +168,11 @@ export default function SettingsPage() {
         <Separator />
 
         <Tabs defaultValue="profile" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="profile" className="gap-2"><User className="h-4 w-4" /> Profile</TabsTrigger>
             <TabsTrigger value="security" className="gap-2"><Shield className="h-4 w-4" /> Security</TabsTrigger>
             <TabsTrigger value="api" className="gap-2"><Key className="h-4 w-4" /> API</TabsTrigger>
+            <TabsTrigger value="mobile" className="gap-2"><Smartphone className="h-4 w-4" /> Mobile</TabsTrigger>
             <TabsTrigger value="notifications" className="gap-2"><Bell className="h-4 w-4" /> Notifications</TabsTrigger>
           </TabsList>
 
@@ -269,6 +308,46 @@ export default function SettingsPage() {
                 <p className="text-sm text-muted-foreground">
                   Warning: Regenerating your API key will invalidate the old key.
                 </p>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="mobile">
+            <Card>
+              <CardHeader>
+                <CardTitle>Link Mobile App</CardTitle>
+                <CardDescription>Connect your mobile app to access your account</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="flex flex-col items-center gap-4 p-6 bg-muted rounded-lg">
+                  {qrCode ? (
+                    <>
+                      <QRCodeSVG value={qrToken} size={256} />
+                      <div className="flex items-center gap-2 text-sm">
+                        <Timer className="h-4 w-4" />
+                        <span>Expires in {Math.floor(qrCountdown / 60)}:{(qrCountdown % 60).toString().padStart(2, '0')}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-center py-8">
+                      <QrCode className="h-16 w-16 mx-auto mb-4 text-muted-foreground" />
+                      <p className="text-muted-foreground">Click generate to create a QR code</p>
+                    </div>
+                  )}
+                  <Button onClick={handleGenerateQrCode} disabled={qrLoading} className="w-full max-w-xs">
+                    <QrCode className="h-4 w-4 mr-2" />
+                    {qrLoading ? 'Generating...' : qrCode ? 'Regenerate QR Code' : 'Generate QR Code'}
+                  </Button>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  <p><strong>How to link:</strong></p>
+                  <ol className="list-decimal list-inside mt-2 space-y-1">
+                    <li>Open the CheckPay mobile app</li>
+                    <li>Go to Settings → Link Account</li>
+                    <li>Scan the QR code above</li>
+                    <li>Your accounts will be linked automatically</li>
+                  </ol>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
