@@ -11,7 +11,59 @@ import { ingestTransaction } from './api';
 import { installationService } from './installation';
 import { log } from '../utils/logger';
 import { dedupeTransactionsByIdentity, normalizeTxnId } from '../utils/transactionDedup';
+import { getCapturedNotifications, isNotificationAccessEnabled } from '../utils/notificationListener';
 // Patterns are now always fetched from backend, no local caching
+
+interface CapturedNotification {
+  id: string;
+  packageName: string;
+  title: string;
+  text: string;
+  subText?: string;
+  postedAt: number;
+}
+
+const SMS_NOTIFICATION_PACKAGES = new Set([
+  'com.google.android.apps.messaging',
+  'com.android.mms',
+  'com.samsung.android.messaging',
+  'com.miui.mms',
+  'com.huawei.message',
+  'com.coloros.mms',
+  'com.oppo.message',
+  'com.vivo.messaging',
+  'com.transsion.message',
+]);
+
+const NON_SMS_MESSAGING_PACKAGES = [
+  'org.telegram',
+  'com.whatsapp',
+  'com.facebook.orca',
+  'com.instagram',
+  'com.twitter',
+  'com.discord',
+  'com.snapchat',
+  'com.skype',
+  'com.google.android.gm',
+  'com.microsoft.office.outlook',
+];
+
+const FINANCIAL_SIGNAL_KEYWORDS = [
+  'credited',
+  'deposited',
+  'deposit',
+  'received',
+  'transferred',
+  'txn',
+  'transaction',
+  'balance',
+  'birr',
+  'etb',
+  'acct',
+  'account',
+  'ref',
+  'payment',
+];
 
 export interface LocalTransaction {
   id: string;
@@ -23,6 +75,7 @@ export interface LocalTransaction {
   bank: string | null;
   pattern: string;
   smsText: string;
+  source?: 'SMS' | 'NOTIFICATION';
   receivedAt: string;
   synced: boolean; // Whether synced to backend
   isValidated?: boolean; // Whether verified via OCR or manual entry
@@ -101,52 +154,40 @@ class SMSService {
   }
 
   /**
-   * Start monitoring SMS messages
+   * Start monitoring transaction notifications
    */
   async startMonitoring(): Promise<void> {
     if (this.isMonitoring) {
-      console.log('✅ [SMS Service] SMS monitoring already started');
+      console.log('✅ [SMS Service] Notification monitoring already started');
       return;
     }
 
     if (Platform.OS !== 'android') {
-      console.warn('⚠️ [SMS Service] SMS monitoring only supported on Android');
+      console.warn('⚠️ [SMS Service] Notification monitoring only supported on Android');
       return;
     }
 
     // Check if user has completed onboarding
     const onboardingCompleted = await storage.getOnboardingCompleted();
     if (!onboardingCompleted) {
-      console.log('⚠️ [SMS Service] Onboarding not completed, skipping SMS monitoring');
+      console.log('⚠️ [SMS Service] Onboarding not completed, skipping monitoring');
       return;
     }
 
-    // Check SMS reading capability before starting
+    // Notification access is mandatory for auto-capture.
     try {
-      const { checkSMSReadingCapability } = await import('../utils/smsReader');
-      const capability = await checkSMSReadingCapability();
-      
-      log.debug('SMS Service', 'SMS Reading Capability Check', {
-        available: capability.available,
-        hasPermission: capability.hasPermission,
-        hasNativeModule: capability.hasNativeModule,
-      });
-
-      if (!capability.available) {
-        log.error('SMS Service', 'Cannot start SMS monitoring', {
-          error: capability.error,
-          hasPermission: capability.hasPermission,
-          hasNativeModule: capability.hasNativeModule,
-        });
+      const hasNotificationAccess = await isNotificationAccessEnabled();
+      if (!hasNotificationAccess) {
+        log.warn('SMS Service', 'Notification access not enabled, monitoring remains inactive');
         return;
       }
-    } catch (error: any) {
-      log.error('SMS Service', 'Error checking SMS capability', error);
-      // Continue anyway - the actual read will fail gracefully
+    } catch (error) {
+      log.error('SMS Service', 'Error checking notification access', error);
+      return;
     }
 
     this.isMonitoring = true;
-      log.info('SMS Service', 'Starting SMS monitoring');
+      log.info('SMS Service', 'Starting notification monitoring');
 
     // Load persisted state (processed IDs, installation date)
     await this.loadPersistedState();
@@ -238,51 +279,7 @@ class SMSService {
    * Process SMS that were received in background by the native BroadcastReceiver
    */
   private async processPendingBackgroundSMS(): Promise<void> {
-    try {
-      const pendingKey = 'pending_background_sms';
-      const pendingStr = await storage.getItem(pendingKey);
-      
-      if (!pendingStr) {
-        return;
-      }
-
-      const pendingSMS: Array<{ sender: string; body: string; timestamp: number; id: string }> = JSON.parse(pendingStr);
-      
-      if (pendingSMS.length === 0) {
-        return;
-      }
-
-      console.log(`📥 [SMS Service] Processing ${pendingSMS.length} pending background SMS`);
-
-      // Get patterns for processing
-      const countryCode = await storage.getCountryCode();
-      const token = await storage.getToken();
-      
-      if (!countryCode || !token) {
-        console.log('⚠️ [SMS Service] Cannot process pending SMS - no auth or country');
-        return;
-      }
-
-      // Clear pending queue (we'll process them now)
-      await storage.setItem(pendingKey, JSON.stringify([]));
-
-      // Process each pending SMS through normal flow
-      for (const sms of pendingSMS) {
-        const smsFormat = {
-          id: sms.id,
-          body: sms.body,
-          address: sms.sender,
-          date: sms.timestamp,
-        };
-        
-        // This will go through checkForNewSMS on next cycle
-        console.log(`📬 [SMS Service] Queued background SMS for processing: ${sms.body.substring(0, 50)}...`);
-      }
-
-      console.log(`✅ [SMS Service] Queued ${pendingSMS.length} background SMS for processing`);
-    } catch (error) {
-      console.error('❌ [SMS Service] Error processing pending SMS:', error);
-    }
+    await this.processCapturedNotifications();
   }
 
   /**
@@ -324,6 +321,224 @@ class SMSService {
     await this.checkForNewSMS();
   }
 
+  private async loadTargetPatterns(countryCode?: string | null): Promise<InstitutionPattern[]> {
+    const { patternsAPI, institutionPatternsAPI } = await import('./api');
+
+    let userPatterns: any[] = [];
+    let institutionPatterns: any[] = [];
+
+    try {
+      const userPatternsResponse = await patternsAPI.getAll();
+      if (userPatternsResponse.success && userPatternsResponse.data) {
+        userPatterns = Array.isArray(userPatternsResponse.data) ? userPatternsResponse.data : [];
+      }
+    } catch (error) {
+      log.warn('SMS Service', 'Failed loading user patterns for notifications', error);
+    }
+
+    if (countryCode) {
+      try {
+        const institutionResponse = await institutionPatternsAPI.getCountryPatterns(countryCode);
+        if (institutionResponse.success && institutionResponse.data) {
+          const rawPatterns = Array.isArray(institutionResponse.data) ? institutionResponse.data : [];
+          institutionPatterns = rawPatterns.map((p: any) => ({
+            ...p,
+            name: p.name || p.institution || p.bank || 'Institution Pattern',
+          }));
+        }
+      } catch {
+        // Optional source.
+      }
+    }
+
+    const userInstitutionPatterns: InstitutionPattern[] = userPatterns.map((p: any) => ({
+      id: p.id,
+      name: p.name || p.bank || 'User Pattern',
+      institution: p.bank || null,
+      regex: p.regex,
+      extractFields: p.extractFields || p.extraction || {},
+      bank: p.bank || null,
+      currency: p.currency || null,
+      usageCount: 0,
+      smsExample: null,
+      type: 'institution',
+      allowedSenders: p.allowedSenders || null,
+      requireSenderVerification: p.requireSenderVerification !== false,
+      senderVerificationMode: p.senderVerificationMode || 'STRICT',
+      maxAmountThreshold: p.maxAmountThreshold || null,
+      requireContactCheck: p.requireContactCheck !== false,
+    }));
+
+    let merged = [...userInstitutionPatterns, ...institutionPatterns];
+
+    if (merged.length === 0) {
+      const localPatterns = await storage.getInstitutionPatterns();
+      merged = Array.isArray(localPatterns) ? localPatterns : [];
+    }
+
+    return merged;
+  }
+
+  private buildNotificationBodies(notification: CapturedNotification): string[] {
+    const textOnly = (notification.text || '').replace(/\s+/g, ' ').trim();
+    const withSubText = [notification.text, notification.subText]
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const fullCombined = [notification.title, notification.text, notification.subText]
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return Array.from(new Set([textOnly, withSubText, fullCombined].filter(Boolean)));
+  }
+
+  private isSmsNotificationPackage(packageName: string): boolean {
+    const normalized = packageName.toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    if (NON_SMS_MESSAGING_PACKAGES.some((blocked) => normalized.includes(blocked))) {
+      return false;
+    }
+
+    if (SMS_NOTIFICATION_PACKAGES.has(normalized)) {
+      return true;
+    }
+
+    return /(mms|sms|messag)/.test(normalized);
+  }
+
+  private isTargetNotification(notification: CapturedNotification): boolean {
+    const packageName = (notification.packageName || '').toLowerCase();
+    if (!this.isSmsNotificationPackage(packageName)) {
+      return false;
+    }
+
+    // Keep only actual SMS-like notifications from messaging apps.
+    const haystack = `${notification.title || ''} ${notification.text || ''} ${notification.subText || ''}`.toLowerCase();
+    const smsSignals = ['sms', 'message', 'text message', 'mms'];
+    return smsSignals.some((signal) => haystack.includes(signal)) || haystack.length > 0;
+  }
+
+  private hasFinancialSignals(text: string): boolean {
+    const normalized = String(text || '').toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    const hasKeyword = FINANCIAL_SIGNAL_KEYWORDS.some((keyword) => normalized.includes(keyword));
+    const hasAmount = /(\d{2,}[\d,]*(?:\.\d{1,2})?\s*(?:birr|etb|br))/i.test(normalized);
+    const hasTxnRef = /(txn|trx|transaction|ref)\s*[:#-]?\s*[a-z0-9-]{4,}/i.test(normalized);
+
+    return hasKeyword || hasAmount || hasTxnRef;
+  }
+
+  private async storeFailedNotificationRequest(notification: CapturedNotification): Promise<void> {
+    const key = 'pending_notification_verify_requests';
+    const raw = await storage.getItem(key);
+    const existing = raw ? JSON.parse(raw) : [];
+
+    existing.unshift({
+      id: notification.id,
+      source: 'NOTIFICATION',
+      packageName: notification.packageName,
+      title: notification.title,
+      text: notification.text,
+      receivedAt: new Date(notification.postedAt || Date.now()).toISOString(),
+      status: 'pending_manual_review',
+    });
+
+    await storage.setItem(key, JSON.stringify(existing.slice(0, 300)));
+  }
+
+  private async processCapturedNotifications(): Promise<void> {
+    try {
+      const countryCode = await storage.getCountryCode();
+      const token = await storage.getToken();
+      if (!token) {
+        return;
+      }
+
+      const notifications = await getCapturedNotifications();
+      if (!notifications.length) {
+        return;
+      }
+
+      const patterns = await this.loadTargetPatterns(countryCode);
+      if (!patterns.length) {
+        log.warn('SMS Service', 'No patterns available for notification parsing');
+        return;
+      }
+
+      const sorted = [...notifications].sort((a, b) => (a.postedAt || 0) - (b.postedAt || 0));
+
+      for (const notification of sorted) {
+        if (!this.isTargetNotification(notification)) {
+          continue;
+        }
+
+        if (this.processedSMSIds.has(notification.id)) {
+          continue;
+        }
+
+        const bodies = this.buildNotificationBodies(notification);
+        if (!bodies.length) {
+          this.processedSMSIds.add(notification.id);
+          continue;
+        }
+
+        const financialBodies = bodies.filter((body) => this.hasFinancialSignals(body));
+        if (!financialBodies.length) {
+          this.processedSMSIds.add(notification.id);
+          continue;
+        }
+
+        let processed = false;
+        let attemptedFinancialParse = false;
+        const notificationTimestamp = notification.postedAt || Date.now();
+
+        for (const body of financialBodies) {
+          attemptedFinancialParse = true;
+          const pseudoSMS = {
+            id: notification.id,
+            body,
+            address: notification.title || notification.packageName || 'notification',
+            date: notificationTimestamp,
+          };
+
+          processed = await this.processSMS(pseudoSMS, patterns, {
+            skipSecurityVerification: true,
+            source: 'NOTIFICATION',
+          });
+
+          if (processed) {
+            break;
+          }
+        }
+
+        if (!processed && attemptedFinancialParse) {
+          await this.storeFailedNotificationRequest(notification);
+        }
+
+        this.processedSMSIds.add(notification.id);
+        if (!this.lastProcessedTimestamp || notificationTimestamp > this.lastProcessedTimestamp) {
+          this.lastProcessedTimestamp = notificationTimestamp;
+        }
+      }
+
+      await this.saveProcessedIds();
+      if (this.lastProcessedTimestamp) {
+        await storage.setLastProcessedSMSTimestamp(this.lastProcessedTimestamp);
+      }
+    } catch (error) {
+      log.error('SMS Service', 'Error processing captured notifications', error);
+    }
+  }
+
   /**
    * Check for new SMS and process them
    */
@@ -333,294 +548,17 @@ class SMSService {
       return;
     }
 
-    try {
-      console.log('🔍 [SMS Service] Starting check for new SMS...');
-      
-      // Get country code
-      const countryCode = await storage.getCountryCode();
-      if (!countryCode) {
-        console.log('⚠️ [SMS Service] No country code set, skipping SMS check');
-        return;
-      }
-      console.log('✅ [SMS Service] Country code:', countryCode);
-
-      // Always fetch patterns from backend (no local storage)
-      const token = await storage.getToken();
-      if (!token) {
-        console.log('📱 [SMS Service] No auth token, skipping SMS check');
-        return;
-      }
-      console.log('✅ [SMS Service] Auth token present');
-      
-      let userPatterns: any[] = [];
-      let institutionPatterns: any[] = [];
-      
-      try {
-        // Fetch user patterns from backend
-        const { patternsAPI } = await import('./api');
-        try {
-          const userPatternsResponse = await patternsAPI.getAll();
-          console.log('📥 [SMS Service] User patterns response:', {
-            success: userPatternsResponse.success,
-            hasData: !!userPatternsResponse.data,
-            dataType: typeof userPatternsResponse.data,
-            isArray: Array.isArray(userPatternsResponse.data),
-          });
-          if (userPatternsResponse.success && userPatternsResponse.data) {
-            userPatterns = Array.isArray(userPatternsResponse.data) ? userPatternsResponse.data : [];
-            console.log(`✅ [SMS Service] Fetched ${userPatterns.length} user patterns from backend`);
-          } else {
-            console.warn('⚠️ [SMS Service] User patterns response was not successful:', userPatternsResponse);
-          }
-        } catch (userPatternsError: any) {
-          console.error('❌ [SMS Service] Error fetching user patterns:', {
-            message: userPatternsError.message,
-            response: userPatternsError.response?.data,
-            status: userPatternsError.response?.status,
-          });
-          // Continue - we can still use institution patterns
-        }
-        
-        // Fetch institution patterns from backend (optional - app works with user patterns only)
-        const { institutionPatternsAPI } = await import('./api');
-        try {
-          const institutionResponse = await institutionPatternsAPI.getCountryPatterns(countryCode);
-          if (institutionResponse.success && institutionResponse.data) {
-            const rawPatterns = Array.isArray(institutionResponse.data) ? institutionResponse.data : [];
-            // Map backend InstitutionPattern to mobile app format (add name field)
-            institutionPatterns = rawPatterns.map((p: any) => ({
-              ...p,
-              name: p.name || p.institution || p.bank || 'Institution Pattern',
-            }));
-            console.log(`✅ [SMS Service] Fetched ${institutionPatterns.length} institution patterns from backend`);
-          }
-        } catch (institutionPatternsError: any) {
-          // Silently fail - app continues with user patterns only
-          // Institution patterns are optional and may not be available for all countries
-        }
-        
-        console.log(`📋 [SMS Service] User patterns: ${userPatterns.length}, Institution patterns: ${institutionPatterns.length}`);
-      } catch (error: any) {
-        console.error('❌ [SMS Service] Unexpected error fetching patterns:', {
-          message: error.message,
-          stack: error.stack,
-          response: error.response?.data,
-          status: error.response?.status,
-        });
-        // Continue with whatever patterns we managed to load (might be empty arrays)
-      }
-      
-      // Combine user patterns and institution patterns
-      // Convert user patterns to InstitutionPattern format
-      const userInstitutionPatterns: InstitutionPattern[] = userPatterns.map((p: any) => ({
-        id: p.id,
-        name: p.name || p.bank || 'User Pattern',
-        institution: p.bank || null,
-        regex: p.regex,
-        extractFields: p.extractFields || p.extraction || {},
-        bank: p.bank || null,
-        currency: p.currency || null,
-        usageCount: 0,
-        smsExample: null,
-        type: 'institution',
-        // Include security fields from backend
-        allowedSenders: p.allowedSenders || null,
-        requireSenderVerification: p.requireSenderVerification !== false,
-        senderVerificationMode: p.senderVerificationMode || 'STRICT',
-        maxAmountThreshold: p.maxAmountThreshold || null,
-        requireContactCheck: p.requireContactCheck !== false,
-      }));
-      
-      // Combine all patterns (user patterns first, then institution patterns)
-      const patterns = [...userInstitutionPatterns, ...institutionPatterns];
-      
-      console.log(`📋 [SMS Service] Total patterns loaded: ${patterns.length}`, {
-        userPatterns: userInstitutionPatterns.length,
-        institutionPatterns: institutionPatterns.length,
-        patternNames: patterns.map(p => p.name).slice(0, 5),
-        samplePattern: patterns[0] ? {
-          id: patterns[0].id,
-          name: patterns[0].name,
-          institution: patterns[0].institution,
-          hasRegex: !!patterns[0].regex,
-          regexPreview: patterns[0].regex?.substring(0, 80),
-          extractFields: patterns[0].extractFields,
-        } : null,
-      });
-
-      if (patterns.length === 0) {
-        console.warn('⚠️ [SMS Service] No patterns available - SMS will be read but not matched');
-        console.warn('⚠️ [SMS Service] This means SMS matching will not work.');
-        console.warn('⚠️ [SMS Service] Please ensure:');
-        console.warn('   1. You have completed onboarding');
-        console.warn('   2. You have signed in');
-        console.warn('   3. Patterns exist for your country');
-        console.warn('⚠️ [SMS Service] Continuing to read SMS anyway for debugging...');
-        // Don't return - continue to read SMS even without patterns so we can see what's happening
-      }
-      
-      log.info('SMS Service', `Loaded ${patterns.length} patterns`, {
-        user: userInstitutionPatterns.length,
-        institution: institutionPatterns.length,
-      });
-      
-      // Log pattern details for debugging
-      // console.log(`📋 [SMS Service] Using ${patterns.length} patterns for matching:`, 
-      //   patterns.map(p => ({
-      //     id: p.id?.substring(0, 8),
-      //     name: p.name,
-      //     institution: p.institution,
-      //     hasRegex: !!p.regex,
-      //   }))
-      // );
-
-      // Read SMS messages - use timestamp-based resumption to avoid gaps
-      try {
-        const { readSMSMessages } = await import('../utils/smsReader');
-        
-        // Determine how many SMS to read based on last processed timestamp
-        // If we have a timestamp, read more messages to ensure we catch all SMS since then
-        // Otherwise, read a reasonable default (50 messages for initial scan)
-        const smsLimit = this.lastProcessedTimestamp ? 100 : 50;
-        
-        log.debug('SMS Service', 'Reading SMS messages', {
-          processedCount: this.processedSMSIds.size,
-          lastProcessedId: this.lastProcessedSMSId,
-          lastProcessedTimestamp: this.lastProcessedTimestamp ? new Date(this.lastProcessedTimestamp).toISOString() : null,
-          smsLimit,
-        });
-        
-        const smsMessages = await readSMSMessages(smsLimit);
-        
-        log.info('SMS Service', `Read ${smsMessages?.length || 0} SMS messages`);
-        
-        if (!smsMessages || smsMessages.length === 0) {
-          log.warn('SMS Service', 'No SMS messages found');
-          return;
-        }
-        
-        log.info('SMS Service', `Checking ${smsMessages.length} SMS against ${patterns.length} patterns`);
-
-        // Process each SMS - try to match against patterns
-        let processedCount = 0;
-        let skippedOld = 0;
-        let skippedAlreadyProcessed = 0;
-        
-        // Sort SMS by date (oldest first) to process in chronological order
-        const sortedSMS = [...smsMessages].sort((a, b) => a.date - b.date);
-        
-        for (const sms of sortedSMS) {
-          // Skip if already processed (check both last ID and set)
-          if (this.processedSMSIds.has(sms.id)) {
-            skippedAlreadyProcessed++;
-            continue;
-          }
-
-          // Skip SMS received before installation (Requirement #2)
-          if (this.installationDate) {
-            const smsDate = new Date(sms.date);
-            if (smsDate < this.installationDate) {
-              skippedOld++;
-              // Still mark as processed to avoid checking again
-              this.processedSMSIds.add(sms.id);
-              continue;
-            }
-          }
-
-          // Skip SMS older than last processed timestamp (gap-free resumption)
-          // Only use timestamp check if SMS date is a valid number
-          if (this.lastProcessedTimestamp && typeof sms.date === 'number' && sms.date <= this.lastProcessedTimestamp) {
-            skippedAlreadyProcessed++;
-            // Mark as processed to avoid checking again
-            this.processedSMSIds.add(sms.id);
-            continue;
-          }
-
-          log.debug('SMS Service', `Checking SMS ${sms.id}`, {
-            preview: sms.body.substring(0, 150),
-            address: sms.address,
-            date: new Date(sms.date).toISOString(),
-            patternsCount: patterns.length,
-          });
-          
-          const result = await this.processSMS(sms, patterns);
-          if (result) {
-            processedCount++;
-            log.success('SMS Service', `✅ Processed SMS ${sms.id} as transaction`);
-            // Mark as processed
-            this.processedSMSIds.add(sms.id);
-          } else {
-            log.debug('SMS Service', `⏭️ SMS ${sms.id} did not match any pattern`, {
-              preview: sms.body.substring(0, 100),
-            });
-            // Mark non-matching SMS as processed to avoid re-checking
-            // Note: We still update timestamp below to ensure no gaps
-            this.processedSMSIds.add(sms.id);
-          }
-          
-          // Keep set size manageable (last 500 for better gap prevention)
-          if (this.processedSMSIds.size > 500) {
-            const firstId = Array.from(this.processedSMSIds)[0];
-            this.processedSMSIds.delete(firstId);
-          }
-          
-          // Update timestamp for ALL checked SMS (matched or not) to ensure no gaps
-          // The processed IDs set handles deduplication, timestamp is just for efficiency
-          this.lastProcessedSMSId = sms.id;
-          // Only update timestamp if SMS date is a valid number
-          if (typeof sms.date === 'number') {
-            if (!this.lastProcessedTimestamp || sms.date > this.lastProcessedTimestamp) {
-              this.lastProcessedTimestamp = sms.date;
-            }
-          } else {
-            log.warn('SMS Service', `SMS ${sms.id} has invalid date format:`, sms.date);
-          }
-        }
-        
-        // Persist processed IDs and timestamp after each batch (Requirement #3)
-        await this.saveProcessedIds();
-        if (this.lastProcessedTimestamp && typeof this.lastProcessedTimestamp === 'number') {
-          try {
-            await storage.setLastProcessedSMSTimestamp(this.lastProcessedTimestamp);
-          } catch (error) {
-            log.error('SMS Service', 'Error saving last processed timestamp', error);
-          }
-        }
-        
-        if (skippedOld > 0) {
-          log.debug('SMS Service', `Skipped ${skippedOld} SMS from before installation`);
-        }
-        if (skippedAlreadyProcessed > 0) {
-          log.debug('SMS Service', `Skipped ${skippedAlreadyProcessed} already processed SMS`);
-        }
-        if (processedCount > 0) {
-          log.success('SMS Service', `Processed ${processedCount} new transaction(s)`);
-        } else {
-          log.info('SMS Service', 'No new transactions found in this check');
-        }
-      } catch (importError: any) {
-        console.error('❌ [SMS Service] Error importing or using SMS reader:', importError);
-        console.error('❌ [SMS Service] Error details:', {
-          message: importError.message,
-          stack: importError.stack,
-          name: importError.name,
-        });
-        return;
-      }
-    } catch (error: any) {
-      console.error('❌ [SMS Service] Error checking for new SMS:', error);
-      console.error('❌ [SMS Service] Error details:', {
-        message: error.message,
-        stack: error.stack,
-        name: error.name,
-      });
-    }
+    await this.processCapturedNotifications();
   }
 
   /**
    * Process a single SMS message
    */
-  private async processSMS(sms: any, patterns: InstitutionPattern[]): Promise<boolean> {
+  private async processSMS(
+    sms: any,
+    patterns: InstitutionPattern[],
+    options?: { skipSecurityVerification?: boolean; source?: 'SMS' | 'NOTIFICATION' }
+  ): Promise<boolean> {
     try {
       // Find matching pattern
       const matchResult = this.findMatchingPattern(sms.body, patterns, sms.address);
@@ -649,8 +587,8 @@ class SMSService {
         return false;
       }
 
-      // NEW: Verify SMS security
-      if (matchResult.pattern) {
+      // NEW: Verify SMS security for SMS-origin events only
+      if (matchResult.pattern && !options?.skipSecurityVerification) {
         const { verifySMS } = await import('./smsVerification');
         const verification = await verifySMS(
           {
@@ -747,7 +685,8 @@ class SMSService {
         sendTo: matchResult.data.sendTo || null,
         bank: matchResult.data.bank || matchResult.data.patternName || null,
         pattern: matchResult.data.patternName || 'Institution Pattern',
-        smsText: sms.body,
+        smsText: options?.source === 'NOTIFICATION' ? '' : sms.body,
+        source: options?.source || 'SMS',
         receivedAt: new Date(sms.date).toISOString(),
         synced: false,
         createdAt: new Date().toISOString(),
@@ -888,14 +827,14 @@ class SMSService {
         sendFrom: transaction.sendFrom || null,
         sendTo: transaction.sendTo || null,
         bank: transaction.bank || '',
-        pattern: transaction.pattern || 'SMS Pattern',
-        smsText: transaction.smsText,
-        source: 'SMS', // Mark as SMS source
+        pattern: transaction.pattern || (transaction.source === 'NOTIFICATION' ? 'Notification Pattern' : 'SMS Pattern'),
+        source: transaction.source === 'NOTIFICATION' ? 'SMS' : (transaction.source || 'SMS'),
+        ...(transaction.source !== 'NOTIFICATION' && transaction.smsText ? { smsText: transaction.smsText } : {}),
       };
       
       console.log('📤 [SMS Service] Sending payload:', {
         ...payload,
-        smsText: payload.smsText?.substring(0, 50) + '...',
+        smsText: payload.smsText ? payload.smsText.substring(0, 50) + '...' : undefined,
       });
       
       const result = await ingestTransaction(payload);

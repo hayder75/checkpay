@@ -4,6 +4,7 @@ import { Buffer } from 'buffer';
 import { API_BASE_URL } from '../config';
 import { storage } from './storage';
 import { patternsAPI } from './api';
+import { authAPI } from './api';
 import { Pattern } from '../types';
 
 // Complete the auth session in the browser
@@ -132,8 +133,25 @@ export async function completeGoogleAuth(
       throw new Error('Failed to save authentication token');
     }
 
+    // Refresh from backend to get full profile fields (role/country/apiKey consistency).
+    let hydratedUser = user;
+    try {
+      const me = await authAPI.getMe();
+      if (me?.success && me?.data) {
+        hydratedUser = { ...user, ...me.data };
+        await storage.setUser(hydratedUser);
+      }
+    } catch {
+      // Continue with OAuth callback payload if /auth/me fails.
+    }
+
+    const countryCode = (hydratedUser?.country || hydratedUser?.countryCode || '').toString().trim();
+    if (countryCode) {
+      await storage.setCountryCode(countryCode.toUpperCase());
+    }
+
     // Get API key from user
-    const apiKey = user.apiKey;
+    const apiKey = hydratedUser.apiKey;
     if (apiKey) {
       await storage.setApiKey(apiKey);
 
@@ -153,16 +171,16 @@ export async function completeGoogleAuth(
           const patterns = Array.isArray(patternsResponse.data)
             ? patternsResponse.data
             : [];
-          onSuccess(user, apiKey, patterns);
+          onSuccess(hydratedUser, apiKey, patterns);
         } else {
-          onSuccess(user, apiKey, []);
+          onSuccess(hydratedUser, apiKey, []);
         }
       } catch (error) {
         console.error('Error fetching patterns:', error);
-        onSuccess(user, apiKey, []);
+        onSuccess(hydratedUser, apiKey, []);
       }
     } else {
-      console.error('❌ [Google Auth] No API key in user object:', user);
+      console.error('❌ [Google Auth] No API key in user object:', hydratedUser);
       throw new Error('No API key found for this account. Please contact support.');
     }
   } catch (error: any) {

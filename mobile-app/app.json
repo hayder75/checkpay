@@ -29,8 +29,7 @@
         }
       ],
       "./plugins/withMLKit.js",
-      "./plugins/withSMSReceiver.js",
-      "./plugins/withSMSRoleManager.js",
+      "./plugins/withNotificationListener.js",
       "./plugins/withNetworkSecurityConfig.js"
     ],
     "scheme": "checkpay",
@@ -50,15 +49,10 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "android.permission.READ_SMS",
-        "android.permission.RECEIVE_SMS",
-        "android.permission.SEND_SMS",
         "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
+        "android.permission.FOREGROUND_SERVICE"
       ],
       "package": "com.checkpay.mobile",
       "splash": {

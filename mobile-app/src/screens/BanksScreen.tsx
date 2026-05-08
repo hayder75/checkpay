@@ -19,30 +19,63 @@ interface Props {
   apiKey?: string | null;
 }
 
+const INSTITUTIONS_CACHE_TTL_MS = 10 * 60 * 1000;
+
+let banksScreenMemoryCache: {
+  banks: string[];
+  availableInstitutions: string[];
+  cachedAt: number;
+} | null = null;
+
 export default function BanksScreen({ apiKey }: Props) {
   const { colors } = useTheme();
-  const [banks, setBanks] = useState<string[]>([]);
-  const [availableInstitutions, setAvailableInstitutions] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [banks, setBanks] = useState<string[]>(() => banksScreenMemoryCache?.banks || []);
+  const [availableInstitutions, setAvailableInstitutions] = useState<string[]>(() => banksScreenMemoryCache?.availableInstitutions || []);
+  const [loading, setLoading] = useState(() => !banksScreenMemoryCache || banksScreenMemoryCache.availableInstitutions.length === 0);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     loadBanks();
-    loadInstitutionsFromBackend();
+    loadInstitutionsFromBackend(false);
   }, []);
 
   const loadBanks = async () => {
     try {
       const selectedBanks = await storage.getSelectedBanks();
       setBanks(selectedBanks);
+      banksScreenMemoryCache = {
+        banks: selectedBanks,
+        availableInstitutions,
+        cachedAt: Date.now(),
+      };
     } catch (error) {
       console.error('Error loading banks:', error);
     }
   };
 
-  const loadInstitutionsFromBackend = async () => {
+  const loadInstitutionsFromBackend = async (forceRefresh: boolean = false) => {
     try {
-      setLoading(true);
+      if (!banksScreenMemoryCache || banksScreenMemoryCache.availableInstitutions.length === 0) {
+        setLoading(true);
+      }
+      const cachedInstitutions = await storage.getCachedInstitutions();
+      const cachedAt = await storage.getCachedInstitutionsSyncAt();
+      const cacheIsFresh = Date.now() - cachedAt < INSTITUTIONS_CACHE_TTL_MS;
+
+      if (cachedInstitutions.length > 0) {
+        setAvailableInstitutions(cachedInstitutions);
+        banksScreenMemoryCache = {
+          banks,
+          availableInstitutions: cachedInstitutions,
+          cachedAt: Date.now(),
+        };
+      }
+
+      if (!forceRefresh && cachedInstitutions.length > 0 && cacheIsFresh) {
+        setLoading(false);
+        // Keep cached institutions visible while refreshing from backend in background.
+      }
+
       const countryCode = await storage.getCountryCode();
       const token = await storage.getToken();
       
@@ -123,6 +156,12 @@ export default function BanksScreen({ apiKey }: Props) {
       // Convert to sorted array
       const institutions = Array.from(institutionsSet).sort();
       setAvailableInstitutions(institutions);
+      await storage.setCachedInstitutions(institutions);
+      banksScreenMemoryCache = {
+        banks,
+        availableInstitutions: institutions,
+        cachedAt: Date.now(),
+      };
       
       console.log(`✅ [BanksScreen] Total unique institutions found: ${institutions.length}`, {
         fromUserPatterns: loadedFromUserPatterns,
@@ -137,6 +176,11 @@ export default function BanksScreen({ apiKey }: Props) {
         // Auto-select all available institutions
         setBanks(institutions);
         await storage.setSelectedBanks(institutions);
+        banksScreenMemoryCache = {
+          banks: institutions,
+          availableInstitutions: institutions,
+          cachedAt: Date.now(),
+        };
         console.log(`✅ [BanksScreen] Auto-selected ${institutions.length} institutions`);
       }
     } catch (error: any) {
@@ -152,7 +196,7 @@ export default function BanksScreen({ apiKey }: Props) {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadInstitutionsFromBackend();
+    await loadInstitutionsFromBackend(true);
     await loadBanks();
     setRefreshing(false);
   };
@@ -170,6 +214,11 @@ export default function BanksScreen({ apiKey }: Props) {
             const updatedBanks = banks.filter((b) => b !== bankName);
             setBanks(updatedBanks);
             await storage.setSelectedBanks(updatedBanks);
+                banksScreenMemoryCache = {
+                  banks: updatedBanks,
+                  availableInstitutions,
+                  cachedAt: Date.now(),
+                };
           },
         },
       ]
@@ -279,6 +328,11 @@ export default function BanksScreen({ apiKey }: Props) {
                       const updatedBanks = [...banks, institution];
                       setBanks(updatedBanks);
                       await storage.setSelectedBanks(updatedBanks);
+                      banksScreenMemoryCache = {
+                        banks: updatedBanks,
+                        availableInstitutions,
+                        cachedAt: Date.now(),
+                      };
                     }}
                   >
                     <Building2 size={16} color={colors.primary} />

@@ -32,10 +32,17 @@ type LocalTransactionWithMeta = LocalTransaction & {
   businessName?: string | null;
 };
 
+const TRANSACTIONS_CACHE_TTL_MS = 2 * 60 * 1000;
+
+let transactionsScreenMemoryCache: {
+  transactions: LocalTransactionWithMeta[];
+  cachedAt: number;
+} | null = null;
+
 export default function TransactionsScreen({ apiKey }: Props) {
   const { colors } = useTheme();
-  const [activeTab, setActiveTab] = useState<TransactionsTab>('transactions');
-  const [transactions, setTransactions] = useState<LocalTransactionWithMeta[]>([]);
+  const [activeTab, setActiveTab] = useState<TransactionsTab>('verify');
+  const [transactions, setTransactions] = useState<LocalTransactionWithMeta[]>(() => transactionsScreenMemoryCache?.transactions || []);
   const [bankFilter, setBankFilter] = useState<string>('all');
   const [businessFilter, setBusinessFilter] = useState<string>('all');
   const [refreshing, setRefreshing] = useState(false);
@@ -46,7 +53,6 @@ export default function TransactionsScreen({ apiKey }: Props) {
   useEffect(() => {
     checkAuth();
     loadTransactions();
-    const interval = setInterval(loadTransactions, 3000);
     
     // Refresh when app comes to foreground
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
@@ -57,7 +63,6 @@ export default function TransactionsScreen({ apiKey }: Props) {
     });
     
     return () => {
-      clearInterval(interval);
       subscription.remove();
     };
   }, []);
@@ -67,7 +72,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
     setIsAuthenticated(!!token);
   };
 
-  const loadTransactions = async () => {
+  const loadTransactions = async (forceRefresh: boolean = false) => {
     try {
       // First load local transactions as fallback
       let txs: LocalTransactionWithMeta[] = (await storage.getLocalTransactions()) as LocalTransactionWithMeta[];
@@ -75,6 +80,18 @@ export default function TransactionsScreen({ apiKey }: Props) {
       // Try to fetch from backend if authenticated (backend is source of truth)
       const token = await storage.getToken();
       if (token) {
+        const lastSyncAt = await storage.getTransactionsLastSyncAt();
+        const cacheIsFresh = Date.now() - lastSyncAt < TRANSACTIONS_CACHE_TTL_MS;
+
+        if (!forceRefresh && cacheIsFresh) {
+          // Keep local snapshot to avoid unnecessary backend refetches on each open.
+          txs = txs.filter(t => t.amount > 0);
+          txs = dedupeTransactionsByIdentity(txs);
+          txs.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
+          setTransactions(txs);
+          // Keep cached snapshot visible while refreshing from backend in background.
+        }
+
         try {
           const response = await dashboardAPI.getTransactions({ limit: 100 });
           if (response.success && response.data) {
@@ -133,6 +150,8 @@ export default function TransactionsScreen({ apiKey }: Props) {
             const backendTxnIds = new Set(convertedTxs.map(t => t.txnId));
             const unsyncedLocalTxs = txs.filter(t => !t.synced && !backendTxnIds.has(t.txnId));
             txs = [...convertedTxs, ...unsyncedLocalTxs];
+            await storage.setLocalTransactions(txs);
+            await storage.setTransactionsLastSyncAt(Date.now());
             
             console.log(`📥 [TransactionsScreen] Fetched ${backendTxs.length} transactions from backend, total: ${txs.length}`);
           } else {
@@ -155,6 +174,10 @@ export default function TransactionsScreen({ apiKey }: Props) {
       
       console.log(`📊 [TransactionsScreen] Final transaction count: ${txs.length}`);
       setTransactions(txs);
+      transactionsScreenMemoryCache = {
+        transactions: txs,
+        cachedAt: Date.now(),
+      };
     } catch (error) {
       console.error('Error loading transactions:', error);
     }
@@ -162,7 +185,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadTransactions();
+    await loadTransactions(true);
     if (smsService.isActive()) {
       try {
         await smsService.manualCheck();
@@ -390,22 +413,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Tab Header */}
       <View style={styles.tabHeader}>
-        <TouchableOpacity
-          style={[
-            styles.tabButton,
-            activeTab === 'transactions' && styles.activeTabButton,
-            activeTab === 'transactions' && { borderBottomColor: colors.primary }
-          ]}
-          onPress={() => setActiveTab('transactions')}
-        >
-          <Text style={[
-            styles.tabButtonText,
-            { color: activeTab === 'transactions' ? colors.primary : colors.textSecondary }
-          ]}>
-            Transactions
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
+          <TouchableOpacity
           style={[
             styles.tabButton,
             activeTab === 'verify' && styles.activeTabButton,
@@ -423,6 +431,21 @@ export default function TransactionsScreen({ apiKey }: Props) {
             { color: activeTab === 'verify' ? colors.primary : colors.textSecondary }
           ]}>
             Verify
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.tabButton,
+            activeTab === 'transactions' && styles.activeTabButton,
+            activeTab === 'transactions' && { borderBottomColor: colors.primary }
+          ]}
+          onPress={() => setActiveTab('transactions')}
+        >
+          <Text style={[
+            styles.tabButtonText,
+            { color: activeTab === 'transactions' ? colors.primary : colors.textSecondary }
+          ]}>
+            Transactions
           </Text>
         </TouchableOpacity>
       </View>

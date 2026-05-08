@@ -244,15 +244,31 @@ api.interceptors.response.use(
       emitNetworkStatus('online');
     }
 
+    const status = error.response?.status;
+    const url = String(error.config?.url || '');
+    const responseErrorMessage = String(error.response?.data?.error || '');
+    const normalizedResponseError = responseErrorMessage.toLowerCase();
+
+    // Expected role-based cluster access restrictions should not be logged as hard errors.
+    const isExpectedClusterRole403 =
+      status === 403 &&
+      url.startsWith('/clusters/requests/') &&
+      (normalizedResponseError.includes('only developers can view outgoing cluster requests') ||
+        normalizedResponseError.includes('only business owners can view incoming cluster requests'));
+
     // Enhanced error logging (no sensitive data)
     const errorDetails = {
       message: error.userMessage || error.message,
       code: error.code,
-      status: error.response?.status,
-      url: error.config?.url,
+      status,
+      url,
     };
-    
-    log.error('API', 'API Error', errorDetails);
+
+    if (isExpectedClusterRole403) {
+      log.warn('API', 'API Access restricted (role-based)', errorDetails);
+    } else {
+      log.error('API', 'API Error', errorDetails);
+    }
     
     // Provide helpful error messages
     if (error.isNetworkError) {
@@ -637,6 +653,47 @@ export const dashboardAPI = {
   },
 };
 
+// Cluster API
+export const clustersAPI = {
+  getMe: async () => {
+    const response = await api.get('/clusters/me');
+    return response.data;
+  },
+  createRequest: async (data: {
+    ownerCode: string;
+    projectId?: string;
+    message?: string;
+    expiresInHours?: number;
+  }) => {
+    const response = await api.post('/clusters/requests', data);
+    return response.data;
+  },
+  getIncomingRequests: async () => {
+    const response = await api.get('/clusters/requests/incoming');
+    return response.data;
+  },
+  getOutgoingRequests: async () => {
+    const response = await api.get('/clusters/requests/outgoing');
+    return response.data;
+  },
+  acceptRequest: async (id: string) => {
+    const response = await api.post(`/clusters/requests/${id}/accept`);
+    return response.data;
+  },
+  rejectRequest: async (id: string) => {
+    const response = await api.post(`/clusters/requests/${id}/reject`);
+    return response.data;
+  },
+  cancelRequest: async (id: string) => {
+    const response = await api.post(`/clusters/requests/${id}/cancel`);
+    return response.data;
+  },
+  deleteRequest: async (id: string) => {
+    const response = await api.delete(`/clusters/requests/${id}`);
+    return response.data;
+  },
+};
+
 // Countries API
 export const countriesAPI = {
   getAll: async () => {
@@ -842,7 +899,7 @@ export const ingestTransaction = async (transaction: {
   iccid?: string | null; // SIM card ICCID
   sendFrom?: string | null;
   sendTo?: string | null;
-  source?: 'SMS' | 'OCR' | 'MANUAL'; // Transaction source
+  source?: 'SMS' | 'OCR' | 'MANUAL' | 'NOTIFICATION'; // Transaction source
 }) => {
   // Get or fetch business ID (optional - backend will handle if not provided)
   let businessId = await storage.getBusinessId();
@@ -875,12 +932,12 @@ export const ingestTransaction = async (transaction: {
     sender: sender, // Required - must not be empty
     bank: transaction.bank || '',
     pattern: transaction.pattern || '',
-    smsText: transaction.smsText,
     source: transaction.source || 'SMS', // Default to SMS if not specified
     ...(businessId && { businessId }), // Only include if we have one
     ...(transaction.iccid && { iccid: transaction.iccid }),
     ...(transaction.sendFrom && { sendFrom: transaction.sendFrom }),
     ...(transaction.sendTo && { sendTo: transaction.sendTo }),
+    ...(transaction.smsText ? { smsText: transaction.smsText } : {}),
   };
   
   const token = await storage.getToken();

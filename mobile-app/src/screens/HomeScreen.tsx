@@ -30,13 +30,21 @@ interface Props {
   onNavigateToNotifications?: () => void;
 }
 
+const TRANSACTIONS_CACHE_TTL_MS = 2 * 60 * 1000;
+
 const { width } = Dimensions.get('window');
+
+let homeScreenMemoryCache: {
+  transactions: LocalTransaction[];
+  user: any | null;
+  cachedAt: number;
+} | null = null;
 
 export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactions, onNavigateToEmployeeManagement, onNavigateToNotifications }: Props) {
   const { theme, colors } = useTheme();
   // const navigation = useNavigation(); // Removed
-  const [transactions, setTransactions] = useState<LocalTransaction[]>([]);
-  const [user, setUser] = useState<any>(null);
+  const [transactions, setTransactions] = useState<LocalTransaction[]>(() => homeScreenMemoryCache?.transactions || []);
+  const [user, setUser] = useState<any>(() => homeScreenMemoryCache?.user || null);
   const [timeFilter, setTimeFilter] = useState<'1d' | '7d' | '30d'>('7d');
   const [paymentTotal, setPaymentTotal] = useState(0);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -54,7 +62,7 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
   }, [timeFilter]);
 
   // Memoize loadData to prevent recreating on every render
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (forceRefresh: boolean = false) => {
     try {
       const storedUser = await storage.getUser();
       setUser(storedUser);
@@ -65,6 +73,16 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
       // Try to fetch from backend if authenticated (backend is source of truth)
       const token = await storage.getToken();
       if (token) {
+        const lastSyncAt = await storage.getTransactionsLastSyncAt();
+        const cacheIsFresh = Date.now() - lastSyncAt < TRANSACTIONS_CACHE_TTL_MS;
+
+        if (!forceRefresh && cacheIsFresh) {
+          txs = txs.filter(t => t.amount > 0);
+          txs.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
+          setTransactions(txs);
+          // Keep cached snapshot visible while refreshing from backend in background.
+        }
+
         try {
           log.debug('HomeScreen', 'Fetching transactions from backend');
           const response = await dashboardAPI.getTransactions({ limit: 100 });
@@ -140,6 +158,8 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
             const backendTxnIds = new Set(convertedTxs.map(t => t.txnId));
             const unsyncedLocalTxs = txs.filter(t => !t.synced && !backendTxnIds.has(t.txnId));
             txs = [...convertedTxs, ...unsyncedLocalTxs];
+            await storage.setLocalTransactions(txs);
+            await storage.setTransactionsLastSyncAt(Date.now());
             
             log.debug('HomeScreen', `Fetched ${backendTxs.length} transactions from backend, ${unsyncedLocalTxs.length} unsynced local, total: ${txs.length}`);
           } else {
@@ -174,6 +194,11 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
       
       log.debug('HomeScreen', `Final transaction count: ${txs.length}`);
       setTransactions(txs);
+      homeScreenMemoryCache = {
+        transactions: txs,
+        user: storedUser,
+        cachedAt: Date.now(),
+      };
       
       // Payment total is now calculated via useMemo (calculatedPaymentTotal)
       // and synced to state via useEffect
@@ -184,7 +209,6 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 5000);
     
     // Refresh when app comes to foreground
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
@@ -195,7 +219,6 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
     });
     
     return () => {
-      clearInterval(interval);
       subscription.remove();
     };
   }, [loadData]);

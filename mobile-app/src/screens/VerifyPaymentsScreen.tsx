@@ -32,7 +32,58 @@ interface Transaction {
   receivedAt: string;
   createdAt: string;
   verifiedAt?: string | null;
+  source?: 'SMS' | 'OCR' | 'MANUAL' | 'NOTIFICATION';
+  isPendingRequest?: boolean;
+  pendingReason?: string;
 }
+
+const TRANSACTIONS_CACHE_TTL_MS = 2 * 60 * 1000;
+
+const UNKNOWN_VALUE_TOKENS = new Set(['', 'unknown', 'unknown bank', 'manual review']);
+
+const normalizeLabel = (value?: string | null): string => String(value || '').trim().toLowerCase();
+
+const isMeaningfulLabel = (value?: string | null): boolean => {
+  const normalized = normalizeLabel(value);
+  return !!normalized && !UNKNOWN_VALUE_TOKENS.has(normalized);
+};
+
+const hasValidTxnId = (txnId?: string | null): boolean => {
+  const normalized = String(txnId || '').trim();
+  if (!normalized || normalized.length < 4) {
+    return false;
+  }
+  if (normalized.toUpperCase().startsWith('PENDING-')) {
+    return false;
+  }
+  return /\d/.test(normalized);
+};
+
+const isEligibleForVerify = (tx: Transaction): boolean => {
+  if (tx.isPendingRequest) {
+    return false;
+  }
+
+  if (!(Number(tx.amount) > 0)) {
+    return false;
+  }
+
+  if (!hasValidTxnId(tx.txnId)) {
+    return false;
+  }
+
+  const hasTrustedInstitutionHint = isMeaningfulLabel(tx.bank) || isMeaningfulLabel(tx.pattern);
+  if (!hasTrustedInstitutionHint) {
+    return false;
+  }
+
+  // Notification-sourced rows are more prone to false positives, so require sender + institution hints.
+  if (tx.source === 'NOTIFICATION' && !isMeaningfulLabel(tx.sender)) {
+    return false;
+  }
+
+  return true;
+};
 
 export default function VerifyPaymentsScreen({ apiKey }: Props) {
   const { colors } = useTheme();
@@ -40,24 +91,119 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [verifyingIds, setVerifyingIds] = useState<Set<string>>(new Set());
+  const [recentlyVerifiedTxnIds, setRecentlyVerifiedTxnIds] = useState<Set<string>>(new Set());
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
     checkAuth();
     loadTransactions();
-    const interval = setInterval(loadTransactions, 5000); // Refresh every 5 seconds
-    return () => clearInterval(interval);
+
+    // Fast local refresh so newly captured transactions appear quickly.
+    const interval = setInterval(() => {
+      loadTransactions(false);
+    }, 2500);
+
+    return () => {
+      clearInterval(interval);
+    };
   }, []);
+
+  const buildLocalPendingTransactions = async (): Promise<Transaction[]> => {
+    const localTxs = await storage.getLocalTransactions();
+    const pendingLocal = (Array.isArray(localTxs) ? localTxs : [])
+      .filter((tx: any) => {
+        const isDeposit = Number(tx?.amount || 0) > 0;
+        const isVerified = !!tx?.isValidated;
+        const wasRecentlyVerified = !!tx?.txnId && recentlyVerifiedTxnIds.has(String(tx.txnId));
+        return isDeposit && !isVerified && !wasRecentlyVerified;
+      })
+      .map((tx: any) => ({
+        id: tx.id || `local_${tx.txnId}`,
+        txnId: tx.txnId || tx.id,
+        amount: tx.amount || 0,
+        sender: tx.sender || '',
+        sendFrom: tx.sendFrom || null,
+        sendTo: tx.sendTo || null,
+        bank: tx.bank || null,
+        pattern: tx.pattern || 'Local Pattern',
+        smsText: tx.smsText || '',
+        receivedAt: tx.receivedAt || tx.createdAt || new Date().toISOString(),
+        createdAt: tx.createdAt || new Date().toISOString(),
+        verifiedAt: null,
+        source: tx.source || 'SMS',
+      }));
+
+    return dedupeTransactionsByIdentity(pendingLocal);
+  };
+
+  const markLocalTransactionVerified = async (txnId: string) => {
+    try {
+      const localTxs = await storage.getLocalTransactions();
+      if (!Array.isArray(localTxs) || localTxs.length === 0) {
+        return;
+      }
+
+      let changed = false;
+      const updated = localTxs.map((tx: any) => {
+        if (String(tx?.txnId || '') !== String(txnId)) {
+          return tx;
+        }
+
+        changed = true;
+        return {
+          ...tx,
+          isValidated: true,
+          verifiedAt: new Date().toISOString(),
+          synced: true,
+        };
+      });
+
+      if (changed) {
+        await storage.setLocalTransactions(updated);
+        await storage.setTransactionsLastSyncAt(Date.now());
+      }
+    } catch (error) {
+      console.error('Error marking local transaction as verified:', error);
+    }
+  };
+
+  const mergeAndSetTransactions = (
+    pendingAsTransactions: Transaction[],
+    localPending: Transaction[],
+    backendUnverified: Transaction[]
+  ) => {
+    const merged = dedupeTransactionsByIdentity([
+      ...pendingAsTransactions,
+      ...localPending,
+      ...backendUnverified,
+    ]).filter(isEligibleForVerify);
+    merged.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
+    setTransactions(merged);
+  };
 
   const checkAuth = async () => {
     const token = await storage.getToken();
     setIsAuthenticated(!!token);
   };
 
-  const loadTransactions = async () => {
+  const loadTransactions = async (forceRefresh: boolean = false) => {
     try {
+      // Keep Verify focused only on fully parsable payment candidates.
+      const pendingAsTransactions: Transaction[] = [];
+
+      const localPending = await buildLocalPendingTransactions();
+
       const token = await storage.getToken();
       if (!token) {
+        mergeAndSetTransactions(pendingAsTransactions, localPending, []);
+        setLoading(false);
+        return;
+      }
+
+      const lastSyncAt = await storage.getTransactionsLastSyncAt();
+      const cacheIsFresh = Date.now() - lastSyncAt < TRANSACTIONS_CACHE_TTL_MS;
+      if (!forceRefresh && cacheIsFresh) {
+        mergeAndSetTransactions(pendingAsTransactions, localPending, []);
         setLoading(false);
         return;
       }
@@ -112,17 +258,16 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
                 receivedAt: tx.receivedAt || tx.createdAt || new Date().toISOString(),
                 createdAt: tx.createdAt || new Date().toISOString(),
                 verifiedAt: tx.verifiedAt || null,
+                source: tx.source || 'SMS',
               };
             });
           
           const dedupedTransactions = dedupeTransactionsByIdentity(unverifiedTxs);
-
-          // Sort by most recent first
-          dedupedTransactions.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
-          setTransactions(dedupedTransactions);
+          mergeAndSetTransactions(pendingAsTransactions, localPending, dedupedTransactions);
         }
       } catch (error) {
         console.error('Error fetching transactions from backend:', error);
+        mergeAndSetTransactions(pendingAsTransactions, localPending, []);
       }
     } catch (error) {
       console.error('Error loading transactions:', error);
@@ -133,11 +278,19 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadTransactions();
+    await loadTransactions(true);
     setRefreshing(false);
   };
 
   const handleVerify = async (transaction: Transaction) => {
+    if (transaction.isPendingRequest) {
+      Alert.alert(
+        'Manual Review Needed',
+        'This request was saved because notification parsing did not extract a complete transaction. Business owner can review and verify it manually anytime.'
+      );
+      return;
+    }
+
     if (verifyingIds.has(transaction.id)) {
       return; // Already verifying
     }
@@ -158,10 +311,18 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
               const result = await verifyTransaction({ txnId: transaction.txnId });
               
               if (result.success && result.data?.confirmed) {
+                setRecentlyVerifiedTxnIds(prev => {
+                  const next = new Set(prev);
+                  next.add(transaction.txnId);
+                  return next;
+                });
+                setTransactions(prev => prev.filter(tx => tx.txnId !== transaction.txnId));
+                await markLocalTransactionVerified(transaction.txnId);
+
                 Alert.alert(
                   'Success',
                   `Transaction number ${transaction.txnId} has been verified.`,
-                  [{ text: 'OK', onPress: () => loadTransactions() }]
+                  [{ text: 'OK', onPress: () => loadTransactions(true) }]
                 );
               } else {
                 Alert.alert(
