@@ -32,6 +32,7 @@ export default function Drawer({
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: '🏠' },
+    { id: 'cluster-guide', label: 'Modes Guide', icon: '🧭' },
     { id: 'patterns', label: 'Pattern Library', icon: '📋' },
     { id: 'create-pattern', label: 'Create Pattern', icon: '➕' },
     { id: 'transactions', label: 'Transactions', icon: '📊' },

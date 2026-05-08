@@ -28,6 +28,7 @@ import Svg, { Path } from 'react-native-svg';
 interface Props {
   onRegisterSuccess: (user: any, apiKey: string, patterns: Pattern[]) => void;
   onSwitchToLogin: () => void;
+  onSwitchToEmployeeRegister?: () => void;
 }
 
 const PENDING_TELEGRAM_AUTH_TOKEN_KEY = 'pending_telegram_auth_token';
@@ -69,7 +70,7 @@ const GLOBAL_BANK_FALLBACK = [
   'Moov Money',
 ].sort((a, b) => a.localeCompare(b));
 
-export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: Props) {
+export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onSwitchToEmployeeRegister }: Props) {
   const { theme, colors } = useTheme();
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
@@ -500,6 +501,14 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin }: P
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             Create your account
           </Text>
+          {onSwitchToEmployeeRegister && (
+            <TouchableOpacity
+              style={styles.switchButton}
+              onPress={onSwitchToEmployeeRegister}
+            >
+              <Text style={[styles.switchText, { color: colors.textSecondary }]}>Developer Mode: Employee Access with QR/Code</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <View style={styles.form}>

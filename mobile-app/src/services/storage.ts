@@ -166,6 +166,15 @@ export const storage = {
     await AsyncStorage.setItem('local_transactions', JSON.stringify(transactions));
   },
 
+  async getTransactionsLastSyncAt(): Promise<number> {
+    const raw = await AsyncStorage.getItem('transactions_last_sync_at');
+    return raw ? parseInt(raw, 10) || 0 : 0;
+  },
+
+  async setTransactionsLastSyncAt(timestamp: number): Promise<void> {
+    await AsyncStorage.setItem('transactions_last_sync_at', String(timestamp));
+  },
+
   async addLocalTransaction(transaction: any): Promise<void> {
     const transactions = await this.getLocalTransactions();
     transactions.unshift(transaction);
@@ -259,6 +268,71 @@ export const storage = {
 
   async clearInstitutionPatterns(): Promise<void> {
     await AsyncStorage.removeItem('institution_patterns');
+  },
+
+  async getCachedInstitutions(): Promise<string[]> {
+    const data = await AsyncStorage.getItem('cached_institutions');
+    return data ? JSON.parse(data) : [];
+  },
+
+  async setCachedInstitutions(institutions: string[]): Promise<void> {
+    await AsyncStorage.setItem('cached_institutions', JSON.stringify(institutions));
+    await AsyncStorage.setItem('cached_institutions_sync_at', String(Date.now()));
+  },
+
+  async getCachedInstitutionsSyncAt(): Promise<number> {
+    const raw = await AsyncStorage.getItem('cached_institutions_sync_at');
+    return raw ? parseInt(raw, 10) || 0 : 0;
+  },
+
+  async getPackageUsageCache(): Promise<{
+    currentPackage: any | null;
+    availablePackages: any[];
+    pendingPurchases: any[];
+    lastSyncAt: number;
+  }> {
+    const raw = await AsyncStorage.getItem('package_usage_cache');
+    if (!raw) {
+      return {
+        currentPackage: null,
+        availablePackages: [],
+        pendingPurchases: [],
+        lastSyncAt: 0,
+      };
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+      return {
+        currentPackage: parsed?.currentPackage || null,
+        availablePackages: Array.isArray(parsed?.availablePackages) ? parsed.availablePackages : [],
+        pendingPurchases: Array.isArray(parsed?.pendingPurchases) ? parsed.pendingPurchases : [],
+        lastSyncAt: Number(parsed?.lastSyncAt) || 0,
+      };
+    } catch (error) {
+      log.error('Storage', 'Error parsing package usage cache', error);
+      return {
+        currentPackage: null,
+        availablePackages: [],
+        pendingPurchases: [],
+        lastSyncAt: 0,
+      };
+    }
+  },
+
+  async setPackageUsageCache(data: {
+    currentPackage: any | null;
+    availablePackages: any[];
+    pendingPurchases: any[];
+    lastSyncAt?: number;
+  }): Promise<void> {
+    const payload = {
+      currentPackage: data.currentPackage || null,
+      availablePackages: Array.isArray(data.availablePackages) ? data.availablePackages : [],
+      pendingPurchases: Array.isArray(data.pendingPurchases) ? data.pendingPurchases : [],
+      lastSyncAt: data.lastSyncAt || Date.now(),
+    };
+    await AsyncStorage.setItem('package_usage_cache', JSON.stringify(payload));
   },
 
   // Last Processed SMS Timestamp (for resuming after restart)

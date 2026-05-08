@@ -13,7 +13,7 @@ import { Building2, ChevronRight, Users, UserPlus, QrCode, Copy, RefreshCw, X as
 import { useTheme } from '../contexts/ThemeContext';
 import { storage } from '../services/storage';
 import { installationService } from '../services/installation';
-import { authAPI, employeeAPI, packageAPI } from '../services/api';
+import { authAPI, employeeAPI, packageAPI, clustersAPI } from '../services/api';
 import { Modal } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import PaymentModal from '../components/PaymentModal';
@@ -25,6 +25,8 @@ interface Props {
   apiKey?: string | null;
   onLogout: () => void;
   onNavigateToBanks?: () => void;
+  onNavigateToClusterDetails?: () => void;
+  onNavigateToClusterGuide?: () => void;
 }
 
 interface UserPackage {
@@ -74,7 +76,10 @@ interface PurchaseRequest {
   };
 }
 
-export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: Props) {
+const PROFILE_CACHE_TTL_MS = 10 * 60 * 1000;
+const PACKAGE_USAGE_CACHE_TTL_MS = 10 * 60 * 1000;
+
+export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onNavigateToClusterDetails, onNavigateToClusterGuide }: Props) {
   const { colors, theme, toggleTheme } = useTheme();
   const [user, setUser] = useState<any>(null);
   const [installationDate, setInstallationDate] = useState<Date | null>(null);
@@ -97,16 +102,82 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: P
   const [biometricName, setBiometricName] = useState('Biometrics');
   const [showPINSetup, setShowPINSetup] = useState(false);
   const [isChangingPIN, setIsChangingPIN] = useState(false);
+  const [clusterIncoming, setClusterIncoming] = useState<any[]>([]);
+  const [clusterOutgoing, setClusterOutgoing] = useState<any[]>([]);
+  const [loadingCluster, setLoadingCluster] = useState(false);
 
   const [isUpgradeCollapsed, setIsUpgradeCollapsed] = useState(true);
 
   const isBusinessOwner = user?.role === 'BUSINESS_OWNER' || user?.role === 'DEVELOPER';
+  const canViewIncomingClusterRequests = user?.role === 'BUSINESS_OWNER' || user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN';
+  const canViewOutgoingClusterRequests = user?.role === 'DEVELOPER';
+  const ownerIdentifier = user?.ownerCode || user?.ownerId || null;
 
   useEffect(() => {
     loadProfile();
     loadPackageInfo();
     loadSecuritySettings();
   }, []);
+
+  useEffect(() => {
+    loadClusterData(user?.role);
+  }, [user?.role]);
+
+  const loadClusterData = async (role?: string) => {
+    if (!role) {
+      setClusterIncoming([]);
+      setClusterOutgoing([]);
+      setLoadingCluster(false);
+      return;
+    }
+
+    const canLoadIncoming = role === 'BUSINESS_OWNER' || role === 'ADMIN' || role === 'SUPER_ADMIN';
+    const canLoadOutgoing = role === 'DEVELOPER';
+
+    // Do not call role-restricted endpoints for roles that cannot access them.
+    if (!canLoadIncoming && !canLoadOutgoing) {
+      setClusterIncoming([]);
+      setClusterOutgoing([]);
+      setLoadingCluster(false);
+      return;
+    }
+
+    setLoadingCluster(true);
+    try {
+      const [incomingRes, outgoingRes] = await Promise.all([
+        canLoadIncoming
+          ? clustersAPI.getIncomingRequests().catch(() => ({ success: false, data: [] }))
+          : Promise.resolve({ success: true, data: [] }),
+        canLoadOutgoing
+          ? clustersAPI.getOutgoingRequests().catch(() => ({ success: false, data: [] }))
+          : Promise.resolve({ success: true, data: [] }),
+      ]);
+
+      setClusterIncoming(incomingRes.success && Array.isArray(incomingRes.data) ? incomingRes.data : []);
+      setClusterOutgoing(outgoingRes.success && Array.isArray(outgoingRes.data) ? outgoingRes.data : []);
+    } catch (error) {
+      console.error('Error loading cluster requests:', error);
+    } finally {
+      setLoadingCluster(false);
+    }
+  };
+
+  const handleClusterAction = async (action: 'accept' | 'reject' | 'cancel', id: string) => {
+    try {
+      if (action === 'accept') {
+        await clustersAPI.acceptRequest(id);
+      } else if (action === 'reject') {
+        await clustersAPI.rejectRequest(id);
+      } else {
+        await clustersAPI.cancelRequest(id);
+      }
+
+      await loadClusterData();
+      Alert.alert('Success', `Cluster request ${action}ed successfully.`);
+    } catch (error: any) {
+      Alert.alert('Error', error?.response?.data?.error || `Failed to ${action} cluster request`);
+    }
+  };
 
   const loadSecuritySettings = async () => {
     try {
@@ -177,16 +248,42 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: P
   };
 
   const loadPackageInfo = async () => {
+    let usedCachedData = false;
+
     try {
       setLoadingPackage(true);
+
+      const cachedPackageUsage = await storage.getPackageUsageCache();
+      if (
+        cachedPackageUsage.currentPackage ||
+        cachedPackageUsage.availablePackages.length > 0 ||
+        cachedPackageUsage.pendingPurchases.length > 0
+      ) {
+        usedCachedData = true;
+        setCurrentPackage(cachedPackageUsage.currentPackage);
+        setAvailablePackages(cachedPackageUsage.availablePackages);
+        setPendingPurchases(cachedPackageUsage.pendingPurchases);
+        setLoadingPackage(false);
+      }
+
+      const cacheIsFresh = Date.now() - cachedPackageUsage.lastSyncAt < PACKAGE_USAGE_CACHE_TTL_MS;
+      if (cacheIsFresh && usedCachedData) {
+        return;
+      }
+
       const [myPackageRes, packagesRes, purchasesRes] = await Promise.all([
         packageAPI.getMyPackage().catch(() => ({ success: false, data: null })),
         packageAPI.getPackages(),
         packageAPI.getMyPurchases().catch(() => ({ success: false, data: [] })),
       ]);
 
+      let nextCurrentPackage: UserPackage | null = null;
+      let nextAvailablePackages: Package[] = [];
+      let nextPendingPurchases: PurchaseRequest[] = [];
+
       if (myPackageRes.success && myPackageRes.data) {
-        setCurrentPackage(myPackageRes.data);
+        nextCurrentPackage = myPackageRes.data;
+        setCurrentPackage(nextCurrentPackage);
       }
 
       if (packagesRes.success) {
@@ -194,7 +291,8 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: P
         const businessPackages = packagesRes.data.filter((p: Package) => 
           p.tier === 'BUSINESS' && p.price && p.price > 0
         );
-        setAvailablePackages(businessPackages);
+        nextAvailablePackages = businessPackages;
+        setAvailablePackages(nextAvailablePackages);
       }
 
       if (purchasesRes.success) {
@@ -202,8 +300,16 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: P
         const pending = purchasesRes.data.filter(
           (p: PurchaseRequest) => p.status === 'PENDING'
         );
-        setPendingPurchases(pending);
+        nextPendingPurchases = pending;
+        setPendingPurchases(nextPendingPurchases);
       }
+
+      await storage.setPackageUsageCache({
+        currentPackage: nextCurrentPackage,
+        availablePackages: nextAvailablePackages,
+        pendingPurchases: nextPendingPurchases,
+        lastSyncAt: Date.now(),
+      });
     } catch (error) {
       console.error('Error loading package info:', error);
     } finally {
@@ -285,6 +391,16 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: P
       // Then fetch fresh data from backend
       const token = await storage.getToken();
       if (token) {
+        const lastSyncAtRaw = await storage.getItem('profile_last_sync_at');
+        const lastSyncAt = lastSyncAtRaw ? parseInt(lastSyncAtRaw, 10) || 0 : 0;
+        const cacheIsFresh = Date.now() - lastSyncAt < PROFILE_CACHE_TTL_MS;
+
+        if (cacheIsFresh && storedUser) {
+          const date = await installationService.getInstallationDate();
+          setInstallationDate(date);
+          return;
+        }
+
         try {
           const response = await authAPI.getMe();
           if (response.success) {
@@ -312,6 +428,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: P
               }
               // Update stored user with merged data
               await storage.setUser(mergedUser);
+              await storage.setItem('profile_last_sync_at', String(Date.now()));
               console.log('✅ [Profile] Loaded and merged fresh user data from backend');
             }
           }
@@ -423,17 +540,106 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks }: P
             </View>
             <Text style={[styles.listItemValue, { color: colors.textSecondary }]}>{user?.country || 'Not set'}</Text>
           </View>
+          {(user?.role === 'BUSINESS_OWNER' || user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
+            <>
+              <View style={[styles.listDivider, { backgroundColor: colors.border }]} />
+              <View style={styles.listItem}>
+                <View style={styles.listItemLeft}>
+                  <Shield size={18} color={colors.textSecondary} />
+                  <Text style={[styles.listItemText, { color: colors.text }]}>Owner ID</Text>
+                </View>
+                <Text style={[styles.listItemValue, { color: colors.primary }]}>{ownerIdentifier || 'Not assigned yet'}</Text>
+              </View>
+            </>
+          )}
+        </View>
+
+        {/* Cluster Section */}
+        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>CLUSTER</Text>
+        <View style={[styles.listCard, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
+          {!canViewIncomingClusterRequests && !canViewOutgoingClusterRequests ? (
+            <View style={styles.noPackageContainer}>
+              <Text style={[styles.noPackageText, { color: colors.textSecondary }]}>Cluster requests are not available for your role</Text>
+            </View>
+          ) : loadingCluster ? (
+            <View style={styles.noPackageContainer}>
+              <ActivityIndicator size="small" color={colors.primary} />
+            </View>
+          ) : (
+            <>
+              {canViewIncomingClusterRequests && clusterIncoming.filter((req) => req.status === 'PENDING').slice(0, 3).map((req) => (
+                <View key={req.id} style={styles.clusterItemRow}>
+                  <View style={styles.clusterItemInfo}>
+                    <Text style={[styles.clusterTitle, { color: colors.text }]}>Incoming from {req.developer?.username || 'Developer'}</Text>
+                    <Text style={[styles.clusterSub, { color: colors.textSecondary }]}>{req.project?.name || 'No project linked'}</Text>
+                  </View>
+                  <View style={styles.clusterActionsRow}>
+                    <TouchableOpacity onPress={() => handleClusterAction('accept', req.id)}>
+                      <Text style={[styles.clusterActionText, { color: '#16a34a' }]}>Accept</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => handleClusterAction('reject', req.id)}>
+                      <Text style={[styles.clusterActionText, { color: '#dc2626' }]}>Reject</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+
+              {canViewOutgoingClusterRequests && clusterOutgoing.filter((req) => req.status === 'PENDING').slice(0, 3).map((req) => (
+                <View key={req.id} style={styles.clusterItemRow}>
+                  <View style={styles.clusterItemInfo}>
+                    <Text style={[styles.clusterTitle, { color: colors.text }]}>Pending to Owner #{req.ownerCode}</Text>
+                    <Text style={[styles.clusterSub, { color: colors.textSecondary }]}>{req.project?.name || 'No project linked'}</Text>
+                  </View>
+                  <View style={styles.clusterActionsRow}>
+                    <TouchableOpacity onPress={() => handleClusterAction('cancel', req.id)}>
+                      <Text style={[styles.clusterActionText, { color: '#dc2626' }]}>Cancel</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+
+              {(canViewIncomingClusterRequests ? clusterIncoming.filter((req) => req.status === 'PENDING').length === 0 : true) &&
+                (canViewOutgoingClusterRequests ? clusterOutgoing.filter((req) => req.status === 'PENDING').length === 0 : true) && (
+                <View style={styles.noPackageContainer}>
+                  <Text style={[styles.noPackageText, { color: colors.textSecondary }]}>No pending cluster requests</Text>
+                </View>
+              )}
+
+              <View style={[styles.listDivider, { backgroundColor: colors.border }]} />
+              <TouchableOpacity style={styles.clusterDetailsRow} onPress={onNavigateToClusterDetails}>
+                <View style={styles.listItemLeft}>
+                  <Users size={18} color={colors.textSecondary} />
+                  <Text style={[styles.listItemText, { color: colors.text }]}>View Full Cluster Details</Text>
+                </View>
+                <ChevronRight size={18} color={colors.textSecondary} />
+              </TouchableOpacity>
+
+              <View style={[styles.listDivider, { backgroundColor: colors.border }]} />
+              <TouchableOpacity style={styles.clusterDetailsRow} onPress={onNavigateToClusterGuide}>
+                <View style={styles.listItemLeft}>
+                  <Info size={18} color={colors.textSecondary} />
+                  <Text style={[styles.listItemText, { color: colors.text }]}>How Single, Cluster, and Transferable Work</Text>
+                </View>
+                <ChevronRight size={18} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </>
+          )}
         </View>
 
         {/* Package & Usage Section */}
         <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>PACKAGE & USAGE</Text>
         <View style={[styles.listCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           {loadingPackage ? (
-            <View style={styles.packageLoadingContainer}>
-              <ActivityIndicator size="small" color={colors.primary} />
-              <Text style={[styles.packageLoadingText, { color: colors.textSecondary }]}>
-                Loading package information...
-              </Text>
+            <View style={styles.packageSkeletonContainer}>
+              <View style={[styles.skeletonLineLg, { backgroundColor: colors.border }]} />
+              <View style={[styles.skeletonLineMd, { backgroundColor: colors.border }]} />
+              <View style={[styles.skeletonBarTrack, { backgroundColor: colors.border }]}>
+                <View style={[styles.skeletonBarFill, { backgroundColor: colors.primary + '55' }]} />
+              </View>
+              <View style={[styles.skeletonLineSm, { backgroundColor: colors.border }]} />
+              <View style={[styles.skeletonBarTrack, { backgroundColor: colors.border }]}>
+                <View style={[styles.skeletonBarFillAlt, { backgroundColor: colors.primary + '33' }]} />
+              </View>
             </View>
           ) : currentPackage ? (
             <>
@@ -1133,13 +1339,37 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   // Package Usage Styles
-  packageLoadingContainer: {
-    padding: 20,
-    alignItems: 'center',
+  packageSkeletonContainer: {
+    padding: 16,
+    gap: 12,
   },
-  packageLoadingText: {
-    marginTop: 8,
-    fontSize: 12,
+  skeletonLineLg: {
+    height: 18,
+    width: '52%',
+    borderRadius: 6,
+  },
+  skeletonLineMd: {
+    height: 13,
+    width: '32%',
+    borderRadius: 6,
+  },
+  skeletonLineSm: {
+    height: 12,
+    width: '46%',
+    borderRadius: 6,
+  },
+  skeletonBarTrack: {
+    height: 10,
+    borderRadius: 6,
+    overflow: 'hidden',
+  },
+  skeletonBarFill: {
+    height: '100%',
+    width: '66%',
+  },
+  skeletonBarFillAlt: {
+    height: '100%',
+    width: '42%',
   },
   packageHeader: {
     flexDirection: 'row',
@@ -1213,6 +1443,43 @@ const styles = StyleSheet.create({
   },
   noPackageText: {
     fontSize: 13,
+  },
+  clusterItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.2)',
+  },
+  clusterItemInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  clusterTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  clusterSub: {
+    fontSize: 12,
+  },
+  clusterActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  clusterActionText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  clusterDetailsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
   // Pending purchases styles
   pendingSection: {

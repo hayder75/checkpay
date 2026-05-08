@@ -386,6 +386,14 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
           />
           <Text style={[styles.title, { color: colors.text }]}>Welcome Back</Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Sign in to continue to CheckPay</Text>
+          {onSwitchToEmployeeRegister && (
+            <TouchableOpacity
+              style={styles.switchButton}
+              onPress={onSwitchToEmployeeRegister}
+            >
+              <Text style={[styles.switchText, { color: colors.textSecondary }]}>Developer Mode: Employee Access with QR/Code</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <View style={styles.form}>
@@ -650,7 +658,9 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     padding: 20,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 32,
+    paddingBottom: Platform.OS === 'android' ? 96 : 48,
   },
   header: {
     marginBottom: 40,

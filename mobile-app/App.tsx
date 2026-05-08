@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet, PermissionsAndroid, Platform, AppState, AppStateStatus, Modal, Linking, Image } from 'react-native';
+import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet, PermissionsAndroid, Platform, AppState, AppStateStatus, Modal, Linking, Image, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import { PopupProvider } from './src/contexts/PopupContext';
@@ -12,6 +12,8 @@ import HomeScreen from './src/screens/HomeScreen';
 import BanksScreen from './src/screens/BanksScreen';
 import TransactionsScreen from './src/screens/TransactionsScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
+import ClusterDetailsScreen from './src/screens/ClusterDetailsScreen';
+import ClusterGuideScreen from './src/screens/ClusterGuideScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import OCRScreen from './src/screens/OCRScreen';
 import EmployeeScreen from './src/screens/EmployeeScreen';
@@ -24,7 +26,7 @@ import ProfileCompletionScreen from './src/screens/ProfileCompletionScreen';
 import { storage } from './src/services/storage';
 import { smsService } from './src/services/smsService';
 import { securityService } from './src/services/securityService';
-import { isDefaultSMSApp, requestDefaultSMSRole } from './src/utils/smsRole';
+import { checkAndPromptNotificationAccess, isNotificationAccessEnabled, openNotificationAccessSettings } from './src/utils/notificationListener';
 import { Pattern } from './src/types';
 import { authAPI } from './src/services/api';
 import { patternsAPI, telegramAuthAPI, subscribeNetworkStatus } from './src/services/api';
@@ -56,7 +58,7 @@ function AppContent() {
   const [isOffline, setIsOffline] = useState(false);
   const appState = useRef(AppState.currentState);
   const backgroundTimestamp = useRef<number | null>(null);
-  const smsReminderShownThisLaunch = useRef(false);
+  const notificationReminderShownThisLaunch = useRef(false);
 
   // Check if user is employee (only OCR access)
   const isEmployee = user?.role === 'EMPLOYEE';
@@ -135,13 +137,13 @@ function AppContent() {
           console.log('🔒 [App] Locking app after background');
         }
       }
-      await remindSMSRoleIfNeeded();
+      await remindNotificationAccessIfNeeded();
       backgroundTimestamp.current = null;
     }
     appState.current = nextAppState;
   };
 
-  const remindSMSRoleIfNeeded = async () => {
+  const remindNotificationAccessIfNeeded = async () => {
     if (Platform.OS !== 'android') {
       return;
     }
@@ -152,24 +154,24 @@ function AppContent() {
       return;
     }
 
-    const isDefault = await isDefaultSMSApp();
-    if (isDefault || smsReminderShownThisLaunch.current) {
+    const enabled = await isNotificationAccessEnabled();
+    if (enabled || notificationReminderShownThisLaunch.current) {
       return;
     }
 
-    smsReminderShownThisLaunch.current = true;
+    notificationReminderShownThisLaunch.current = true;
     Alert.alert(
-      'Enable SMS Auto Import',
-      'To auto-detect transactions from SMS, set CheckPay as your default SMS app. You can continue using manual mode anytime.',
+      'Enable Notification Access',
+      'To auto-detect CBE and Telebirr transactions, enable Notification Access for CheckPay.',
       [
-        { text: 'Continue Manual Mode', style: 'cancel' },
+        { text: 'Not Now', style: 'cancel' },
         {
-          text: 'Enable SMS Import',
+          text: 'Open Settings',
           onPress: () => {
-            requestDefaultSMSRole().catch((error) => {
-              console.error('Error requesting default SMS role:', error);
+            openNotificationAccessSettings().catch((error) => {
+              console.error('Error opening notification access settings:', error);
             });
-          },
+          }
         },
       ]
     );
@@ -372,6 +374,9 @@ function AppContent() {
           PermissionsAndroid.PERMISSIONS.CAMERA,
         ]);
         console.log('🔐 [App] Permissions status:', granted);
+
+        // Mandatory gate for transaction auto-capture source.
+        await checkAndPromptNotificationAccess();
       } catch (err) {
         console.warn(err);
       }
@@ -560,7 +565,7 @@ function AppContent() {
             setupNotifications();
 
             // Remind user about default SMS role (manual mode remains available)
-            await remindSMSRoleIfNeeded();
+            await remindNotificationAccessIfNeeded();
           } else { // Setup notifications
             setupNotifications();
             // Token invalid response
@@ -687,11 +692,19 @@ function AppContent() {
     
     // Set country code from user's country field if available
     let countryCode = await storage.getCountryCode();
-    if (!countryCode && userData?.country) {
+    if (!countryCode && (userData?.country || userData?.countryCode)) {
       // User has country in their profile, set it as country code
-      countryCode = userData.country;
+      countryCode = (userData.country || userData.countryCode || '').toString().trim();
       await storage.setCountryCode(countryCode!);
       console.log(`✅ Set country code from user profile: ${countryCode}`);
+    }
+
+    if (!countryCode) {
+      const persistedUserCountry = await storage.getUserCountry();
+      if (persistedUserCountry) {
+        countryCode = persistedUserCountry;
+        await storage.setCountryCode(countryCode);
+      }
     }
     
     // Download and save institution patterns if we have country code
@@ -726,7 +739,7 @@ function AppContent() {
     setupNotifications();
 
     // Remind user about default SMS role on login
-    await remindSMSRoleIfNeeded();
+    await remindNotificationAccessIfNeeded();
   };
 
   const refreshPatterns = async () => {
@@ -833,8 +846,21 @@ function AppContent() {
             apiKey={apiKey} 
             onLogout={handleLogout} 
             onNavigateToBanks={() => setCurrentTab('banks')}
+            onNavigateToClusterDetails={() => setCurrentTab('cluster-details' as any)}
+            onNavigateToClusterGuide={() => setCurrentTab('cluster-guide' as any)}
           />
         );
+      case 'cluster-details' as any:
+        return (
+          <ClusterDetailsScreen
+            role={user?.role}
+            ownerCode={user?.ownerCode}
+            onBack={() => setCurrentTab('profile')}
+            onOpenGuide={() => setCurrentTab('cluster-guide' as any)}
+          />
+        );
+      case 'cluster-guide' as any:
+        return <ClusterGuideScreen onBack={() => setCurrentTab('profile')} />;
       case 'employee-management':
         return (
           <EmployeeManagementScreen 
@@ -1083,6 +1109,7 @@ function AppContent() {
           <RegisterScreen
             onRegisterSuccess={handleRegisterSuccess}
             onSwitchToLogin={() => setAuthScreen('login')}
+            onSwitchToEmployeeRegister={() => setAuthScreen('employee-register')}
           />
         );
       case 'employee-register':
