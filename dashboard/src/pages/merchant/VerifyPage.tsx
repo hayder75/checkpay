@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { verifyAPI } from '../../lib/api';
+import { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Card } from '../../components/ui/card';
@@ -20,7 +19,6 @@ interface VerifyResult {
 
 export default function VerifyPage() {
   const { merchantId } = useParams<{ merchantId: string }>();
-  const navigate = useNavigate();
   const { toast } = useToast();
   const [txnId, setTxnId] = useState('');
   const [loading, setLoading] = useState(false);

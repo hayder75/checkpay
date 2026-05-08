@@ -5,253 +5,122 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { adminAPI, countriesAPI } from '@/lib';
+import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { adminAPI } from '@/lib';
+import { COUNTRIES_LIST } from '@/utils/countries';
 import { useToast } from '@/components/ui/use-toast';
-import { AlertCircle, Plus, X, Crown } from 'lucide-react';
+import { AlertCircle, Plus, X, RefreshCw, Globe, Search, Edit, Trash2 } from 'lucide-react';
 
 export default function MissingTemplatesPage() {
   const { toast } = useToast();
   const [missingTemplates, setMissingTemplates] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [countries, setCountries] = useState<any[]>([]);
-  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
-  const [addFormData, setAddFormData] = useState({
-    countryCode: '',
-    name: '',
-    description: '',
-    requiredPlan: 'FREE' as 'FREE' | 'PREMIUM',
-  });
+  const [showForm, setShowForm] = useState(false);
+  const [formData, setFormData] = useState({ countryCode: '', name: '', smsText: '', description: '' });
 
-  useEffect(() => {
-    loadMissingTemplates();
-    loadCountries();
-  }, []);
+  useEffect(() => { loadMissing(); }, []);
 
-  const loadCountries = async () => {
-    try {
-      const response = await countriesAPI.getAll();
-      setCountries(response.data.data);
-    } catch (error) {
-      // Ignore error
-    }
-  };
-
-  const loadMissingTemplates = async () => {
+  const loadMissing = async () => {
     setLoading(true);
     try {
       const response = await adminAPI.getMissingTemplates();
-      setMissingTemplates(response.data.data);
+      setMissingTemplates(response.data.data || []);
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to load missing templates',
-        variant: 'destructive',
-      });
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to load", variant: "destructive" });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAddTemplate = async (patternId: string) => {
-    if (!addFormData.countryCode || !addFormData.name || !addFormData.description) {
-      toast({
-        title: 'Error',
-        description: 'Please fill in all required fields',
-        variant: 'destructive',
-      });
-      return;
-    }
-
+  const handleSubmit = async () => {
     try {
-      await adminAPI.addMissingTemplate(patternId, addFormData);
-      toast({
-        title: 'Success',
-        description: 'Template added to library',
-      });
-      setSelectedGroup(null);
-      setAddFormData({ countryCode: '', name: '', description: '', requiredPlan: 'FREE' });
-      loadMissingTemplates();
+      await adminAPI.createTemplate(formData);
+      toast({ title: "Success", description: "Template created" });
+      setShowForm(false);
+      setFormData({ countryCode: '', name: '', smsText: '', description: '' });
+      loadMissing();
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to add template',
-        variant: 'destructive',
-      });
-    }
-  };
-
-  const handleDismiss = async (patternId: string) => {
-    if (!confirm('Are you sure you want to dismiss this flagged pattern?')) return;
-
-    try {
-      await adminAPI.dismissMissingTemplate(patternId, { reason: 'Dismissed by admin' });
-      toast({
-        title: 'Success',
-        description: 'Pattern flag dismissed',
-      });
-      loadMissingTemplates();
-    } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to dismiss pattern',
-        variant: 'destructive',
-      });
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to create", variant: "destructive" });
     }
   };
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
+      <div className="space-y-8">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold">Missing Templates</h1>
-            <p className="text-muted-foreground">
-              Patterns used by multiple users but not in template library
-            </p>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Missing Templates</h1>
+            <p className="text-muted-foreground mt-1">Countries with missing SMS templates</p>
           </div>
-          <Button onClick={loadMissingTemplates} variant="outline">
-            Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={loadMissing}><RefreshCw className="h-4 w-4 mr-2" />Refresh</Button>
+            <Button size="sm" onClick={() => setShowForm(true)}><Plus className="h-4 w-4 mr-2" />Add Template</Button>
+          </div>
         </div>
 
-        {loading ? (
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-muted-foreground">Loading missing templates...</p>
-            </CardContent>
-          </Card>
-        ) : missingTemplates.length === 0 ? (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center py-12">
-              <AlertCircle className="h-12 w-12 text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">No missing templates detected</p>
-              <p className="text-sm text-muted-foreground mt-2">
-                All popular patterns are already in the template library!
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-4">
-            {missingTemplates.map((group, index) => (
-              <Card key={index}>
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <CardTitle>
-                        {group.bank || 'Unknown Bank'} → {group.currency || 'Unknown Currency'}
-                      </CardTitle>
-                      <CardDescription>
-                        Used by {group.userCount} user{group.userCount !== 1 ? 's' : ''}
-                      </CardDescription>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setSelectedGroup(selectedGroup === String(index) ? null : String(index))}
-                      >
-                        {selectedGroup === String(index) ? (
-                          <>
-                            <X className="mr-2 h-4 w-4" />
-                            Cancel
-                          </>
-                        ) : (
-                          <>
-                            <Plus className="mr-2 h-4 w-4" />
-                            Add Template
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    <div>
-                      <p className="text-sm font-medium mb-1">Similar Patterns:</p>
-                      <div className="space-y-1">
-                        {group.patterns.slice(0, 3).map((pattern: any) => (
-                          <div key={pattern.id} className="text-sm text-muted-foreground">
-                            • {pattern.name} (User: {pattern.user?.username || pattern.userId?.substring(0, 8)})
-                          </div>
-                        ))}
-                        {group.patterns.length > 3 && (
-                          <div className="text-sm text-muted-foreground">
-                            ... and {group.patterns.length - 3} more
-                          </div>
-                        )}
-                      </div>
-                    </div>
+        <Separator />
 
-                    {selectedGroup === String(index) && (
-                      <div className="mt-4 p-4 bg-muted rounded-lg space-y-4">
-                        <div>
-                          <Label>Country *</Label>
-                          <select
-                            value={addFormData.countryCode}
-                            onChange={(e) => setAddFormData({ ...addFormData, countryCode: e.target.value })}
-                            className="w-full px-3 py-2 border rounded-md"
-                          >
-                            <option value="">Select country...</option>
-                            {countries.map((country) => (
-                              <option key={country.code} value={country.code}>
-                                {country.name} ({country.code})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <Label>Template Name *</Label>
-                          <Input
-                            value={addFormData.name}
-                            onChange={(e) => setAddFormData({ ...addFormData, name: e.target.value })}
-                            placeholder="e.g., CBE to Telebirr"
-                          />
-                        </div>
-                        <div>
-                          <Label>Description *</Label>
-                          <Textarea
-                            value={addFormData.description}
-                            onChange={(e) => setAddFormData({ ...addFormData, description: e.target.value })}
-                            placeholder="e.g., Receive money from Commercial Bank of Ethiopia to your Telebirr account"
-                            rows={2}
-                          />
-                        </div>
-                        <div>
-                          <Label>Required Plan</Label>
-                          <select
-                            value={addFormData.requiredPlan}
-                            onChange={(e) => setAddFormData({ ...addFormData, requiredPlan: e.target.value as 'FREE' | 'PREMIUM' })}
-                            className="w-full px-3 py-2 border rounded-md"
-                          >
-                            <option value="FREE">FREE</option>
-                            <option value="PREMIUM">PREMIUM</option>
-                          </select>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button
-                            onClick={() => handleAddTemplate(group.patterns[0].id)}
-                            className="bg-[#F37100] hover:bg-[#F37100]/90"
-                          >
-                            Add to Template Library
-                          </Button>
-                          <Button
-                            variant="outline"
-                            onClick={() => handleDismiss(group.patterns[0].id)}
-                          >
-                            Dismiss
-                          </Button>
-                        </div>
-                      </div>
-                    )}
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {loading ? (
+            [...Array(6)].map((_, i) => <Card key={i}><CardContent className="pt-6"><Skeleton className="h-24 w-full" /></CardContent></Card>)
+          ) : missingTemplates.length === 0 ? (
+            <Card className="md:col-span-2 lg:col-span-3"><CardContent className="pt-6"><p className="text-center text-green-500">No missing templates!</p></CardContent></Card>
+          ) : missingTemplates.map((item) => (
+            <Card key={item.countryCode} className="border-yellow-500/30">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="text-2xl">{item.flag}</span>
+                  <div>
+                    <p className="font-medium">{item.countryName}</p>
+                    <p className="text-sm text-muted-foreground">{item.countryCode}</p>
                   </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                </div>
+                <Badge variant="outline" className="text-yellow-600">{item.missingCount} missing</Badge>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {showForm && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Add Missing Template</CardTitle>
+              <CardDescription>Create a new template</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Country</Label>
+                <Select value={formData.countryCode} onValueChange={(v) => setFormData(f => ({ ...f, countryCode: v }))}>
+                  <SelectTrigger><SelectValue placeholder="Select country" /></SelectTrigger>
+                  <SelectContent>
+                    {COUNTRIES_LIST.map((c) => (<SelectItem key={c.code} value={c.code}>{c.name}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Template Name</Label>
+                <Input value={formData.name} onChange={(e) => setFormData(f => ({ ...f, name: e.target.value }))} placeholder="Template name" />
+              </div>
+              <div className="space-y-2">
+                <Label>SMS Text</Label>
+                <Textarea value={formData.smsText} onChange={(e) => setFormData(f => ({ ...f, smsText: e.target.value }))} placeholder="Your verification code is {code}" />
+              </div>
+              <div className="space-y-2">
+                <Label>Description</Label>
+                <Input value={formData.description} onChange={(e) => setFormData(f => ({ ...f, description: e.target.value }))} placeholder="Description" />
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>
+                <Button onClick={handleSubmit}>Create Template</Button>
+              </div>
+            </CardContent>
+          </Card>
         )}
       </div>
     </DashboardLayout>
   );
 }
-

@@ -17,14 +17,14 @@ export default function MobileAppPage() {
   const [incoming, setIncoming] = useState<any[]>([]);
   const [outgoing, setOutgoing] = useState<any[]>([]);
   const [ownerCode, setOwnerCode] = useState("");
-  const [projectId, setProjectId] = useState("none");
+  const [projectId, setProjectId] = useState("");
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const apkUrl = "https://checkpay.com/download/CheckPay.apk";
 
   const pendingIncoming = useMemo(() => incoming.filter((r) => r.status === "PENDING"), [incoming]);
-  const manageableOutgoing = useMemo(() => outgoing, [outgoing]);
+  const pendingOutgoing = useMemo(() => outgoing.filter((r) => r.status === "PENDING"), [outgoing]);
 
   useEffect(() => {
     loadAll();
@@ -65,7 +65,7 @@ export default function MobileAppPage() {
       setSending(true);
       await clustersAPI.createRequest({
         ownerCode,
-        projectId: projectId && projectId !== "none" ? projectId : undefined,
+        projectId: projectId || undefined,
       });
       toast({ title: "Request Sent", description: "Cluster request sent to business owner" });
       setOwnerCode("");
@@ -104,16 +104,6 @@ export default function MobileAppPage() {
       await loadAll();
     } catch (error: any) {
       toast({ title: "Error", description: error?.response?.data?.error || "Failed to cancel request", variant: "destructive" });
-    }
-  };
-
-  const deleteOutgoing = async (id: string) => {
-    try {
-      await clustersAPI.deleteRequest(id);
-      toast({ title: "Deleted", description: "Cluster link deleted" });
-      await loadAll();
-    } catch (error: any) {
-      toast({ title: "Error", description: error?.response?.data?.error || "Failed to delete cluster link", variant: "destructive" });
     }
   };
 
@@ -198,7 +188,7 @@ export default function MobileAppPage() {
                   <SelectValue placeholder="Select project" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">No project</SelectItem>
+                  <SelectItem value="">No project</SelectItem>
                   {projects.map((p) => (
                     <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                   ))}
@@ -240,17 +230,12 @@ export default function MobileAppPage() {
               <CardDescription>Track requests sent to owners</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {manageableOutgoing.length === 0 && <p className="text-sm text-muted-foreground">No outgoing cluster links</p>}
-              {manageableOutgoing.map((req) => (
+              {pendingOutgoing.length === 0 && <p className="text-sm text-muted-foreground">No pending outgoing requests</p>}
+              {pendingOutgoing.map((req) => (
                 <div key={req.id} className="border rounded-md p-3 space-y-2">
                   <p className="text-sm font-medium">Owner ID: {req.ownerCode}</p>
-                  <p className="text-xs text-muted-foreground">Project: {req.project?.name || "No project"} | Status: {req.status}</p>
-                  <div className="flex gap-2">
-                    {req.status === "PENDING" && (
-                      <Button size="sm" variant="outline" onClick={() => cancelOutgoing(req.id)}>Cancel</Button>
-                    )}
-                    <Button size="sm" variant="destructive" onClick={() => deleteOutgoing(req.id)}>Delete Link</Button>
-                  </div>
+                  <p className="text-xs text-muted-foreground">Project: {req.project?.name || "No project"}</p>
+                  <Button size="sm" variant="outline" onClick={() => cancelOutgoing(req.id)}>Cancel</Button>
                 </div>
               ))}
             </CardContent>

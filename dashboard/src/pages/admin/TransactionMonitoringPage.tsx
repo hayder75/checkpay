@@ -1,193 +1,227 @@
 import { useEffect, useState } from 'react';
+import DashboardLayout from '@/components/layouts/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
+import { 
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
+} from '@/components/ui/table';
+import { 
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue 
+} from '@/components/ui/select';
 import { adminAPI } from '@/lib';
 import { useToast } from '@/components/ui/use-toast';
-import { Search, RefreshCw, DollarSign, Calendar, Building2 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { 
+  Search, RefreshCw, DollarSign, Calendar, Building2, User, Activity, 
+  CheckCircle, XCircle, Clock, Filter, Eye 
+} from 'lucide-react';
+import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend 
+} from 'recharts';
+
+const COLORS = ['#F37100', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+
+const statusConfig = {
+  COMPLETED: { variant: 'default' as const, color: 'green' },
+  PENDING: { variant: 'outline' as const, color: 'yellow' },
+  FAILED: { variant: 'destructive' as const, color: 'red' },
+  PROCESSING: { variant: 'secondary' as const, color: 'blue' },
+};
+
+function LoadingSkeleton() {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>ID</TableHead>
+          <TableHead>User</TableHead>
+          <TableHead>Amount</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead>Date</TableHead>
+          <TableHead className="text-right">Actions</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {[...Array(5)].map((_, i) => (
+          <TableRow key={i}>
+            {[...Array(6)].map((_, j) => (
+              <TableCell key={j}><Skeleton className="h-4 w-20" /></TableCell>
+            ))}
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
 
 export default function TransactionMonitoringPage() {
   const { toast } = useToast();
   const [transactions, setTransactions] = useState<any[]>([]);
+  const [analytics, setAnalytics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [filters, setFilters] = useState({
-    txnId: '',
-    bank: '',
-    fromDate: '',
-    toDate: '',
-  });
+  const [filters, setFilters] = useState({ txnId: '', bank: '', userId: '', fromDate: '', toDate: '', status: '' });
 
-  useEffect(() => {
-    loadTransactions();
-  }, [page, filters]);
+  useEffect(() => { loadTransactions(true); }, [page, filters]);
 
-  const loadTransactions = async () => {
+  const loadTransactions = async (includeAnalytics: boolean = false) => {
     setLoading(true);
     try {
-      const params: any = { page, limit: 20 };
+      const params: any = { page, limit: 20, analytics: includeAnalytics };
       if (filters.txnId) params.txnId = filters.txnId;
       if (filters.bank) params.bank = filters.bank;
+      if (filters.userId) params.userId = filters.userId;
       if (filters.fromDate) params.fromDate = filters.fromDate;
       if (filters.toDate) params.toDate = filters.toDate;
+      if (filters.status) params.status = filters.status;
 
       const response = await adminAPI.getTransactions(params);
-      setTransactions(response.data.data.transactions);
-      setTotalPages(response.data.data.pagination.pages);
+      setTransactions(response.data.data.transactions || []);
+      if (includeAnalytics) setAnalytics(response.data.data.analytics);
+      setTotalPages(response.data.data.pagination?.pages || 1);
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to load transactions',
-        variant: 'destructive',
-      });
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to load transactions", variant: "destructive" });
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">Transaction Monitoring</h1>
-            <p className="text-sm text-muted-foreground">Monitor all platform transactions</p>
-          </div>
-          <Link to="/admin/dashboard">
-            <Button variant="outline">Back to Dashboard</Button>
-          </Link>
-        </div>
-      </header>
+  const handleRefresh = () => loadTransactions(true);
 
-      <main className="container mx-auto px-4 py-8">
+  return (
+    <DashboardLayout>
+      <div className="space-y-8">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Transaction Monitor</h1>
+            <p className="text-muted-foreground mt-1">Monitor all platform transactions</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={handleRefresh}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
+        </div>
+
+        <Separator />
+
+        {/* Analytics Cards */}
+        {analytics && (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Total Transactions</CardTitle></CardHeader>
+              <CardContent><div className="text-2xl font-bold">{analytics.total || 0}</div></CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Total Amount</CardTitle></CardHeader>
+              <CardContent><div className="text-2xl font-bold">${analytics.totalAmount?.toLocaleString() || 0}</div></CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Success Rate</CardTitle></CardHeader>
+              <CardContent><div className="text-2xl font-bold text-green-500">{analytics.successRate || 0}%</div></CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Avg Amount</CardTitle></CardHeader>
+              <CardContent><div className="text-2xl font-bold">${analytics.avgAmount?.toFixed(2) || 0}</div></CardContent>
+            </Card>
+          </div>
+        )}
+
+        <Separator />
+
         {/* Filters */}
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>Filters</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div>
-                <Label>Transaction ID</Label>
-                <Input
-                  placeholder="Search by Txn ID"
-                  value={filters.txnId}
-                  onChange={(e) => setFilters({ ...filters, txnId: e.target.value })}
-                />
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input placeholder="Search by transaction ID..." className="pl-10" value={filters.txnId} onChange={(e) => setFilters(f => ({ ...f, txnId: e.target.value }))} />
+                </div>
               </div>
-              <div>
-                <Label>Bank</Label>
-                <Input
-                  placeholder="Bank name"
-                  value={filters.bank}
-                  onChange={(e) => setFilters({ ...filters, bank: e.target.value })}
-                />
-              </div>
-              <div>
-                <Label>From Date</Label>
-                <Input
-                  type="date"
-                  value={filters.fromDate}
-                  onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })}
-                />
-              </div>
-              <div>
-                <Label>To Date</Label>
-                <Input
-                  type="date"
-                  value={filters.toDate}
-                  onChange={(e) => setFilters({ ...filters, toDate: e.target.value })}
-                />
-              </div>
+              <Input placeholder="User ID" className="w-full sm:w-40" value={filters.userId} onChange={(e) => setFilters(f => ({ ...f, userId: e.target.value }))} />
+              <Input type="date" className="w-full sm:w-40" value={filters.fromDate} onChange={(e) => setFilters(f => ({ ...f, fromDate: e.target.value }))} />
+              <Input type="date" className="w-full sm:w-40" value={filters.toDate} onChange={(e) => setFilters(f => ({ ...f, toDate: e.target.value }))} />
+              <Select value={filters.status} onValueChange={(v) => setFilters(f => ({ ...f, status: v }))}>
+                <SelectTrigger className="w-full sm:w-40">
+                  <SelectValue placeholder="All Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="COMPLETED">Completed</SelectItem>
+                  <SelectItem value="PENDING">Pending</SelectItem>
+                  <SelectItem value="FAILED">Failed</SelectItem>
+                  <SelectItem value="PROCESSING">Processing</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </CardContent>
         </Card>
 
-        {/* Transactions List */}
+        {/* Transactions Table */}
         <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Transactions ({transactions.length})</CardTitle>
-              <Button onClick={loadTransactions} variant="outline" size="sm">
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Refresh
-              </Button>
-            </div>
+          <CardHeader className="pb-0">
+            <CardTitle>Transactions</CardTitle>
+            <CardDescription>{transactions.length} transaction{transactions.length !== 1 ? 's' : ''}</CardDescription>
           </CardHeader>
           <CardContent>
             {loading ? (
-              <div className="text-center py-8">Loading...</div>
+              <LoadingSkeleton />
             ) : transactions.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">No transactions found</div>
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <DollarSign className="h-12 w-12 text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No transactions found</p>
+              </div>
             ) : (
-              <div className="space-y-4">
-                {transactions.map((txn: any) => (
-                  <Card key={txn.id} className="p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <DollarSign className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-semibold">Txn ID: {txn.txnId}</span>
-                        </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm text-muted-foreground">
-                          <div>Amount: <span className="font-medium">{txn.amount}</span></div>
-                          {txn.bank && (
-                            <div className="flex items-center gap-1">
-                              <Building2 className="h-3 w-3" />
-                              {txn.bank}
-                            </div>
-                          )}
-                          <div className="flex items-center gap-1">
-                            <Calendar className="h-3 w-3" />
-                            {new Date(txn.receivedAt).toLocaleDateString()}
-                          </div>
-                          {txn.user && (
-                            <div>User: {txn.user.username || txn.user.email || txn.user.phone || 'N/A'}</div>
-                          )}
-                        </div>
-                        {txn.pattern && (
-                          <div className="mt-2 text-xs text-muted-foreground">
-                            Pattern: {txn.pattern.name}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            )}
-
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="flex items-center justify-center gap-2 mt-6">
-                <Button
-                  variant="outline"
-                  onClick={() => setPage(p => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                >
-                  Previous
-                </Button>
-                <span className="text-sm text-muted-foreground">
-                  Page {page} of {totalPages}
-                </span>
-                <Button
-                  variant="outline"
-                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
-                >
-                  Next
-                </Button>
-              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>ID</TableHead>
+                    <TableHead>User</TableHead>
+                    <TableHead>Amount</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {transactions.map((txn) => (
+                    <TableRow key={txn.id}>
+                      <TableCell className="font-mono text-sm">{txn.txnId?.slice(0, 12)}...</TableCell>
+                      <TableCell>{txn.user?.username || txn.userId || '-'}</TableCell>
+                      <TableCell className="font-mono">${txn.amount || 0}</TableCell>
+                      <TableCell>
+                        <Badge variant={statusConfig[txn.status]?.variant || 'outline'}>{txn.status}</Badge>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {txn.createdAt ? new Date(txn.createdAt).toLocaleString() : '-'}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="icon"><Eye className="h-4 w-4" /></Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             )}
           </CardContent>
         </Card>
-      </main>
-    </div>
+
+        {/* Pagination */}
+        {transactions.length > 0 && (
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">Page {page} of {totalPages}</p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>Previous</Button>
+              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>Next</Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </DashboardLayout>
   );
 }
-
-
-

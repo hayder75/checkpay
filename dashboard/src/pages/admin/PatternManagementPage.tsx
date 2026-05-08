@@ -2,11 +2,33 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { adminAPI } from '@/lib';
 import { useToast } from '@/components/ui/use-toast';
-import { Search, FileText, RefreshCw, User, Globe } from 'lucide-react';
+import { Search, FileText, RefreshCw, User, Eye, Check, XCircle, AlertTriangle, Plus, Shield, Trash2, Globe, Filter } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import DashboardLayout from '@/components/layouts/DashboardLayout';
+
+const statusColors: Record<string, string> = {
+  PENDING: 'bg-yellow-500',
+  APPROVED: 'bg-green-500',
+  REJECTED: 'bg-red-500',
+  FLAGGED: 'bg-orange-500',
+};
+
+function LoadingSkeleton() {
+  return (
+    <Table>
+      <TableHeader><TableRow><TableHead>Pattern</TableHead><TableHead>Developer</TableHead><TableHead>Country</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+      <TableBody>{[...Array(5)].map((_, i) => (<TableRow key={i}>{[...Array(5)].map((_, j) => (<TableCell key={j}><Skeleton className="h-4 w-20" /></TableCell>))}</TableRow>))}</TableBody>
+    </Table>
+  );
+}
 
 export default function PatternManagementPage() {
   const { toast } = useToast();
@@ -14,175 +36,136 @@ export default function PatternManagementPage() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [filters, setFilters] = useState({
-    search: '',
-    bank: '',
-    currency: '',
-  });
+  const [filters, setFilters] = useState({ search: '', status: '', country: '' });
+  const [selected, setSelected] = useState<any>(null);
 
-  useEffect(() => {
-    loadPatterns();
-  }, [page, filters]);
+  useEffect(() => { loadPatterns(); }, [page, filters]);
 
   const loadPatterns = async () => {
     setLoading(true);
     try {
       const params: any = { page, limit: 20 };
       if (filters.search) params.search = filters.search;
-      if (filters.bank) params.bank = filters.bank;
-      if (filters.currency) params.currency = filters.currency;
+      if (filters.status) params.status = filters.status;
+      if (filters.country) params.country = filters.country;
 
       const response = await adminAPI.getPatterns(params);
-      setPatterns(response.data.data.patterns);
-      setTotalPages(response.data.data.pagination.pages);
+      setPatterns(response.data.data || []);
+      setTotalPages(response.data.data?.pagination?.pages || 1);
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to load patterns',
-        variant: 'destructive',
-      });
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to load patterns", variant: "destructive" });
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">Pattern Management</h1>
-            <p className="text-sm text-muted-foreground">Manage all user patterns</p>
-          </div>
-          <Link to="/admin/dashboard">
-            <Button variant="outline">Back to Dashboard</Button>
-          </Link>
-        </div>
-      </header>
+  const handleApprove = async (id: string) => {
+    try {
+      await adminAPI.approvePattern(id);
+      toast({ title: "Success", description: "Pattern approved" });
+      loadPatterns();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to approve", variant: "destructive" });
+    }
+  };
 
-      <main className="container mx-auto px-4 py-8">
-        {/* Filters */}
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>Filters</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <Label>Search</Label>
+  const handleReject = async (id: string) => {
+    try {
+      await adminAPI.rejectPattern(id);
+      toast({ title: "Pattern rejected" });
+      loadPatterns();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to reject", variant: "destructive" });
+    }
+  };
+
+  return (
+    <DashboardLayout>
+      <div className="space-y-8">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Pattern Management</h1>
+            <p className="text-muted-foreground mt-1">Review and manage SMS patterns</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={loadPatterns}><RefreshCw className="h-4 w-4 mr-2" />Refresh</Button>
+        </div>
+
+        <Separator />
+
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1">
                 <div className="relative">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Pattern name, bank..."
-                    value={filters.search}
-                    onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                    className="pl-8"
-                  />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input placeholder="Search patterns..." className="pl-10" value={filters.search} onChange={(e) => setFilters(f => ({ ...f, search: e.target.value }))} />
                 </div>
               </div>
-              <div>
-                <Label>Bank</Label>
-                <Input
-                  placeholder="Bank name"
-                  value={filters.bank}
-                  onChange={(e) => setFilters({ ...filters, bank: e.target.value })}
-                />
-              </div>
-              <div>
-                <Label>Currency</Label>
-                <Input
-                  placeholder="Currency code"
-                  value={filters.currency}
-                  onChange={(e) => setFilters({ ...filters, currency: e.target.value.toUpperCase() })}
-                  maxLength={3}
-                />
-              </div>
+              <Select value={filters.status} onValueChange={(v) => setFilters(f => ({ ...f, status: v }))}>
+                <SelectTrigger className="w-full sm:w-40"><SelectValue placeholder="All Status" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="PENDING">Pending</SelectItem>
+                  <SelectItem value="APPROVED">Approved</SelectItem>
+                  <SelectItem value="REJECTED">Rejected</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </CardContent>
         </Card>
 
-        {/* Patterns List */}
         <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Patterns ({patterns.length})</CardTitle>
-              <Button onClick={loadPatterns} variant="outline" size="sm">
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Refresh
-              </Button>
-            </div>
+          <CardHeader className="pb-0">
+            <CardTitle>Patterns</CardTitle>
+            <CardDescription>{patterns.length} pattern{patterns.length !== 1 ? 's' : ''}</CardDescription>
           </CardHeader>
           <CardContent>
-            {loading ? (
-              <div className="text-center py-8">Loading...</div>
-            ) : patterns.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">No patterns found</div>
+            {loading ? <LoadingSkeleton /> : patterns.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <FileText className="h-12 w-12 text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No patterns found</p>
+              </div>
             ) : (
-              <div className="space-y-4">
-                {patterns.map((pattern: any) => (
-                  <Card key={pattern.id} className="p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <FileText className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-semibold">{pattern.name}</span>
-                        </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm text-muted-foreground">
-                          {pattern.bank && (
-                            <div>Bank: <span className="font-medium">{pattern.bank}</span></div>
-                          )}
-                          {pattern.currency && (
-                            <div>Currency: <span className="font-medium">{pattern.currency}</span></div>
-                          )}
-                          <div>Transactions: <span className="font-medium">{pattern._count?.transactions || 0}</span></div>
-                          {pattern.user && (
-                            <div className="flex items-center gap-1">
-                              <User className="h-3 w-3" />
-                              {pattern.user.username || pattern.user.email || pattern.user.phone || 'N/A'}
-                            </div>
+              <Table>
+                <TableHeader>
+                  <TableRow><TableHead>Pattern</TableHead><TableHead>Developer</TableHead><TableHead>Country</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow>
+                </TableHeader>
+                <TableBody>
+                  {patterns.map((pattern) => (
+                    <TableRow key={pattern.id}>
+                      <TableCell><p className="font-medium">{pattern.name}</p><p className="text-sm text-muted-foreground truncate max-w-xs">{pattern.smsText}</p></TableCell>
+                      <TableCell>{pattern.developer?.username || '-'}</TableCell>
+                      <TableCell><span className="flex items-center gap-1"><Globe className="h-3 w-3" />{pattern.countryCode || '-'}</span></TableCell>
+                      <TableCell><Badge className={`${statusColors[pattern.status] || 'bg-gray-500'} text-white`}>{pattern.status}</Badge></TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button variant="ghost" size="icon" onClick={() => setSelected(pattern)}><Eye className="h-4 w-4" /></Button>
+                          {pattern.status === 'PENDING' && (
+                            <>
+                              <Button variant="ghost" size="icon" className="text-green-500" onClick={() => handleApprove(pattern.id)}><Check className="h-4 w-4" /></Button>
+                              <Button variant="ghost" size="icon" className="text-red-500" onClick={() => handleReject(pattern.id)}><XCircle className="h-4 w-4" /></Button>
+                            </>
                           )}
                         </div>
-                        {pattern.description && (
-                          <div className="mt-2 text-sm text-muted-foreground">{pattern.description}</div>
-                        )}
-                        <div className="mt-2 text-xs text-muted-foreground">
-                          Created: {new Date(pattern.createdAt).toLocaleDateString()}
-                        </div>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            )}
-
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="flex items-center justify-center gap-2 mt-6">
-                <Button
-                  variant="outline"
-                  onClick={() => setPage(p => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                >
-                  Previous
-                </Button>
-                <span className="text-sm text-muted-foreground">
-                  Page {page} of {totalPages}
-                </span>
-                <Button
-                  variant="outline"
-                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
-                >
-                  Next
-                </Button>
-              </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             )}
           </CardContent>
         </Card>
-      </main>
-    </div>
+
+        {patterns.length > 0 && (
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">Page {page} of {totalPages}</p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>Previous</Button>
+              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>Next</Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </DashboardLayout>
   );
 }
-
-
-

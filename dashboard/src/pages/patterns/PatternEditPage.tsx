@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { patternsAPI } from '@/lib';
 import { useToast } from '@/components/ui/use-toast';
-import { Sparkles, CheckCircle2, AlertCircle, Save } from 'lucide-react';
+import { Save } from 'lucide-react';
 
 export default function PatternEditPage() {
   const { id } = useParams<{ id: string }>();
@@ -16,16 +16,17 @@ export default function PatternEditPage() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
   
-  const [pattern, setPattern] = useState<any>(null);
+  const [, setPattern] = useState<any>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [regex, setRegex] = useState('');
   const [bank, setBank] = useState('');
   const [currency, setCurrency] = useState('');
-  const [smsText, setSmsText] = useState('');
-  const [preview, setPreview] = useState<any>(null);
+  // Security fields
+  const [allowedSenders, setAllowedSenders] = useState<string[]>([]);
+  const [senderInput, setSenderInput] = useState('');
+  const [requireSenderVerification, setRequireSenderVerification] = useState(true);
+  const [requireContactCheck, setRequireContactCheck] = useState(true);
 
   useEffect(() => {
     if (id) {
@@ -40,9 +41,12 @@ export default function PatternEditPage() {
       setPattern(data);
       setName(data.name);
       setDescription(data.description || '');
-      setRegex(data.regex);
       setBank(data.bank || '');
       setCurrency(data.currency || '');
+      // Security fields
+      setAllowedSenders(Array.isArray(data.allowedSenders) ? data.allowedSenders : []);
+      setRequireSenderVerification(data.requireSenderVerification !== false);
+      setRequireContactCheck(data.requireContactCheck !== false);
     } catch (error: any) {
       toast({
         title: 'Error',
@@ -55,46 +59,12 @@ export default function PatternEditPage() {
     }
   };
 
-  const handleAnalyze = async () => {
-    if (!smsText || !name) {
-      toast({
-        title: 'Error',
-        description: 'Please enter SMS text and pattern name',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    setAnalyzing(true);
-    try {
-      const response = await patternsAPI.validate({ smsText, name });
-      setPreview(response.data.data);
-      // Update fields with detected values
-      if (response.data.data.pattern.bank) {
-        setBank(response.data.data.pattern.bank);
-      }
-      if (response.data.data.pattern.currency) {
-        setCurrency(response.data.data.pattern.currency);
-      }
-      if (response.data.data.pattern.regex) {
-        setRegex(response.data.data.pattern.regex);
-      }
-    } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to analyze pattern',
-        variant: 'destructive',
-      });
-    } finally {
-      setAnalyzing(false);
-    }
-  };
 
   const handleSave = async () => {
-    if (!name || !regex) {
+    if (!name) {
       toast({
         title: 'Error',
-        description: 'Name and regex are required',
+        description: 'Pattern name is required',
         variant: 'destructive',
       });
       return;
@@ -104,16 +74,14 @@ export default function PatternEditPage() {
     try {
       const updateData: any = {
         name,
-        regex,
         description: description || undefined,
         bank: bank || undefined,
         currency: currency || undefined,
+        // Security fields
+        allowedSenders: allowedSenders.length > 0 ? allowedSenders : [],
+        requireSenderVerification,
+        requireContactCheck,
       };
-
-      // If preview exists and has extractFields, include it
-      if (preview?.pattern?.extractFields) {
-        updateData.extractFields = preview.pattern.extractFields;
-      }
 
       await patternsAPI.update(id!, updateData);
       toast({
@@ -194,120 +162,137 @@ export default function PatternEditPage() {
                     placeholder="KES"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="regex">Regex Pattern</Label>
-                  <Textarea
-                    id="regex"
-                    value={regex}
-                    onChange={(e) => setRegex(e.target.value)}
-                    rows={4}
-                    className="font-mono text-sm"
-                    required
-                  />
-                </div>
-              </CardContent>
-            </Card>
+                {/* Security Settings */}
+                <div className="space-y-4 pt-4 border-t">
+                  <div>
+                    <Label className="text-base font-semibold">Security Settings</Label>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Configure sender verification to prevent fraudulent SMS
+                    </p>
+                  </div>
 
-            {/* Test with SMS */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Test Pattern</CardTitle>
-                <CardDescription>Test this pattern with a sample SMS</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="sms">Sample SMS</Label>
-                  <Textarea
-                    id="sms"
-                    placeholder="You received KES 500 from JOHN DOE. Ref: MP123456789"
-                    value={smsText}
-                    onChange={(e) => setSmsText(e.target.value)}
-                    rows={4}
-                  />
-                </div>
-                <Button
-                  onClick={handleAnalyze}
-                  variant="outline"
-                  className="w-full"
-                  disabled={analyzing || !smsText}
-                >
-                  <Sparkles className="mr-2 h-4 w-4" />
-                  {analyzing ? 'Analyzing...' : 'Test Pattern'}
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Preview Section */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Preview & Validation</CardTitle>
-              <CardDescription>Pattern analysis and validation results</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {preview ? (
-                <>
+                  {/* Allowed Senders */}
                   <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      {preview.validation.valid ? (
-                        <>
-                          <CheckCircle2 className="h-5 w-5 text-green-500" />
-                          <span className="text-sm font-medium">Pattern Valid</span>
-                        </>
-                      ) : (
-                        <>
-                          <AlertCircle className="h-5 w-5 text-yellow-500" />
-                          <span className="text-sm font-medium">Validation Warnings</span>
-                        </>
-                      )}
+                    <Label htmlFor="sender">Allowed Senders (Phone/Name)</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Add phone numbers or sender names that can send SMS for this pattern
+                    </p>
+                    <div className="flex gap-2">
+                      <Input
+                        id="sender"
+                        placeholder="e.g., +251911234567 or CBE"
+                        value={senderInput}
+                        onChange={(e) => setSenderInput(e.target.value)}
+                        onKeyPress={(e) => {
+                          if (e.key === 'Enter' && senderInput.trim()) {
+                            setAllowedSenders([...allowedSenders, senderInput.trim()]);
+                            setSenderInput('');
+                          }
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          if (senderInput.trim()) {
+                            setAllowedSenders([...allowedSenders, senderInput.trim()]);
+                            setSenderInput('');
+                          }
+                        }}
+                      >
+                        Add
+                      </Button>
                     </div>
-                    {preview.validation.errors.length > 0 && (
-                      <ul className="list-disc list-inside text-sm text-muted-foreground">
-                        {preview.validation.errors.map((error: string, i: number) => (
-                          <li key={i}>{error}</li>
+                    {allowedSenders.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {allowedSenders.map((sender, index) => (
+                          <div
+                            key={index}
+                            className="flex items-center gap-1 px-2 py-1 bg-primary/10 text-primary rounded-md text-sm"
+                          >
+                            <span>{sender}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAllowedSenders(allowedSenders.filter((_, i) => i !== index));
+                              }}
+                              className="ml-1 hover:text-primary/70"
+                            >
+                              ×
+                            </button>
+                          </div>
                         ))}
-                      </ul>
+                      </div>
                     )}
                   </div>
 
-                  <div className="space-y-2">
-                    <Label>Detected Fields</Label>
-                    <div className="p-3 bg-muted rounded-md space-y-1 text-sm">
-                      <div><strong>Bank:</strong> {preview.pattern.bank || 'Not detected'}</div>
-                      <div><strong>Currency:</strong> {preview.pattern.currency || 'Not detected'}</div>
-                      <div><strong>Extract Fields:</strong></div>
-                      <pre className="text-xs mt-1 p-2 bg-background rounded">
-                        {JSON.stringify(preview.pattern.extractFields, null, 2)}
-                      </pre>
+                  {/* Security Toggles */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label>Require Sender Verification</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Only accept SMS from allowed senders
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setRequireSenderVerification(!requireSenderVerification)}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          requireSenderVerification ? 'bg-primary' : 'bg-gray-200'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            requireSenderVerification ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label>Reject SMS from Contacts</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Reject SMS from numbers in your contacts (prevents spoofing)
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setRequireContactCheck(!requireContactCheck)}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          requireContactCheck ? 'bg-primary' : 'bg-gray-200'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            requireContactCheck ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
                     </div>
                   </div>
-
-                  <div className="space-y-2">
-                    <Label>Generated Regex</Label>
-                    <code className="block p-3 bg-muted rounded-md text-xs break-all">
-                      {preview.pattern.regex}
-                    </code>
-                  </div>
-                </>
-              ) : (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Sparkles className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Enter a sample SMS and click "Test Pattern" to see preview</p>
                 </div>
-              )}
+              </CardContent>
+            </Card>
 
-              <div className="pt-4 border-t">
+          </div>
+
+          {/* Save Button Section */}
+          <Card>
+            <CardContent className="pt-6">
+              <div className="space-y-4">
                 <Button
                   onClick={handleSave}
                   className="w-full bg-[#F37100] hover:bg-[#F37100]/90"
-                  disabled={saving || !name || !regex}
+                  disabled={saving || !name}
                 >
                   <Save className="mr-2 h-4 w-4" />
                   {saving ? 'Saving...' : 'Save Changes'}
                 </Button>
                 <Button
                   variant="outline"
-                  className="w-full mt-2"
+                  className="w-full"
                   onClick={() => navigate('/dashboard/patterns')}
                 >
                   Cancel

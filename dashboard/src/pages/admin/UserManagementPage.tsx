@@ -1,12 +1,55 @@
 import { useEffect, useState } from 'react';
+import DashboardLayout from '@/components/layouts/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
+import { 
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
+} from '@/components/ui/table';
+import { 
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue 
+} from '@/components/ui/select';
 import { adminAPI } from '@/lib';
 import { useToast } from '@/components/ui/use-toast';
-import { Search, User, Mail, Phone, Globe, Shield, Crown, RefreshCw } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Search, RefreshCw, User, Mail, Phone, Globe, Shield, Crown, MoreVertical, Eye, Edit, Trash2 } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
+
+const roleColors: Record<string, string> = {
+  ADMIN: 'bg-purple-500',
+  SUPER_ADMIN: 'bg-red-500',
+  BUSINESS_OWNER: 'bg-blue-500',
+  DEVELOPER: 'bg-green-500',
+  EMPLOYEE: 'bg-gray-500',
+};
+
+function LoadingSkeleton() {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>User</TableHead>
+          <TableHead>Role</TableHead>
+          <TableHead>Plan</TableHead>
+          <TableHead>Country</TableHead>
+          <TableHead>Joined</TableHead>
+          <TableHead className="text-right">Actions</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {[...Array(5)].map((_, i) => (
+          <TableRow key={i}>
+            {[...Array(6)].map((_, j) => (
+              <TableCell key={j}><Skeleton className="h-4 w-20" /></TableCell>
+            ))}
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
 
 export default function UserManagementPage() {
   const { toast } = useToast();
@@ -14,16 +57,16 @@ export default function UserManagementPage() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [filters, setFilters] = useState({
-    search: '',
-    plan: '',
-    role: '',
-    country: '',
-  });
+  const [filters, setFilters] = useState({ search: '', plan: '', role: '', country: '' });
+  const { search: urlSearch } = useLocation();
 
   useEffect(() => {
-    loadUsers();
-  }, [page, filters]);
+    const params = new URLSearchParams(urlSearch);
+    const countryParam = params.get('country');
+    if (countryParam) setFilters(prev => ({ ...prev, country: countryParam.toUpperCase() }));
+  }, [urlSearch]);
+
+  useEffect(() => { loadUsers(); }, [page, filters]);
 
   const loadUsers = async () => {
     setLoading(true);
@@ -35,213 +78,176 @@ export default function UserManagementPage() {
       if (filters.country) params.country = filters.country;
 
       const response = await adminAPI.getUsers(params);
-      setUsers(response.data.data.users);
-      setTotalPages(response.data.data.pagination.pages);
+      setUsers(response.data.data.users || []);
+      setTotalPages(response.data.data.pagination?.pages || 1);
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to load users',
-        variant: 'destructive',
-      });
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to load users", variant: "destructive" });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleUpdateUser = async (userId: string, updates: any) => {
-    try {
-      await adminAPI.updateUser(userId, updates);
-      toast({ title: 'Success', description: 'User updated successfully' });
-      loadUsers();
-    } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to update user',
-        variant: 'destructive',
-      });
-    }
-  };
-
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+    <DashboardLayout>
+      <div className="space-y-8">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold">User Management</h1>
-            <p className="text-sm text-muted-foreground">Manage all platform users</p>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">User Management</h1>
+            <p className="text-muted-foreground mt-1">Manage platform users</p>
           </div>
-          <Link to="/admin/dashboard">
-            <Button variant="outline">Back to Dashboard</Button>
-          </Link>
+          <Button variant="outline" size="sm" onClick={loadUsers}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
         </div>
-      </header>
 
-      <main className="container mx-auto px-4 py-8">
+        <Separator />
+
         {/* Filters */}
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>Filters</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div>
-                <Label>Search</Label>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1">
                 <div className="relative">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Email, phone..."
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input 
+                    placeholder="Search by name, email, or phone..." 
+                    className="pl-10"
                     value={filters.search}
-                    onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                    className="pl-8"
+                    onChange={(e) => setFilters(f => ({ ...f, search: e.target.value }))}
                   />
                 </div>
               </div>
-              <div>
-                <Label>Plan</Label>
-                <select
-                  value={filters.plan}
-                  onChange={(e) => setFilters({ ...filters, plan: e.target.value })}
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  <option value="">All Plans</option>
-                  <option value="FREE">Free</option>
-                  <option value="PREMIUM">Premium</option>
-                </select>
-              </div>
-              <div>
-                <Label>Role</Label>
-                <select
-                  value={filters.role}
-                  onChange={(e) => setFilters({ ...filters, role: e.target.value })}
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  <option value="">All Roles</option>
-                  <option value="USER">User</option>
-                  <option value="ADMIN">Admin</option>
-                  <option value="SUPER_ADMIN">Super Admin</option>
-                </select>
-              </div>
-              <div>
-                <Label>Country</Label>
-                <Input
-                  placeholder="Country code"
-                  value={filters.country}
-                  onChange={(e) => setFilters({ ...filters, country: e.target.value.toUpperCase() })}
-                  maxLength={2}
-                />
-              </div>
+              <Select value={filters.role} onValueChange={(v) => setFilters(f => ({ ...f, role: v }))}>
+                <SelectTrigger className="w-full sm:w-40">
+                  <SelectValue placeholder="All Roles" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Roles</SelectItem>
+                  <SelectItem value="ADMIN">Admin</SelectItem>
+                  <SelectItem value="SUPER_ADMIN">Super Admin</SelectItem>
+                  <SelectItem value="BUSINESS_OWNER">Business Owner</SelectItem>
+                  <SelectItem value="DEVELOPER">Developer</SelectItem>
+                  <SelectItem value="EMPLOYEE">Employee</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={filters.plan} onValueChange={(v) => setFilters(f => ({ ...f, plan: v }))}>
+                <SelectTrigger className="w-full sm:w-40">
+                  <SelectValue placeholder="All Plans" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Plans</SelectItem>
+                  <SelectItem value="FREE">Free</SelectItem>
+                  <SelectItem value="STARTER">Starter</SelectItem>
+                  <SelectItem value="PROFESSIONAL">Professional</SelectItem>
+                  <SelectItem value="BUSINESS">Business</SelectItem>
+                  <SelectItem value="ENTERPRISE">Enterprise</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </CardContent>
         </Card>
 
         {/* Users Table */}
         <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Users ({users.length})</CardTitle>
-              <Button onClick={loadUsers} variant="outline" size="sm">
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Refresh
-              </Button>
-            </div>
+          <CardHeader className="pb-0">
+            <CardTitle>Users</CardTitle>
+            <CardDescription>{users.length} user{users.length !== 1 ? 's' : ''} found</CardDescription>
           </CardHeader>
           <CardContent>
             {loading ? (
-              <div className="text-center py-8">Loading...</div>
+              <LoadingSkeleton />
             ) : users.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">No users found</div>
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <User className="h-12 w-12 text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No users found</p>
+              </div>
             ) : (
-              <div className="space-y-4">
-                {users.map((user: any) => (
-                  <Card key={user.id} className="p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <User className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-semibold">{user.username || (user.email && !user.email.match(/^\+?\d+$/)) ? user.email : user.phone || 'N/A'}</span>
-                          {user.role === 'SUPER_ADMIN' && <Crown className="h-4 w-4 text-yellow-500" />}
-                          {user.role === 'ADMIN' && <Shield className="h-4 w-4 text-blue-500" />}
-                        </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm text-muted-foreground">
-                          {user.email && !user.email.match(/^\+?\d+$/) && (
-                            <div className="flex items-center gap-1">
-                              <Mail className="h-3 w-3" />
-                              {user.email}
-                            </div>
-                          )}
-                          {user.phone && (
-                            <div className="flex items-center gap-1">
-                              <Phone className="h-3 w-3" />
-                              {user.phone}
-                            </div>
-                          )}
-                          {user.country && (
-                            <div className="flex items-center gap-1">
-                              <Globe className="h-3 w-3" />
-                              {user.country}
-                            </div>
-                          )}
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>User</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Plan</TableHead>
+                    <TableHead>Country</TableHead>
+                    <TableHead>Joined</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {users.map((user) => (
+                    <TableRow key={user.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center">
+                            <span className="text-sm font-medium text-primary">
+                              {(user.username || user.email || user.phone || 'U')[0].toUpperCase()}
+                            </span>
+                          </div>
                           <div>
-                            Plan: <span className="font-medium">{user.plan}</span>
+                            <p className="font-medium">{user.username || user.email || user.phone}</p>
+                            <p className="text-sm text-muted-foreground">{user.email || user.phone}</p>
                           </div>
                         </div>
-                        <div className="mt-2 text-xs text-muted-foreground">
-                          Patterns: {user._count?.patterns || 0} | Transactions: {user._count?.transactions || 0} | SIMs: {user._count?.simCards || 0}
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={`${roleColors[user.role] || 'bg-gray-500'} text-white`}>
+                          {user.role}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{user.plan || 'FREE'}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <span className="flex items-center gap-1">
+                          <Globe className="h-3 w-3" />
+                          {user.country || '-'}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : '-'}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button variant="ghost" size="icon">
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon">
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          {(user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') && (
+                            <Button variant="ghost" size="icon" className="text-destructive">
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <select
-                          value={user.plan}
-                          onChange={(e) => handleUpdateUser(user.id, { plan: e.target.value })}
-                          className="text-sm border rounded px-2 py-1"
-                          disabled={user.role === 'SUPER_ADMIN'}
-                        >
-                          <option value="FREE">Free</option>
-                          <option value="PREMIUM">Premium</option>
-                        </select>
-                        <select
-                          value={user.role}
-                          onChange={(e) => handleUpdateUser(user.id, { role: e.target.value })}
-                          className="text-sm border rounded px-2 py-1"
-                          disabled={user.role === 'SUPER_ADMIN'}
-                        >
-                          <option value="USER">User</option>
-                          <option value="ADMIN">Admin</option>
-                          <option value="SUPER_ADMIN">Super Admin</option>
-                        </select>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            )}
-
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="flex items-center justify-center gap-2 mt-6">
-                <Button
-                  variant="outline"
-                  onClick={() => setPage(p => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                >
-                  Previous
-                </Button>
-                <span className="text-sm text-muted-foreground">
-                  Page {page} of {totalPages}
-                </span>
-                <Button
-                  variant="outline"
-                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
-                >
-                  Next
-                </Button>
-              </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             )}
           </CardContent>
         </Card>
-      </main>
-    </div>
+
+        {/* Pagination */}
+        {users.length > 0 && (
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              Page {page} of {totalPages}
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>
+                Previous
+              </Button>
+              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </DashboardLayout>
   );
 }
-

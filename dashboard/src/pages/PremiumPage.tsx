@@ -4,169 +4,225 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { premiumAPI } from '@/lib';
+import { Separator } from '@/components/ui/separator';
+import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { packageAPI, userPackageAPI } from '@/lib';
 import { useToast } from '@/components/ui/use-toast';
-import { Crown, Check } from 'lucide-react';
+import { Crown, Check, RefreshCw, ShoppingCart, Zap, Star, ArrowRight } from 'lucide-react';
+
+interface Package {
+  id: string;
+  name: string;
+  description?: string;
+  price?: number | string | null;
+  billingCycle?: string;
+  durationDays?: number | null;
+  maxPhoneTxns?: number | null;
+  maxVerifiedTxns?: number | null;
+  isDeveloperToken?: boolean;
+  isFreePackage?: boolean;
+  tier?: string;
+  isActive?: boolean;
+}
+
+const tierColors: Record<string, string> = {
+  FREE: "bg-gray-500",
+  STARTER: "bg-blue-500",
+  PROFESSIONAL: "bg-green-500",
+  BUSINESS: "bg-purple-500",
+  ENTERPRISE: "bg-orange-500",
+};
 
 export default function PremiumPage() {
   const { toast } = useToast();
-  const [status, setStatus] = useState<any>(null);
-  const [txnId, setTxnId] = useState('');
+  const [packages, setPackages] = useState<Package[]>([]);
+  const [active, setActive] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [upgrading, setUpgrading] = useState(false);
+  const [selectedPackage, setSelectedPackage] = useState<Package | null>(null);
+  const [purchaseNumber, setPurchaseNumber] = useState('');
+  const [purchasing, setPurchasing] = useState(false);
 
-  useEffect(() => {
-    loadStatus();
-  }, []);
-
-  const loadStatus = async () => {
+  const loadData = async () => {
     try {
-      const response = await premiumAPI.getStatus();
-      setStatus(response.data.data);
+      const [pkgRes, activeRes] = await Promise.all([
+        packageAPI.getAll(),
+        userPackageAPI.getMyPackage(),
+      ]);
+      setPackages(pkgRes.data.data || []);
+      setActive(activeRes.data.data);
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to load status',
-        variant: 'destructive',
-      });
+      toast({ title: "Error", description: "Failed to load packages", variant: "destructive" });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleUpgrade = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setUpgrading(true);
+  useEffect(() => { loadData(); }, []);
 
+  const handlePurchase = async () => {
+    if (!selectedPackage || !purchaseNumber) {
+      toast({ title: "Error", description: "Please select a package and enter transaction number", variant: "destructive" });
+      return;
+    }
+    setPurchasing(true);
     try {
-      await premiumAPI.upgrade(txnId);
-      toast({
-        title: 'Success',
-        description: 'Successfully upgraded to Premium!',
-      });
-      setTxnId('');
-      loadStatus();
+      const res = await packageAPI.purchase({ packageId: selectedPackage.id, transactionNumber: purchaseNumber });
+      toast({ title: "Success", description: res.data.message || "Package purchased successfully" });
+      loadData();
+      setSelectedPackage(null);
+      setPurchaseNumber('');
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to upgrade',
-        variant: 'destructive',
-      });
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to purchase package", variant: "destructive" });
     } finally {
-      setUpgrading(false);
+      setPurchasing(false);
     }
   };
 
-  if (loading) {
-    return (
-      <DashboardLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-muted-foreground">Loading...</div>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  const isPremium = status?.plan === 'PREMIUM';
-
   return (
     <DashboardLayout>
-      <div className="space-y-6 max-w-4xl mx-auto">
-        <div>
-          <h1 className="text-3xl font-bold">Premium Upgrade</h1>
-          <p className="text-muted-foreground">Unlock unlimited transactions</p>
+      <div className="space-y-8 max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-3">
+              <Crown className="h-7 w-7 text-primary" />
+              Premium Plans
+            </h1>
+            <p className="text-muted-foreground mt-1">
+              Upgrade your account to unlock more features
+            </p>
+          </div>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Crown className="h-5 w-5 text-[#F37100]" />
-                Premium Plan
-              </CardTitle>
-              <CardDescription>$15/month - Unlimited transactions</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <Check className="h-4 w-4 text-green-500" />
-                  <span>Unlimited transactions</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Check className="h-4 w-4 text-green-500" />
-                  <span>Priority support</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Check className="h-4 w-4 text-green-500" />
-                  <span>Advanced analytics</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+        <Separator />
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Current Status</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <div className="text-sm text-muted-foreground">Plan</div>
-                <div className="text-2xl font-bold">{status?.plan || 'FREE'}</div>
+        {/* Current Plan */}
+        {active && (
+          <Card className="border-primary/20 bg-primary/5">
+            <CardContent className="pt-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm text-muted-foreground">Current Plan</p>
+                  <p className="text-2xl font-bold">{active.name}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {active.tier} • {active.billingCycle || 'Active'}
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <Badge variant="secondary" className="text-sm px-3 py-1">
+                    {active.maxPhoneTxns ? `${active.maxPhoneTxns} Phone Tokens` : 'Unlimited'}
+                  </Badge>
+                  <Badge variant="secondary" className="text-sm px-3 py-1">
+                    {active.maxVerifiedTxns ? `${active.maxVerifiedTxns} Verified` : 'Unlimited'}
+                  </Badge>
+                </div>
               </div>
-              <div>
-                <div className="text-sm text-muted-foreground">Usage</div>
-                <div className="text-lg">
-                  {status?.usage?.used || 0} / {status?.usage?.limit || 100}
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  {status?.usage?.remaining || 0} remaining
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {!isPremium && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Upgrade to Premium</CardTitle>
-              <CardDescription>
-                Send $15 via mobile money, then enter the transaction ID below
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleUpgrade} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="txnId">Transaction ID</Label>
-                  <Input
-                    id="txnId"
-                    placeholder="MP123456789"
-                    value={txnId}
-                    onChange={(e) => setTxnId(e.target.value)}
-                    required
-                  />
-                </div>
-                <Button
-                  type="submit"
-                  className="w-full bg-[#F37100] hover:bg-[#F37100]/90"
-                  disabled={upgrading}
-                >
-                  {upgrading ? 'Upgrading...' : 'Upgrade to Premium'}
-                </Button>
-              </form>
             </CardContent>
           </Card>
         )}
 
-        {isPremium && (
-          <Card>
-            <CardContent className="flex items-center justify-center py-12">
-              <div className="text-center">
-                <Crown className="h-12 w-12 mx-auto mb-4 text-[#F37100]" />
-                <h3 className="text-xl font-bold mb-2">You're Premium!</h3>
-                <p className="text-muted-foreground">
-                  Enjoy unlimited transactions and all premium features.
-                </p>
+        {/* Package Grid */}
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {packages.map((pkg) => {
+            const isCurrentPlan = active?.id === pkg.id;
+            return (
+              <Card 
+                key={pkg.id} 
+                className={`relative ${isCurrentPlan ? 'border-primary' : ''}`}
+              >
+                {pkg.tier === 'BUSINESS' && (
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                    <Badge className="bg-primary text-primary-foreground">
+                      <Star className="h-3 w-3 mr-1" />
+                      Most Popular
+                    </Badge>
+                  </div>
+                )}
+                <CardHeader>
+                  <CardTitle className="flex items-center justify-between">
+                    {pkg.name}
+                    {pkg.tier && (
+                      <span className={`text-xs px-2 py-1 rounded-full text-white ${tierColors[pkg.tier]}`}>
+                        {pkg.tier}
+                      </span>
+                    )}
+                  </CardTitle>
+                  <CardDescription>{pkg.description}</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="text-3xl font-bold">
+                    {pkg.price === 0 || pkg.price === '0' || !pkg.price ? (
+                      <span className="text-2xl">Free</span>
+                    ) : (
+                      <>${pkg.price}<span className="text-sm font-normal text-muted-foreground">/{pkg.billingCycle?.toLowerCase() || 'mo'}</span></>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {[
+                      { label: 'Phone Transactions', value: pkg.maxPhoneTxns },
+                      { label: 'Verified Transactions', value: pkg.maxVerifiedTxns },
+                      { label: 'Developer API Access', value: pkg.isDeveloperToken },
+                    ].map((feature, i) => (
+                      <div key={i} className="flex items-center gap-2 text-sm">
+                        <Check className="h-4 w-4 text-green-500" />
+                        <span>
+                          {feature.value === null || feature.value ? (
+                            feature.value || 'Unlimited'
+                          ) : (
+                            <span className="text-muted-foreground">Limited</span>
+                          )}{' '}
+                          {feature.label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <Button 
+                    className="w-full" 
+                    variant={isCurrentPlan ? "outline" : "default"}
+                    disabled={isCurrentPlan}
+                    onClick={() => setSelectedPackage(pkg)}
+                  >
+                    {isCurrentPlan ? (
+                      'Current Plan'
+                    ) : (
+                      <>
+                        <ShoppingCart className="h-4 w-4 mr-2" />
+                        Select Plan
+                      </>
+                    )}
+                  </Button>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+
+        {/* Purchase Modal */}
+        {selectedPackage && (
+          <Card className="fixed inset-0 z-50 m-auto max-w-md p-6 shadow-2xl">
+            <CardHeader>
+              <CardTitle>Purchase {selectedPackage.name}</CardTitle>
+              <CardDescription>
+                Make a payment to activate this plan
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Transaction Number</Label>
+                <Input
+                  placeholder="Enter your payment transaction number"
+                  value={purchaseNumber}
+                  onChange={(e) => setPurchaseNumber(e.target.value)}
+                />
+              </div>
+              <div className="flex gap-3">
+                <Button variant="outline" className="flex-1" onClick={() => setSelectedPackage(null)}>
+                  Cancel
+                </Button>
+                <Button className="flex-1" onClick={handlePurchase} disabled={purchasing}>
+                  {purchasing ? 'Processing...' : 'Confirm Purchase'}
+                </Button>
               </div>
             </CardContent>
           </Card>

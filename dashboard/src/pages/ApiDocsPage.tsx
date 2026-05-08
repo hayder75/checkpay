@@ -1,19 +1,194 @@
 import { useEffect, useState } from 'react';
-import DashboardLayout from '@/components/layouts/DashboardLayout';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Copy, Check, Code, Key, BookOpen } from 'lucide-react';
+import { Copy, Check, ArrowRight, Download, Smartphone, X, Menu } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { authAPI } from '@/lib';
 import { useToast } from '@/components/ui/use-toast';
+import { auth } from '@/lib/auth';
+import { useTheme } from '@/contexts/ThemeContext';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import DashboardLayout from '@/components/layouts/DashboardLayout';
+
+type NavItem = {
+  id: string;
+  label: string;
+};
 
 export default function ApiDocsPage() {
   const { toast } = useToast();
   const [user, setUser] = useState<any>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState('overview');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { theme } = useTheme();
+  const logoPath = theme === 'dark' ? '/dark-theme-logo.png' : '/light-theme-logo.png';
+
+  const apiUrl = 'https://checkpay.live/api';
+  const currentUser = auth.getUser();
+
+  const navItems: NavItem[] = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'quickstart', label: 'Quick Start' },
+    { id: 'project-types', label: 'Project Types' },
+    { id: 'authentication', label: 'Authentication' },
+    { id: 'verify-endpoint', label: 'Verification API' },
+    { id: 'responses', label: 'Responses' },
+    { id: 'code-examples', label: 'Code Examples' },
+    { id: 'mobile-app', label: 'Mobile App' },
+    { id: 'security', label: 'Security' },
+    { id: 'rate-limits', label: 'Rate Limits' },
+  ];
+
+  const quickStartSteps = [
+    {
+      title: 'Create your project',
+      body: 'Create a project from the dashboard and keep its Project API Key. Every verification request is scoped to that project context.',
+    },
+    {
+      title: 'Choose the right project type',
+      body: 'Use Standalone for your own operation, Transferable when the project may move to a client or another operator, and Cluster when a developer needs an accepted owner link.',
+    },
+    {
+      title: 'Connect a phone data source',
+      body: 'Install the CheckPay Android app on the phone that receives transaction messages, sign in, and let it sync transactions into the correct project or account flow.',
+    },
+    {
+      title: 'Call the verification API',
+      body: 'Use GET to check whether a transaction already exists, or POST to record a manual or scan-based verification attempt that can resolve later when the transaction arrives.',
+    },
+  ];
+
+  const projectTypes = [
+    {
+      title: 'Standalone',
+      badge: 'STANDALONE',
+      description: 'A direct project for one operator, one business flow, or one developer-managed setup.',
+      bestFor: 'Use this when the same owner or team controls the project and the phone data source does not need to move between parties.',
+      setup: 'Create the project as Standalone and connect the phone that will receive the bank or mobile money transaction messages.',
+      request: 'Verify with the project API key against /api/verify. The request shape is the default CheckPay pattern.',
+    },
+    {
+      title: 'Transferable',
+      badge: 'TRANSFERABLE',
+      description: 'A project prepared for handover or reassignment while keeping the same verification flow.',
+      bestFor: 'Use this when the project may later move to a client, another operator, or a new phone ingestion owner.',
+      setup: 'Keep the project under Transferable and set the client phone API key or handover target when the ingestion source should move.',
+      request: 'The verification API shape stays the same. What changes is which phone ingestion source is attached to that project.',
+    },
+    {
+      title: 'Cluster',
+      badge: 'CLUSTER',
+      description: 'A shared operating model where a developer project is linked to a business owner flow through an owner ID request and acceptance process.',
+      bestFor: 'Use this when a developer manages the integration but the business owner must approve the operating link and remain part of the project relationship.',
+      setup: 'Create the Cluster project, add the vendor or owner link using the 6-digit owner ID, and wait until the owner accepts the request.',
+      request: 'Once the owner link is active, use the cluster project API key with the same /api/verify request shape. The difference is that data is now tied to the accepted cluster relationship.',
+    },
+  ];
+
+  const securityPractices = [
+    'Store API keys in environment variables, not in frontend code or mobile bundles.',
+    'Run verification from your backend so your project key is never exposed to end users.',
+    'Use GET for status checks and POST when you want CheckPay to record a manual or OCR verification attempt.',
+    'Match the returned amount and transaction ID against your order before delivering value.',
+  ];
+
+  const getVerifyCurl = `curl "${apiUrl}/verify?txn=FT25315HZNYL" \\
+  -H "X-API-Key: YOUR_PROJECT_API_KEY"`;
+
+  const postVerifyCurl = `curl -X POST "${apiUrl}/verify" \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: YOUR_PROJECT_API_KEY" \\
+  -d '{
+    "txnId": "FT25315HZNYL",
+    "source": "MANUAL",
+    "ocrText": "optional raw OCR or operator note"
+  }'`;
+
+  const nodeExample = `const axios = require('axios');
+
+async function checkPayment(txnId) {
+  const response = await axios.get('${apiUrl}/verify', {
+    params: { txn: txnId },
+    headers: { 'X-API-Key': process.env.CHECKPAY_API_KEY },
+  });
+
+  const result = response.data?.data;
+  if (response.data?.success && result?.confirmed) {
+    return {
+      confirmed: true,
+      txnId: result.txnId,
+      amount: result.amount,
+      bank: result.bank,
+    };
+  }
+
+  return { confirmed: false, message: result?.message || 'Transaction not found' };
+}`;
+
+  const pythonExample = `import os
+import requests
+
+def record_manual_verification(txn_id, source='MANUAL', ocr_text=None):
+    response = requests.post(
+        '${apiUrl}/verify',
+        headers={
+            'X-API-Key': os.getenv('CHECKPAY_API_KEY'),
+            'Content-Type': 'application/json',
+        },
+        json={
+            'txnId': txn_id,
+            'source': source,
+            'ocrText': ocr_text,
+        },
+    )
+    return response.json()`;
+
+  const phpExample = `<?php
+function verifyTransaction($txnId) {
+    $url = '${apiUrl}/verify?txn=' . urlencode($txnId);
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'X-API-Key: ' . $_ENV['CHECKPAY_API_KEY']
+    ]);
+
+    $response = json_decode(curl_exec($ch), true);
+    curl_close($ch);
+
+    if (!empty($response['success']) && !empty($response['data']['confirmed'])) {
+        return $response['data'];
+    }
+
+    return ['confirmed' => false];
+}
+?>`;
 
   useEffect(() => {
-    loadUser();
+    if (currentUser) {
+      loadUser();
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      for (const item of navItems) {
+        const element = document.getElementById(item.id);
+        if (!element) {
+          continue;
+        }
+
+        const rect = element.getBoundingClientRect();
+        if (rect.top <= 100 && rect.bottom >= 100) {
+          setActiveSection(item.id);
+          break;
+        }
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
   const loadUser = async () => {
@@ -35,475 +210,669 @@ export default function ApiDocsPage() {
     setTimeout(() => setCopied(null), 2000);
   };
 
-  const devApiKey = user?.devApiKey || 'ckp_your_dev_api_key_here';
-  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+  const scrollToSection = (id: string) => {
+    const element = document.getElementById(id);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setMobileMenuOpen(false);
+    }
+  };
 
-  return (
-    <DashboardLayout>
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <BookOpen className="h-8 w-8" />
-            API Documentation
-          </h1>
-          <p className="text-muted-foreground mt-2">
-            Learn how to verify transactions using CheckPay API
-          </p>
-        </div>
+  const content = (
+    <div className="min-h-screen bg-white dark:bg-neutral-950 transition-colors">
+      <div className="flex relative">
+        <aside className="hidden lg:block w-56 flex-shrink-0 sticky top-16 self-start h-[calc(100vh-4rem)] border-r border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 overflow-y-auto">
+          <div className="p-5 pt-8">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 mb-4">Documentation</h2>
+            <nav className="space-y-1">
+              {navItems.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => scrollToSection(item.id)}
+                  className={`w-full text-left px-3 py-2.5 text-[15px] rounded-md transition-colors ${
+                    activeSection === item.id
+                      ? 'bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-400 font-medium'
+                      : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </nav>
+          </div>
+        </aside>
 
-        <Tabs defaultValue="overview" className="space-y-4">
-          <TabsList>
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="verify">Verify Endpoint</TabsTrigger>
-            <TabsTrigger value="examples">Code Examples</TabsTrigger>
-            <TabsTrigger value="responses">Response Format</TabsTrigger>
-          </TabsList>
+        <main className="flex-1 min-w-0">
+          <div className="max-w-5xl mx-auto px-4 sm:px-8 lg:px-12 py-12 lg:py-16">
+            <section id="overview" className="mb-16 pb-16 border-b border-neutral-200 dark:border-neutral-800">
+              <h1 className="text-4xl sm:text-5xl font-bold tracking-tight text-neutral-900 dark:text-white mb-8">
+                CheckPay API Documentation
+              </h1>
+              <p className="text-xl md:text-2xl text-neutral-600 dark:text-neutral-300 mb-6 leading-relaxed max-w-4xl">
+                Standard integration documentation for transaction verification, mobile ingestion, and project setup across Standalone, Transferable, and Cluster project types.
+              </p>
+              <p className="text-lg md:text-xl text-neutral-500 dark:text-neutral-400 leading-relaxed max-w-4xl">
+                CheckPay helps you receive transaction data from connected phones, organize it under the right project model, and verify incoming payments through a consistent API. The request format stays simple. What changes by project type is how data reaches the project and who controls that operating relationship.
+              </p>
+            </section>
 
-          {/* Overview Tab */}
-          <TabsContent value="overview" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Key className="h-5 w-5" />
-                  Your Developer API Key
-                </CardTitle>
-                <CardDescription>
-                  Use this key to authenticate API requests from your backend
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center gap-2 p-4 bg-muted rounded-lg">
-                  <code className="flex-1 text-sm font-mono">{devApiKey}</code>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => copyToClipboard(devApiKey, 'Developer API Key')}
-                  >
-                    {copied === 'Developer API Key' ? (
-                      <Check className="h-4 w-4" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-                <p className="text-sm text-muted-foreground mt-2">
-                  ⚠️ Keep this key secret. Never expose it in client-side code.
-                </p>
-              </CardContent>
-            </Card>
+            <section id="quickstart" className="mb-16 pb-16 border-b border-neutral-200 dark:border-neutral-800">
+              <h2 className="text-2xl sm:text-3xl font-bold text-neutral-900 dark:text-white mb-4">Quick Start</h2>
+              <p className="text-neutral-600 dark:text-neutral-400 mb-10 text-lg md:text-xl">
+                Follow this flow if you want a standard setup that matches the current product behavior.
+              </p>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>How It Works</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <h3 className="font-semibold">1. Mobile App Scrapes Transaction</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Your CheckPay mobile app automatically reads SMS and extracts transaction details
-                    (amount, transaction ID, sender, etc.)
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <h3 className="font-semibold">2. Transaction Saved to Database</h3>
-                  <p className="text-sm text-muted-foreground">
-                    The app sends the transaction to CheckPay backend, which stores it securely
-                    with your account.
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <h3 className="font-semibold">3. Your Backend Verifies</h3>
-                  <p className="text-sm text-muted-foreground">
-                    When a user makes a payment, call our verify endpoint with the transaction ID
-                    to confirm the payment was received.
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Rate Limits</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-sm">Free Plan:</span>
-                    <span className="text-sm font-semibold">100 requests/month</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm">Premium Plan:</span>
-                    <span className="text-sm font-semibold">1,000,000 requests/month</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Both app requests (from mobile) and dev requests (verification) count towards your limit.
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Verify Endpoint Tab */}
-          <TabsContent value="verify" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Verify Transaction Endpoint</CardTitle>
-                <CardDescription>
-                  Check if a transaction exists in your account
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <h3 className="font-semibold mb-2">Endpoint</h3>
-                  <code className="block p-3 bg-muted rounded text-sm">
-                    GET {baseUrl}/api/verify
-                  </code>
-                </div>
-
-                <div>
-                  <h3 className="font-semibold mb-2">Authentication</h3>
-                  <p className="text-sm text-muted-foreground mb-2">
-                    Include your Developer API Key in the request:
-                  </p>
-                  <div className="space-y-2">
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">Option 1: Query Parameter</p>
-                      <code className="block p-2 bg-muted rounded text-xs">
-                        ?key=YOUR_DEV_API_KEY&txn=TRANSACTION_ID
-                      </code>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">Option 2: Header</p>
-                      <code className="block p-2 bg-muted rounded text-xs">
-                        X-API-Key: YOUR_DEV_API_KEY
-                      </code>
+              <div className="space-y-10">
+                {quickStartSteps.map((step, index) => (
+                  <div className="flex gap-5" key={step.title}>
+                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-orange-500 text-white text-sm font-bold flex items-center justify-center">{index + 1}</div>
+                    <div className="flex-1 pt-1">
+                      <h3 className="font-semibold text-neutral-900 dark:text-white text-lg mb-2">{step.title}</h3>
+                      <p className="text-neutral-600 dark:text-neutral-400">{step.body}</p>
                     </div>
                   </div>
-                </div>
+                ))}
+              </div>
+            </section>
 
-                <div>
-                  <h3 className="font-semibold mb-2">Parameters</h3>
-                  <div className="space-y-2">
-                    <div className="p-3 bg-muted rounded">
-                      <div className="flex items-start gap-2">
-                        <code className="text-sm font-semibold">txn</code>
-                        <span className="text-xs text-muted-foreground">(required)</span>
+            <section id="project-types" className="mb-16 pb-16 border-b border-neutral-200 dark:border-neutral-800">
+              <h2 className="text-2xl sm:text-3xl font-bold text-neutral-900 dark:text-white mb-4">Project Types</h2>
+              <p className="text-neutral-600 dark:text-neutral-400 mb-10 text-lg">
+                The verification request shape stays consistent across project types. The main difference is how each project is configured and where its transaction data comes from.
+              </p>
+
+              <div className="grid lg:grid-cols-3 gap-6 mb-10">
+                {projectTypes.map((projectType) => (
+                  <div key={projectType.badge} className="p-6 rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
+                    <div className="flex items-center justify-between gap-3 mb-4">
+                      <h3 className="text-xl font-semibold text-neutral-900 dark:text-white">{projectType.title}</h3>
+                      <span className="px-3 py-1.5 text-xs font-bold rounded-md bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-400">
+                        {projectType.badge}
+                      </span>
+                    </div>
+                    <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4">{projectType.description}</p>
+                    <div className="space-y-3 text-sm">
+                      <div>
+                        <div className="font-semibold text-neutral-900 dark:text-white mb-1">Best for</div>
+                        <div className="text-neutral-600 dark:text-neutral-400">{projectType.bestFor}</div>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        The transaction ID to verify (e.g., "MP123456789")
-                      </p>
+                      <div>
+                        <div className="font-semibold text-neutral-900 dark:text-white mb-1">Setup</div>
+                        <div className="text-neutral-600 dark:text-neutral-400">{projectType.setup}</div>
+                      </div>
+                      <div>
+                        <div className="font-semibold text-neutral-900 dark:text-white mb-1">API usage</div>
+                        <div className="text-neutral-600 dark:text-neutral-400">{projectType.request}</div>
+                      </div>
                     </div>
                   </div>
-                </div>
+                ))}
+              </div>
 
-                <div>
-                  <h3 className="font-semibold mb-2">Example Request</h3>
-                  <div className="relative">
-                    <code className="block p-4 bg-muted rounded text-xs overflow-x-auto">
-                      {`curl "${baseUrl}/api/verify?key=${devApiKey}&txn=MP123456789"`}
+              <div className="p-6 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 overflow-x-auto">
+                <h3 className="font-semibold text-neutral-900 dark:text-white mb-4">Operational API Pattern By Project Type</h3>
+                <table className="w-full text-sm min-w-[720px]">
+                  <thead>
+                    <tr className="border-b border-neutral-200 dark:border-neutral-700">
+                      <th className="text-left py-3 pr-4 font-semibold text-neutral-900 dark:text-white">Type</th>
+                      <th className="text-left py-3 pr-4 font-semibold text-neutral-900 dark:text-white">Required setup</th>
+                      <th className="text-left py-3 pr-4 font-semibold text-neutral-900 dark:text-white">Verification request</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-neutral-200 dark:border-neutral-800">
+                      <td className="py-4 pr-4 font-medium text-neutral-900 dark:text-white">Standalone</td>
+                      <td className="py-4 pr-4 text-neutral-600 dark:text-neutral-400">Own project and connected phone source</td>
+                      <td className="py-4 pr-4 text-neutral-600 dark:text-neutral-400"><code className="text-orange-600 dark:text-orange-400">GET /api/verify?txn=...</code> or <code className="text-orange-600 dark:text-orange-400">POST /api/verify</code> with your project key</td>
+                    </tr>
+                    <tr className="border-b border-neutral-200 dark:border-neutral-800">
+                      <td className="py-4 pr-4 font-medium text-neutral-900 dark:text-white">Transferable</td>
+                      <td className="py-4 pr-4 text-neutral-600 dark:text-neutral-400">Project prepared for handover or client phone ingestion</td>
+                      <td className="py-4 pr-4 text-neutral-600 dark:text-neutral-400">Same verification route, but the attached phone ingestion source may be reassigned later</td>
+                    </tr>
+                    <tr>
+                      <td className="py-4 pr-4 font-medium text-neutral-900 dark:text-white">Cluster</td>
+                      <td className="py-4 pr-4 text-neutral-600 dark:text-neutral-400">Accepted owner-ID link on a cluster project</td>
+                      <td className="py-4 pr-4 text-neutral-600 dark:text-neutral-400">Same verification route with the cluster project key after the owner request is accepted</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section id="authentication" className="mb-16 pb-16 border-b border-neutral-200 dark:border-neutral-800">
+              <h2 className="text-2xl sm:text-3xl font-bold text-neutral-900 dark:text-white mb-3">Authentication</h2>
+              <p className="text-neutral-600 dark:text-neutral-400 mb-10 text-lg">
+                All project verification requests should be authenticated with your Project API Key. Header-based authentication is the standard and recommended format.
+              </p>
+
+              {user && user.apiKey && (
+                <div className="mb-10 p-5 rounded-xl border-2 border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-950/30">
+                  <div className="text-sm font-semibold text-neutral-900 dark:text-white mb-3">Your API Key</div>
+                  <div className="flex items-center gap-3">
+                    <code className="flex-1 px-4 py-3 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg text-sm font-mono break-all text-neutral-800 dark:text-neutral-200">
+                      {user.apiKey}
                     </code>
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
-                      className="absolute top-2 right-2"
-                      onClick={() => copyToClipboard(
-                        `${baseUrl}/api/verify?key=${devApiKey}&txn=MP123456789`,
-                        'Request URL'
-                      )}
+                      onClick={() => copyToClipboard(user.apiKey, 'API Key')}
+                      className="shrink-0"
                     >
-                      {copied === 'Request URL' ? (
-                        <Check className="h-4 w-4" />
-                      ) : (
-                        <Copy className="h-4 w-4" />
-                      )}
+                      {copied === 'API Key' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                     </Button>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
+              )}
 
-          {/* Code Examples Tab */}
-          <TabsContent value="examples" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Code className="h-5 w-5" />
-                  Code Examples
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Node.js Example */}
+              <div className="space-y-8">
                 <div>
-                  <h3 className="font-semibold mb-2">Node.js / Express</h3>
-                  <div className="relative">
-                    <pre className="p-4 bg-muted rounded text-xs overflow-x-auto">
-{`async function verifyTransaction(txnId) {
-  const response = await fetch(
-    \`${baseUrl}/api/verify?key=${devApiKey}&txn=\${txnId}\`
-  );
-  const data = await response.json();
-  
-  if (data.success && data.data.confirmed) {
-    console.log('Payment confirmed:', data.data.amount);
-    return data.data;
-  } else {
-    console.log('Transaction not found');
-    return null;
-  }
-}`}
-                    </pre>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="absolute top-2 right-2"
-                      onClick={() => copyToClipboard(
-                        `async function verifyTransaction(txnId) {\n  const response = await fetch(\n    \`${baseUrl}/api/verify?key=${devApiKey}&txn=\${txnId}\`\n  );\n  const data = await response.json();\n  \n  if (data.success && data.data.confirmed) {\n    console.log('Payment confirmed:', data.data.amount);\n    return data.data;\n  } else {\n    console.log('Transaction not found');\n    return null;\n  }\n}`,
-                        'Node.js code'
-                      )}
-                    >
-                      {copied === 'Node.js code' ? (
-                        <Check className="h-4 w-4" />
-                      ) : (
-                        <Copy className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </div>
+                  <h3 className="text-sm font-semibold text-neutral-900 dark:text-white mb-3 uppercase tracking-wide">Header Authentication</h3>
+                  <pre className="bg-neutral-900 dark:bg-neutral-800 text-neutral-100 p-5 rounded-xl text-sm font-mono border border-neutral-800 dark:border-neutral-700 overflow-x-auto">
+                    <code>X-API-Key: YOUR_PROJECT_API_KEY</code>
+                  </pre>
                 </div>
 
-                {/* Python Example */}
                 <div>
-                  <h3 className="font-semibold mb-2">Python</h3>
-                  <div className="relative">
-                    <pre className="p-4 bg-muted rounded text-xs overflow-x-auto">
-{`import requests
+                  <h3 className="text-sm font-semibold text-neutral-900 dark:text-white mb-3 uppercase tracking-wide">Query Parameter Alternative</h3>
+                  <pre className="bg-neutral-900 dark:bg-neutral-800 text-neutral-100 p-5 rounded-xl text-sm font-mono border border-neutral-800 dark:border-neutral-700 overflow-x-auto">
+                    <code>?key=YOUR_PROJECT_API_KEY&amp;txn=TRANSACTION_ID</code>
+                  </pre>
+                  <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-3">
+                    Use this only for GET-style status checks if needed. Header authentication is the clean standard for production integrations.
+                  </p>
+                </div>
+              </div>
+            </section>
 
-def verify_transaction(txn_id):
-    url = "${baseUrl}/api/verify"
-    params = {
-        "key": "${devApiKey}",
-        "txn": txn_id
-    }
-    
-    response = requests.get(url, params=params)
-    data = response.json()
-    
-    if data["success"] and data["data"]["confirmed"]:
-        print(f"Payment confirmed: {data['data']['amount']}")
-        return data["data"]
-    else:
-        print("Transaction not found")
-        return None`}
-                    </pre>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="absolute top-2 right-2"
-                      onClick={() => copyToClipboard(
-                        `import requests\n\ndef verify_transaction(txn_id):\n    url = "${baseUrl}/api/verify"\n    params = {\n        "key": "${devApiKey}",\n        "txn": txn_id\n    }\n    \n    response = requests.get(url, params=params)\n    data = response.json()\n    \n    if data["success"] and data["data"]["confirmed"]:\n        print(f"Payment confirmed: {data['data']['amount']}")\n        return data["data"]\n    else:\n        print("Transaction not found")\n        return None`,
-                        'Python code'
-                      )}
-                    >
-                      {copied === 'Python code' ? (
-                        <Check className="h-4 w-4" />
-                      ) : (
-                        <Copy className="h-4 w-4" />
-                      )}
-                    </Button>
+            <section id="verify-endpoint" className="mb-16 pb-16 border-b border-neutral-200 dark:border-neutral-800">
+              <h2 className="text-2xl sm:text-3xl font-bold text-neutral-900 dark:text-white mb-3">Verification API</h2>
+              <p className="text-neutral-600 dark:text-neutral-400 mb-10 text-lg">
+                CheckPay currently supports two standard verification request patterns on the same endpoint family: GET to check whether a transaction already exists, and POST to record a manual or scan-based verification attempt.
+              </p>
+
+              <div className="space-y-8 mb-10">
+                <div className="p-5 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className="px-3 py-1.5 text-xs font-bold rounded-md bg-green-500 text-white uppercase">GET</span>
+                    <code className="text-neutral-900 dark:text-white font-mono text-lg">{apiUrl}/verify</code>
                   </div>
+                  <p className="text-neutral-600 dark:text-neutral-400 text-sm">Use this when you want to check whether the transaction is already present and available for confirmation.</p>
                 </div>
 
-                {/* PHP Example */}
+                <div className="p-5 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className="px-3 py-1.5 text-xs font-bold rounded-md bg-blue-500 text-white uppercase">POST</span>
+                    <code className="text-neutral-900 dark:text-white font-mono text-lg">{apiUrl}/verify</code>
+                  </div>
+                  <p className="text-neutral-600 dark:text-neutral-400 text-sm">Use this when an operator, scanner, or manual review flow needs to record a verification attempt now, even if the transaction has not arrived yet.</p>
+                </div>
+              </div>
+
+              <div className="grid xl:grid-cols-2 gap-8 mb-10">
                 <div>
-                  <h3 className="font-semibold mb-2">PHP</h3>
-                  <div className="relative">
-                    <pre className="p-4 bg-muted rounded text-xs overflow-x-auto">
-{`<?php
-function verifyTransaction($txnId) {
-    $url = "${baseUrl}/api/verify?key=${devApiKey}&txn=" . urlencode($txnId);
-    $response = file_get_contents($url);
-    $data = json_decode($response, true);
-    
-    if ($data["success"] && $data["data"]["confirmed"]) {
-        echo "Payment confirmed: " . $data["data"]["amount"];
-        return $data["data"];
-    } else {
-        echo "Transaction not found";
-        return null;
-    }
-}
-?>`}
-                    </pre>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="absolute top-2 right-2"
-                      onClick={() => copyToClipboard(
-                        `<?php\nfunction verifyTransaction($txnId) {\n    $url = "${baseUrl}/api/verify?key=${devApiKey}&txn=" . urlencode($txnId);\n    $response = file_get_contents($url);\n    $data = json_decode($response, true);\n    \n    if ($data["success"] && $data["data"]["confirmed"]) {\n        echo "Payment confirmed: " . $data["data"]["amount"];\n        return $data["data"];\n    } else {\n        echo "Transaction not found";\n        return null;\n    }\n}\n?>`,
-                        'PHP code'
-                      )}
-                    >
-                      {copied === 'PHP code' ? (
-                        <Check className="h-4 w-4" />
-                      ) : (
-                        <Copy className="h-4 w-4" />
-                      )}
-                    </Button>
+                  <h3 className="text-sm font-semibold text-neutral-900 dark:text-white mb-4 uppercase tracking-wide">GET Parameters</h3>
+                  <div className="border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-neutral-50 dark:bg-neutral-800">
+                          <th className="text-left px-5 py-4 font-semibold text-neutral-900 dark:text-white">Name</th>
+                          <th className="text-left px-5 py-4 font-semibold text-neutral-900 dark:text-white">Type</th>
+                          <th className="text-left px-5 py-4 font-semibold text-neutral-900 dark:text-white">Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="border-t border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
+                          <td className="px-5 py-4">
+                            <code className="text-sm font-mono text-orange-600 dark:text-orange-400">txn</code>
+                            <span className="ml-2 text-xs text-red-600 dark:text-red-400 font-medium">required</span>
+                          </td>
+                          <td className="px-5 py-4 text-neutral-600 dark:text-neutral-400">string</td>
+                          <td className="px-5 py-4 text-neutral-600 dark:text-neutral-400">Transaction ID or reference ID to look up within the authenticated project context</td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
 
-          {/* Response Format Tab */}
-          <TabsContent value="responses" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Success Response (Transaction Found)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="relative">
-                  <pre className="p-4 bg-muted rounded text-xs overflow-x-auto">
-{`{
+                <div>
+                  <h3 className="text-sm font-semibold text-neutral-900 dark:text-white mb-4 uppercase tracking-wide">POST Body</h3>
+                  <div className="border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-neutral-50 dark:bg-neutral-800">
+                          <th className="text-left px-5 py-4 font-semibold text-neutral-900 dark:text-white">Field</th>
+                          <th className="text-left px-5 py-4 font-semibold text-neutral-900 dark:text-white">Type</th>
+                          <th className="text-left px-5 py-4 font-semibold text-neutral-900 dark:text-white">Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="border-t border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
+                          <td className="px-5 py-4">
+                            <code className="text-sm font-mono text-orange-600 dark:text-orange-400">txnId</code>
+                            <span className="ml-2 text-xs text-red-600 dark:text-red-400 font-medium">required</span>
+                          </td>
+                          <td className="px-5 py-4 text-neutral-600 dark:text-neutral-400">string</td>
+                          <td className="px-5 py-4 text-neutral-600 dark:text-neutral-400">Transaction ID to verify or record for later fulfillment</td>
+                        </tr>
+                        <tr className="border-t border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
+                          <td className="px-5 py-4"><code className="text-sm font-mono text-orange-600 dark:text-orange-400">source</code></td>
+                          <td className="px-5 py-4 text-neutral-600 dark:text-neutral-400">string</td>
+                          <td className="px-5 py-4 text-neutral-600 dark:text-neutral-400">Optional source such as MANUAL or OCR for audit metadata</td>
+                        </tr>
+                        <tr className="border-t border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
+                          <td className="px-5 py-4"><code className="text-sm font-mono text-orange-600 dark:text-orange-400">ocrText</code></td>
+                          <td className="px-5 py-4 text-neutral-600 dark:text-neutral-400">string</td>
+                          <td className="px-5 py-4 text-neutral-600 dark:text-neutral-400">Optional raw OCR or operator note stored as metadata on the verification request</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid xl:grid-cols-2 gap-8">
+                <div>
+                  <h3 className="text-sm font-semibold text-neutral-900 dark:text-white mb-4 uppercase tracking-wide">GET Example</h3>
+                  <div className="relative">
+                    <pre className="bg-neutral-900 dark:bg-neutral-800 text-neutral-100 p-5 rounded-xl text-sm overflow-x-auto font-mono border border-neutral-800 dark:border-neutral-700">
+                      <code>{getVerifyCurl}</code>
+                    </pre>
+                    <button
+                      onClick={() => copyToClipboard(getVerifyCurl, 'GET example')}
+                      className="absolute top-4 right-4 p-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 transition-colors"
+                    >
+                      {copied === 'GET example' ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4 text-neutral-400" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-semibold text-neutral-900 dark:text-white mb-4 uppercase tracking-wide">POST Example</h3>
+                  <div className="relative">
+                    <pre className="bg-neutral-900 dark:bg-neutral-800 text-neutral-100 p-5 rounded-xl text-sm overflow-x-auto font-mono border border-neutral-800 dark:border-neutral-700">
+                      <code>{postVerifyCurl}</code>
+                    </pre>
+                    <button
+                      onClick={() => copyToClipboard(postVerifyCurl, 'POST example')}
+                      className="absolute top-4 right-4 p-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 transition-colors"
+                    >
+                      {copied === 'POST example' ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4 text-neutral-400" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section id="responses" className="mb-16 pb-16 border-b border-neutral-200 dark:border-neutral-800">
+              <h2 className="text-2xl sm:text-3xl font-bold text-neutral-900 dark:text-white mb-3">Responses</h2>
+              <p className="text-neutral-600 dark:text-neutral-400 mb-10 text-lg">
+                CheckPay returns JSON responses for both status checks and recorded verification attempts.
+              </p>
+
+              <div className="space-y-10">
+                <div>
+                  <div className="flex items-center gap-3 mb-4">
+                    <span className="px-3 py-1.5 text-xs font-bold rounded-md bg-green-500 text-white">200</span>
+                    <h3 className="font-semibold text-neutral-900 dark:text-white text-lg">Transaction Found</h3>
+                  </div>
+                  <pre className="bg-neutral-900 dark:bg-neutral-800 text-neutral-100 p-5 rounded-xl text-sm overflow-x-auto font-mono border border-neutral-800 dark:border-neutral-700">
+                    <code>{`{
   "success": true,
   "data": {
     "confirmed": true,
-    "txnId": "MP123456789",
-    "amount": 500.00,
-    "sender": "+2547****89",
-    "bank": "M-Pesa",
-    "receivedAt": "2025-01-06T10:30:00.000Z"
+    "matchType": "exact",
+    "txnId": "FT25315HZNYL",
+    "referenceTxnId": null,
+    "amount": 1000.5,
+    "sender": "+2519****45",
+    "bank": "CBE",
+    "receivedAt": "2026-05-03T10:30:00.000Z",
+    "source": "SMS"
   }
-}`}
+}`}</code>
                   </pre>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="absolute top-2 right-2"
-                    onClick={() => copyToClipboard(
-                      JSON.stringify({
-                        success: true,
-                        data: {
-                          confirmed: true,
-                          txnId: "MP123456789",
-                          amount: 500.00,
-                          sender: "+2547****89",
-                          bank: "M-Pesa",
-                          receivedAt: "2025-01-06T10:30:00.000Z"
-                        }
-                      }, null, 2),
-                      'Success response'
-                    )}
-                  >
-                    {copied === 'Success response' ? (
-                      <Check className="h-4 w-4" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </Button>
                 </div>
-                <div className="mt-4 space-y-2">
-                  <h4 className="font-semibold text-sm">Response Fields:</h4>
-                  <ul className="text-xs space-y-1 text-muted-foreground">
-                    <li><code className="bg-background px-1 rounded">confirmed</code> - Always <code className="bg-background px-1 rounded">true</code> when transaction exists</li>
-                    <li><code className="bg-background px-1 rounded">txnId</code> - The transaction ID you queried</li>
-                    <li><code className="bg-background px-1 rounded">amount</code> - Transaction amount</li>
-                    <li><code className="bg-background px-1 rounded">sender</code> - Masked phone number (e.g., +2547****89)</li>
-                    <li><code className="bg-background px-1 rounded">bank</code> - Bank/service name (e.g., "M-Pesa", "Airtel Money")</li>
-                    <li><code className="bg-background px-1 rounded">receivedAt</code> - ISO 8601 timestamp when transaction was received</li>
-                  </ul>
-                </div>
-              </CardContent>
-            </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Not Found Response</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="relative">
-                  <pre className="p-4 bg-muted rounded text-xs overflow-x-auto">
-{`{
+                <div>
+                  <div className="flex items-center gap-3 mb-4">
+                    <span className="px-3 py-1.5 text-xs font-bold rounded-md bg-blue-500 text-white">200</span>
+                    <h3 className="font-semibold text-neutral-900 dark:text-white text-lg">Verification Recorded</h3>
+                  </div>
+                  <pre className="bg-neutral-900 dark:bg-neutral-800 text-neutral-100 p-5 rounded-xl text-sm overflow-x-auto font-mono border border-neutral-800 dark:border-neutral-700">
+                    <code>{`{
   "success": true,
   "data": {
     "confirmed": false,
-    "message": "Transaction not found"
+    "message": "Verification recorded. Transaction will be marked as verified when received.",
+    "pendingVerificationId": "pv_123456789",
+    "expiresAt": "2026-05-04T10:30:00.000Z"
   }
-}`}
+}`}</code>
                   </pre>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="absolute top-2 right-2"
-                    onClick={() => copyToClipboard(
-                      JSON.stringify({
-                        success: true,
-                        data: {
-                          confirmed: false,
-                          message: "Transaction not found"
-                        }
-                      }, null, 2),
-                      'Not found response'
-                    )}
-                  >
-                    {copied === 'Not found response' ? (
-                      <Check className="h-4 w-4" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </Button>
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">
-                  This means the transaction ID doesn't exist in your account. The user may not have paid yet, or the transaction hasn't been scraped by the mobile app.
-                </p>
-              </CardContent>
-            </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Error Responses</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
                 <div>
-                  <h4 className="font-semibold text-sm mb-2">401 - Invalid API Key</h4>
-                  <pre className="p-3 bg-muted rounded text-xs overflow-x-auto">
-{`{
-  "success": false,
-  "error": "Invalid API key"
-}`}
-                  </pre>
-                </div>
-                <div>
-                  <h4 className="font-semibold text-sm mb-2">400 - Missing Transaction ID</h4>
-                  <pre className="p-3 bg-muted rounded text-xs overflow-x-auto">
-{`{
-  "success": false,
-  "error": "Transaction ID is required"
-}`}
-                  </pre>
-                </div>
-                <div>
-                  <h4 className="font-semibold text-sm mb-2">429 - Rate Limit Exceeded</h4>
-                  <pre className="p-3 bg-muted rounded text-xs overflow-x-auto">
-{`{
-  "success": false,
-  "error": "Rate limit exceeded. 100 requests per month.",
-  "limit": 100,
-  "remaining": 0,
-  "usage": {
-    "app": { "today": 5, "month": 45 },
-    "dev": { "today": 12, "month": 78 },
-    "total": 123
+                  <div className="flex items-center gap-3 mb-4">
+                    <span className="px-3 py-1.5 text-xs font-bold rounded-md bg-amber-500 text-white">200</span>
+                    <h3 className="font-semibold text-neutral-900 dark:text-white text-lg">Transaction Not Found</h3>
+                  </div>
+                  <pre className="bg-neutral-900 dark:bg-neutral-800 text-neutral-100 p-5 rounded-xl text-sm overflow-x-auto font-mono border border-neutral-800 dark:border-neutral-700">
+                    <code>{`{
+  "success": true,
+  "data": {
+    "confirmed": false,
+    "message": "Transaction not found."
   }
-}`}
+}`}</code>
                   </pre>
                 </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
+
+                <div>
+                  <h3 className="font-semibold text-neutral-900 dark:text-white text-lg mb-5">Error Codes</h3>
+                  <div className="space-y-4">
+                    <div className="flex items-start gap-4 p-4 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
+                      <span className="px-3 py-1.5 text-xs font-bold rounded-md bg-red-500 text-white shrink-0">400</span>
+                      <div>
+                        <div className="font-medium text-neutral-900 dark:text-white mb-1">Bad Request</div>
+                        <div className="text-sm text-neutral-600 dark:text-neutral-400">The request did not include a valid transaction identifier.</div>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-4 p-4 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
+                      <span className="px-3 py-1.5 text-xs font-bold rounded-md bg-red-500 text-white shrink-0">401</span>
+                      <div>
+                        <div className="font-medium text-neutral-900 dark:text-white mb-1">Unauthorized</div>
+                        <div className="text-sm text-neutral-600 dark:text-neutral-400">The API key is missing or invalid.</div>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-4 p-4 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
+                      <span className="px-3 py-1.5 text-xs font-bold rounded-md bg-red-500 text-white shrink-0">403</span>
+                      <div>
+                        <div className="font-medium text-neutral-900 dark:text-white mb-1">Forbidden</div>
+                        <div className="text-sm text-neutral-600 dark:text-neutral-400">The project or user is authenticated but does not have active credit or permission to complete the verification action.</div>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-4 p-4 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
+                      <span className="px-3 py-1.5 text-xs font-bold rounded-md bg-red-500 text-white shrink-0">429</span>
+                      <div>
+                        <div className="font-medium text-neutral-900 dark:text-white mb-1">Too Many Requests</div>
+                        <div className="text-sm text-neutral-600 dark:text-neutral-400">The request rate for the authenticated plan has been exceeded.</div>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-4 p-4 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
+                      <span className="px-3 py-1.5 text-xs font-bold rounded-md bg-red-500 text-white shrink-0">500</span>
+                      <div>
+                        <div className="font-medium text-neutral-900 dark:text-white mb-1">Server Error</div>
+                        <div className="text-sm text-neutral-600 dark:text-neutral-400">CheckPay could not complete the request due to an internal error. Retry or contact support if the issue persists.</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section id="code-examples" className="mb-16 pb-16 border-b border-neutral-200 dark:border-neutral-800">
+              <h2 className="text-2xl sm:text-3xl font-bold text-neutral-900 dark:text-white mb-3">Code Examples</h2>
+              <p className="text-neutral-600 dark:text-neutral-400 mb-10 text-lg">
+                Use these examples as a starting point for the standard CheckPay verification flow.
+              </p>
+
+              <div className="space-y-10">
+                <div>
+                  <h3 className="text-lg font-semibold text-neutral-900 dark:text-white mb-4">Node.js</h3>
+                  <div className="relative">
+                    <pre className="bg-neutral-900 dark:bg-neutral-800 text-neutral-100 p-5 rounded-xl text-sm overflow-x-auto font-mono leading-relaxed border border-neutral-800 dark:border-neutral-700">
+                      <code>{nodeExample}</code>
+                    </pre>
+                    <button
+                      onClick={() => copyToClipboard(nodeExample, 'nodejs')}
+                      className="absolute top-4 right-4 p-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 transition-colors"
+                    >
+                      {copied === 'nodejs' ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4 text-neutral-400" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-lg font-semibold text-neutral-900 dark:text-white mb-4">Python</h3>
+                  <div className="relative">
+                    <pre className="bg-neutral-900 dark:bg-neutral-800 text-neutral-100 p-5 rounded-xl text-sm overflow-x-auto font-mono leading-relaxed border border-neutral-800 dark:border-neutral-700">
+                      <code>{pythonExample}</code>
+                    </pre>
+                    <button
+                      onClick={() => copyToClipboard(pythonExample, 'python')}
+                      className="absolute top-4 right-4 p-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 transition-colors"
+                    >
+                      {copied === 'python' ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4 text-neutral-400" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-lg font-semibold text-neutral-900 dark:text-white mb-4">PHP</h3>
+                  <div className="relative">
+                    <pre className="bg-neutral-900 dark:bg-neutral-800 text-neutral-100 p-5 rounded-xl text-sm overflow-x-auto font-mono leading-relaxed border border-neutral-800 dark:border-neutral-700">
+                      <code>{phpExample}</code>
+                    </pre>
+                    <button
+                      onClick={() => copyToClipboard(phpExample, 'php')}
+                      className="absolute top-4 right-4 p-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 transition-colors"
+                    >
+                      {copied === 'php' ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4 text-neutral-400" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section id="mobile-app" className="mb-16 pb-16 border-b border-neutral-200 dark:border-neutral-800">
+              <h2 className="text-2xl sm:text-3xl font-bold text-neutral-900 dark:text-white mb-3">Mobile App</h2>
+              <p className="text-neutral-600 dark:text-neutral-400 mb-10 text-lg">
+                The Android app is the operational bridge between real transaction messages on a device and the project data that your API verifies later.
+              </p>
+
+              <div className="grid lg:grid-cols-2 gap-10 mb-10">
+                <div className="p-8 rounded-2xl bg-gradient-to-br from-orange-50 to-amber-50 dark:from-neutral-900 dark:to-neutral-800 border border-orange-200 dark:border-neutral-700">
+                  <div className="flex items-center gap-3 mb-6">
+                    <Smartphone className="h-6 w-6 text-orange-500" />
+                    <h3 className="text-xl font-semibold text-neutral-900 dark:text-white">Scan to Download</h3>
+                  </div>
+                  <div className="flex justify-center">
+                    <div className="p-6 bg-white rounded-2xl shadow-lg">
+                      <QRCodeSVG value="https://checkpay.live/download/app" size={180} level="H" includeMargin={false} />
+                    </div>
+                  </div>
+                  <p className="text-center text-sm text-neutral-500 dark:text-neutral-400 mt-4">Scan with your phone camera</p>
+                </div>
+
+                <div className="p-8 rounded-2xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                  <div className="flex items-center gap-3 mb-6">
+                    <Download className="h-6 w-6 text-orange-500" />
+                    <h3 className="text-xl font-semibold text-neutral-900 dark:text-white">Direct Download</h3>
+                  </div>
+                  <p className="text-neutral-600 dark:text-neutral-400 mb-6">
+                    Install the Android app on the phone that actually receives bank or mobile money messages for the project you want to verify against.
+                  </p>
+                  <Button
+                    size="lg"
+                    className="w-full bg-orange-500 hover:bg-orange-600 text-white font-semibold py-6"
+                    onClick={() => {
+                      window.location.href = '/downloads/checkpay.apk';
+                    }}
+                  >
+                    <Download className="h-5 w-5 mr-2" />
+                    Download APK for Android
+                  </Button>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-4 text-center">Requires Android 8.0 or higher</p>
+                </div>
+              </div>
+
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                <div className="p-5 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                  <h4 className="font-semibold text-neutral-900 dark:text-white mb-2">Transaction Capture</h4>
+                  <p className="text-sm text-neutral-600 dark:text-neutral-400">Reads supported financial notifications and transaction messages from the device</p>
+                </div>
+                <div className="p-5 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                  <h4 className="font-semibold text-neutral-900 dark:text-white mb-2">Project Sync</h4>
+                  <p className="text-sm text-neutral-600 dark:text-neutral-400">Pushes captured transactions into the right account or project context</p>
+                </div>
+                <div className="p-5 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                  <h4 className="font-semibold text-neutral-900 dark:text-white mb-2">Manual Review Support</h4>
+                  <p className="text-sm text-neutral-600 dark:text-neutral-400">Lets operators verify or record transactions when scanning, OCR, or manual workflows are needed</p>
+                </div>
+                <div className="p-5 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                  <h4 className="font-semibold text-neutral-900 dark:text-white mb-2">Cluster-Aware Usage</h4>
+                  <p className="text-sm text-neutral-600 dark:text-neutral-400">Supports owner-linked and developer-managed flows when cluster projects are in use</p>
+                </div>
+              </div>
+            </section>
+
+            <section id="security" className="mb-16 pb-16 border-b border-neutral-200 dark:border-neutral-800">
+              <h2 className="text-2xl sm:text-3xl font-bold text-neutral-900 dark:text-white mb-3">Security</h2>
+              <p className="text-neutral-600 dark:text-neutral-400 mb-10 text-lg">
+                The API and phone ingestion flow should be operated as a backend-to-backend integration, with project keys protected and verification decisions made server-side.
+              </p>
+
+              <div className="grid sm:grid-cols-2 gap-5 mb-10">
+                <div className="p-6 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                  <h3 className="font-semibold text-neutral-900 dark:text-white mb-2">HTTPS</h3>
+                  <p className="text-sm text-neutral-600 dark:text-neutral-400">Use encrypted transport for every verification request.</p>
+                </div>
+                <div className="p-6 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                  <h3 className="font-semibold text-neutral-900 dark:text-white mb-2">Scoped Project Keys</h3>
+                  <p className="text-sm text-neutral-600 dark:text-neutral-400">Project API keys keep verification requests tied to the intended project context.</p>
+                </div>
+                <div className="p-6 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                  <h3 className="font-semibold text-neutral-900 dark:text-white mb-2">Backend Validation</h3>
+                  <p className="text-sm text-neutral-600 dark:text-neutral-400">Confirm transaction IDs and returned amounts in your backend before marking orders as paid.</p>
+                </div>
+                <div className="p-6 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
+                  <h3 className="font-semibold text-neutral-900 dark:text-white mb-2">Usage Controls</h3>
+                  <p className="text-sm text-neutral-600 dark:text-neutral-400">Plan credit and rate limits protect the service from abuse and unexpected load.</p>
+                </div>
+              </div>
+
+              <div className="p-6 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                <h3 className="font-semibold text-neutral-900 dark:text-white mb-4">Best Practices</h3>
+                <ul className="text-sm text-neutral-600 dark:text-neutral-400 space-y-3">
+                  {securityPractices.map((practice) => (
+                    <li className="flex items-start gap-3" key={practice}>
+                      <ArrowRight className="h-4 w-4 mt-0.5 flex-shrink-0 text-amber-600 dark:text-amber-500" />
+                      <span>{practice}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </section>
+
+            <section id="rate-limits" className="mb-16">
+              <h2 className="text-2xl sm:text-3xl font-bold text-neutral-900 dark:text-white mb-3">Rate Limits</h2>
+              <p className="text-neutral-600 dark:text-neutral-400 mb-10 text-lg">
+                Limits depend on your plan and available verification credit. Use the dashboard package view to monitor remaining usage.
+              </p>
+
+              <div className="border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-neutral-50 dark:bg-neutral-800">
+                      <th className="text-left px-6 py-4 font-semibold text-neutral-900 dark:text-white">Plan</th>
+                      <th className="text-left px-6 py-4 font-semibold text-neutral-900 dark:text-white">Indicative Limit</th>
+                      <th className="text-left px-6 py-4 font-semibold text-neutral-900 dark:text-white">Best For</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
+                      <td className="px-6 py-4 font-medium text-neutral-900 dark:text-white">Free</td>
+                      <td className="px-6 py-4 text-neutral-600 dark:text-neutral-400">Low-volume testing and initial setup</td>
+                      <td className="px-6 py-4 text-neutral-600 dark:text-neutral-400">Sandbox-style evaluation and integration trials</td>
+                    </tr>
+                    <tr className="border-t border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
+                      <td className="px-6 py-4 font-medium text-neutral-900 dark:text-white">Premium / Active Package</td>
+                      <td className="px-6 py-4 text-neutral-600 dark:text-neutral-400">Higher operational capacity based on package allocation</td>
+                      <td className="px-6 py-4 text-neutral-600 dark:text-neutral-400">Production integrations, operator workflows, and higher verification volume</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </main>
       </div>
-    </DashboardLayout>
+    </div>
+  );
+
+  if (currentUser) {
+    return <DashboardLayout>{content}</DashboardLayout>;
+  }
+
+  return (
+    <div className="min-h-screen bg-white dark:bg-neutral-950 transition-colors">
+      <header className="sticky top-0 z-[100] border-b border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-950/80 backdrop-blur-xl">
+        <div className="container mx-auto px-4 py-3 md:py-4 flex items-center justify-between">
+          <Link to="/" className="flex items-center gap-2">
+            <img
+              src={logoPath}
+              alt="CheckPay Logo"
+              className="h-8 md:h-12 w-auto min-w-[100px] md:min-w-[120px] object-contain"
+            />
+          </Link>
+          <div className="hidden md:flex items-center gap-1">
+            <Link to="/api-docs">
+              <Button variant="ghost" size="sm" className="text-orange-500">Docs</Button>
+            </Link>
+            <Link to="/products">
+              <Button variant="ghost" size="sm">Products</Button>
+            </Link>
+            <Link to="/pricing">
+              <Button variant="ghost" size="sm">Pricing</Button>
+            </Link>
+            <div className="w-px h-6 bg-border/60 mx-2" />
+            <ThemeToggle />
+            <Link to="/auth/login">
+              <Button variant="ghost" size="sm">Login</Button>
+            </Link>
+            <Link to="/auth/register">
+              <Button size="sm" className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-lg shadow-orange-500/30">
+                Get Started
+              </Button>
+            </Link>
+          </div>
+          <div className="flex md:hidden items-center gap-2">
+            <ThemeToggle />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            >
+              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </Button>
+          </div>
+        </div>
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-neutral-200 dark:border-neutral-800 bg-white/95 dark:bg-neutral-950/95 backdrop-blur-xl">
+            <div className="container mx-auto px-4 py-4 space-y-2">
+              <Link to="/api-docs" onClick={() => setMobileMenuOpen(false)}>
+                <Button variant="ghost" className="w-full justify-start text-orange-500">Docs</Button>
+              </Link>
+              <Link to="/products" onClick={() => setMobileMenuOpen(false)}>
+                <Button variant="ghost" className="w-full justify-start">Products</Button>
+              </Link>
+              <Link to="/pricing" onClick={() => setMobileMenuOpen(false)}>
+                <Button variant="ghost" className="w-full justify-start">Pricing</Button>
+              </Link>
+              <Link to="/auth/login" onClick={() => setMobileMenuOpen(false)}>
+                <Button variant="ghost" className="w-full justify-start">Login</Button>
+              </Link>
+              <Link to="/auth/register" onClick={() => setMobileMenuOpen(false)}>
+                <Button className="w-full bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white">
+                  Get Started
+                </Button>
+              </Link>
+            </div>
+          </div>
+        )}
+      </header>
+      {content}
+    </div>
   );
 }
-

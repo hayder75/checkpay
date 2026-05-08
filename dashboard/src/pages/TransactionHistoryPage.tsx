@@ -1,231 +1,376 @@
-import { useEffect, useState } from 'react';
-import DashboardLayout from '@/components/layouts/DashboardLayout';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { dashboardAPI } from '@/lib';
-import { useToast } from '@/components/ui/use-toast';
-import { Search, CheckCircle2, XCircle, Filter } from 'lucide-react';
+import { useEffect, useMemo, useState } from "react";
+import DashboardLayout from "@/components/layouts/DashboardLayout";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { dashboardAPI, projectAPI, authAPI } from "@/lib";
+import { useToast } from "@/components/ui/use-toast";
+import { Search, Filter, Download, ArrowUpDown, Eye } from "lucide-react";
+
+function LoadingTable() {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Date</TableHead>
+          <TableHead>Txn ID</TableHead>
+          <TableHead>Sender</TableHead>
+          <TableHead>Bank</TableHead>
+          <TableHead>Amount</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead>Confirmation</TableHead>
+          <TableHead>Action</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {[...Array(5)].map((_, i) => (
+          <TableRow key={i}>
+            {[...Array(8)].map((_, j) => (
+              <TableCell key={j}>
+                <Skeleton className="h-4 w-20" />
+              </TableCell>
+            ))}
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+const statusVariants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+  completed: "default",
+  pending: "outline",
+  failed: "destructive",
+  processing: "secondary",
+};
+
+const formatReadableDate = (value?: string) => {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+};
+
+function TransactionDetailsDialog({ transaction, open, onOpenChange }: { transaction: any; open: boolean; onOpenChange: (open: boolean) => void }) {
+  if (!transaction) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Transaction Details</DialogTitle>
+          <DialogDescription>Complete information for this transaction</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label className="text-muted-foreground">Transaction ID</Label>
+              <p className="font-mono text-sm break-all">{transaction.transactionId || transaction.txnId || "-"}</p>
+            </div>
+            <div>
+              <Label className="text-muted-foreground">Date/Time</Label>
+              <p className="text-sm">{formatReadableDate(transaction.createdAt)}</p>
+            </div>
+            <div>
+              <Label className="text-muted-foreground">Sender</Label>
+              <p className="font-mono text-sm">{transaction.sender || transaction.from || "-"}</p>
+            </div>
+            <div>
+              <Label className="text-muted-foreground">Receiver</Label>
+              <p className="font-mono text-sm">{transaction.to || transaction.receiver || "-"}</p>
+            </div>
+            <div>
+              <Label className="text-muted-foreground">Bank</Label>
+              <p className="text-sm">{transaction.bank || transaction.senderBank || transaction.receiverBank || "-"}</p>
+            </div>
+            <div>
+              <Label className="text-muted-foreground">Amount</Label>
+              <p className="font-mono text-sm">{transaction.amount ? `${Number(transaction.amount).toLocaleString()} ${transaction.currency || "ETB"}` : "-"}</p>
+            </div>
+            <div>
+              <Label className="text-muted-foreground">Status</Label>
+              <p className="text-sm"><Badge variant={statusVariants[transaction.status] || "outline"}>{transaction.status}</Badge></p>
+            </div>
+            <div>
+              <Label className="text-muted-foreground">Source</Label>
+              <p className="text-sm">{transaction.source || transaction.inputSource || "-"}</p>
+            </div>
+            <div>
+              <Label className="text-muted-foreground">Verified</Label>
+              <p className="text-sm">{transaction.verifiedAt ? <span className="text-green-600">Verified</span> : <span className="text-yellow-600">Pending</span>}</p>
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export default function TransactionHistoryPage() {
   const { toast } = useToast();
   const [transactions, setTransactions] = useState<any[]>([]);
+  const [pendingVerifications, setPendingVerifications] = useState<any[]>([]);
+  const [projects, setProjects] = useState<any[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [userRole, setUserRole] = useState<string>("");
   const [loading, setLoading] = useState(true);
-  const [page] = useState(1);
-  const [search, setSearch] = useState('');
-  const [verifiedFilter, setVerifiedFilter] = useState<'all' | 'verified' | 'unverified'>('all');
-  const [stats, setStats] = useState<any>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [confirmationFilter, setConfirmationFilter] = useState<string>("all");
+  const [bankFilter, setBankFilter] = useState<string>("all");
+  const [page, setPage] = useState(1);
+  const [selectedTransaction, setSelectedTransaction] = useState<any>(null);
+  const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
 
-  useEffect(() => {
-    loadTransactions();
-  }, [page, verifiedFilter, search]);
-
-  const loadTransactions = async () => {
+  const loadData = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const params: any = { page, limit: 100 };
-      if (verifiedFilter !== 'all') {
-        params.verified = verifiedFilter === 'verified';
+      const userRes = await authAPI.getMe();
+      setUserRole(userRes.data.data.role);
+
+      if (userRes.data.data.role === "DEVELOPER") {
+        const projectsRes = await projectAPI.getAll();
+        setProjects(projectsRes.data.data || []);
       }
-      if (search.trim()) {
-        params.search = search.trim();
+
+      const params: any = { page, limit: 20 };
+      if (userRes.data.data.role === "DEVELOPER" && selectedProjectId) {
+        params.projectId = selectedProjectId;
       }
-      const response = await dashboardAPI.getTransactions(params);
-      setTransactions(response.data.data.transactions);
-      setStats(response.data.data.stats);
+
+      const [txnRes, pendingRes] = await Promise.all([
+        dashboardAPI.getTransactions(params),
+        dashboardAPI.getPendingVerifications(params).catch(() => ({ data: { data: [] } })),
+      ]);
+
+      setTransactions(txnRes.data.data.transactions || []);
+      setPendingVerifications(pendingRes.data.data || []);
     } catch (error: any) {
-      console.error('Transaction load error:', error);
-      let errorMessage = 'Failed to load transactions';
-      
-      if (error.code === 'ERR_NETWORK' || error.message?.includes('CORS') || error.message?.includes('Network Error')) {
-        errorMessage = 'Network error: Could not connect to backend. Check if backend is running on http://localhost:3000';
-      } else if (error.response?.status === 401) {
-        errorMessage = 'Authentication required. Please log in again.';
-      } else if (error.response?.data?.error) {
-        errorMessage = error.response.data.error;
-      } else if (error.message) {
-        errorMessage = error.message;
-      }
-      
-      toast({
-        title: 'Error',
-        description: errorMessage,
-        variant: 'destructive',
-      });
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to load transactions", variant: "destructive" });
     } finally {
       setLoading(false);
     }
   };
 
-  if (loading) {
-    return (
-      <DashboardLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-muted-foreground">Loading...</div>
-        </div>
-      </DashboardLayout>
-    );
-  }
+  useEffect(() => {
+    loadData();
+  }, [page, selectedProjectId]);
+
+  const allTransactions = [
+    ...transactions,
+    ...pendingVerifications.map((p) => ({
+      ...(p.transaction || p),
+      _isPending: true,
+      status: "pending",
+      type: "verification",
+    })),
+  ];
+
+  const availableBanks = useMemo(() => {
+    const banks = new Set<string>();
+    allTransactions.forEach((t) => {
+      const bank = (t.bank || t.senderBank || t.receiverBank || "").toString().trim();
+      if (bank) banks.add(bank);
+    });
+    return Array.from(banks).sort((a, b) => a.localeCompare(b));
+  }, [allTransactions]);
+
+  const filteredTransactions = allTransactions.filter((t) => {
+    const search = searchTerm.toLowerCase();
+    const txBank = String(t.bank || t.senderBank || t.receiverBank || "").trim();
+
+    const matchesSearch =
+      !search ||
+      String(t.sender || t.from || t.sendFrom || "").toLowerCase().includes(search) ||
+      txBank.toLowerCase().includes(search) ||
+      String(t.transactionId || t.txnId || "").toLowerCase().includes(search);
+
+    const matchesStatus = statusFilter === "all" || t.status === statusFilter;
+    const isVerified = !!t.verifiedAt || t._isPending === false;
+    const matchesConfirmation =
+      confirmationFilter === "all" ||
+      (confirmationFilter === "verified" && isVerified) ||
+      (confirmationFilter === "pending" && !isVerified);
+
+    const matchesBank = bankFilter === "all" || txBank === bankFilter;
+
+    return matchesSearch && matchesStatus && matchesConfirmation && matchesBank;
+  });
+
+  const handleRowClick = (transaction: any) => {
+    setSelectedTransaction(transaction);
+    setDetailsDialogOpen(true);
+  };
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold">Transaction History</h1>
-          <p className="text-muted-foreground">All your parsed transactions</p>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Transactions</h1>
+            <p className="text-muted-foreground mt-1">View and manage your transaction history</p>
+          </div>
+          <Button variant="outline" size="sm">
+            <Download className="h-4 w-4 mr-2" />
+            Export
+          </Button>
         </div>
 
-        {/* Statistics Cards */}
-        {stats && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription>Total Transactions</CardDescription>
-                <CardTitle className="text-2xl">{stats.totalCount}</CardTitle>
-              </CardHeader>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription>Verified</CardDescription>
-                <CardTitle className="text-2xl text-green-600">{stats.verifiedCount}</CardTitle>
-              </CardHeader>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription>Unverified</CardDescription>
-                <CardTitle className="text-2xl text-orange-600">{stats.unverifiedCount}</CardTitle>
-              </CardHeader>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription>Total Amount</CardDescription>
-                <CardTitle className="text-2xl">ETB {stats.totalAmount?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}</CardTitle>
-              </CardHeader>
-            </Card>
-          </div>
-        )}
-
-        {/* Amount Breakdown */}
-        {stats && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Verified Amount</CardTitle>
-                <CardDescription className="text-2xl font-bold text-green-600">
-                  ETB {stats.verifiedAmount?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
-                </CardDescription>
-              </CardHeader>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Unverified Amount</CardTitle>
-                <CardDescription className="text-2xl font-bold text-orange-600">
-                  ETB {stats.unverifiedAmount?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
-                </CardDescription>
-              </CardHeader>
-            </Card>
-          </div>
-        )}
+        <Separator />
 
         <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>Transactions</CardTitle>
-                <CardDescription>Search and filter your transactions</CardDescription>
+          <CardContent className="pt-6">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search by sender, bank, or transaction ID..."
+                    className="pl-10"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
               </div>
+              <Select value={bankFilter} onValueChange={setBankFilter}>
+                <SelectTrigger className="w-full sm:w-44">
+                  <SelectValue placeholder="Bank" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Banks</SelectItem>
+                  {availableBanks.map((bank) => (
+                    <SelectItem key={bank} value={bank}>{bank}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-full sm:w-40">
+                  <SelectValue placeholder="Filter by status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="failed">Failed</SelectItem>
+                  <SelectItem value="processing">Processing</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={confirmationFilter} onValueChange={setConfirmationFilter}>
+                <SelectTrigger className="w-full sm:w-40">
+                  <SelectValue placeholder="Confirmation" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="verified">Verified</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                </SelectContent>
+              </Select>
+              {userRole === "DEVELOPER" && projects.length > 0 && (
+                <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+                  <SelectTrigger className="w-full sm:w-64">
+                    <SelectValue placeholder="Select project" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Projects</SelectItem>
+                    {projects.map((project) => (
+                      <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-0">
+            <CardTitle>Transaction History</CardTitle>
+            <CardDescription>{filteredTransactions.length} transaction{filteredTransactions.length !== 1 ? "s" : ""} found</CardDescription>
           </CardHeader>
           <CardContent>
-            {/* Search and Filter */}
-            <div className="flex gap-4 mb-6">
-              <div className="flex-1 relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
-                <Input
-                  placeholder="Search by TXN ID, sender, or bank..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  variant={verifiedFilter === 'all' ? 'default' : 'outline'}
-                  onClick={() => setVerifiedFilter('all')}
-                  size="sm"
-                >
-                  <Filter className="h-4 w-4 mr-2" />
-                  All
-                </Button>
-                <Button
-                  variant={verifiedFilter === 'verified' ? 'default' : 'outline'}
-                  onClick={() => setVerifiedFilter('verified')}
-                  size="sm"
-                >
-                  <CheckCircle2 className="h-4 w-4 mr-2" />
-                  Verified
-                </Button>
-                <Button
-                  variant={verifiedFilter === 'unverified' ? 'default' : 'outline'}
-                  onClick={() => setVerifiedFilter('unverified')}
-                  size="sm"
-                >
-                  <XCircle className="h-4 w-4 mr-2" />
-                  Unverified
-                </Button>
-              </div>
-            </div>
-
             {loading ? (
-              <div className="text-center py-12 text-muted-foreground">Loading...</div>
-            ) : transactions.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                {search || verifiedFilter !== 'all' ? 'No transactions match your filters' : 'No transactions yet'}
+              <LoadingTable />
+            ) : filteredTransactions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <Filter className="h-12 w-12 text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No transactions found</p>
+                <p className="text-sm text-muted-foreground mt-1">Try adjusting your search or filters</p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b">
-                      <th className="text-left p-2">Status</th>
-                      <th className="text-left p-2">Date</th>
-                      <th className="text-left p-2">Amount</th>
-                      <th className="text-left p-2">Sender</th>
-                      <th className="text-left p-2">Bank</th>
-                      <th className="text-left p-2">TXN ID</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {transactions.map((txn) => (
-                      <tr key={txn.id} className="border-b hover:bg-muted/50">
-                        <td className="p-2">
-                          {txn.verified ? (
-                            <span className="inline-flex items-center gap-1 text-green-600">
-                              <CheckCircle2 className="h-4 w-4" />
-                              <span className="text-xs font-medium">Verified</span>
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-orange-600">
-                              <XCircle className="h-4 w-4" />
-                              <span className="text-xs font-medium">Unverified</span>
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-2">
-                          {new Date(txn.receivedAt).toLocaleString()}
-                        </td>
-                        <td className="p-2 font-medium">ETB {txn.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                        <td className="p-2">{txn.sender}</td>
-                        <td className="p-2">{txn.bank || '-'}</td>
-                        <td className="p-2 font-mono text-sm">{txn.txnId}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-56">
+                      <Button variant="ghost" size="sm" className="-ml-4 h-8 font-normal">
+                        Date <ArrowUpDown className="ml-2 h-3 w-3" />
+                      </Button>
+                    </TableHead>
+                    <TableHead>Txn ID</TableHead>
+                    <TableHead>Sender</TableHead>
+                    <TableHead>Bank</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Confirmation</TableHead>
+                    <TableHead>Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredTransactions.map((transaction) => (
+                    <TableRow
+                      key={transaction.id || transaction.transactionId || transaction.txnId}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => handleRowClick(transaction)}
+                    >
+                      <TableCell className="font-mono text-sm">{formatReadableDate(transaction.createdAt)}</TableCell>
+                      <TableCell><code className="text-xs font-mono">{transaction.transactionId || transaction.txnId || "-"}</code></TableCell>
+                      <TableCell className="font-medium">{transaction.sender || transaction.from || transaction.sendFrom || "-"}</TableCell>
+                      <TableCell>{transaction.bank || transaction.senderBank || transaction.receiverBank || transaction.pattern?.bank || "-"}</TableCell>
+                      <TableCell className="text-right font-mono">{transaction.amount ? `${Number(transaction.amount).toLocaleString()} ${transaction.currency || "ETB"}` : "-"}</TableCell>
+                      <TableCell><Badge variant={statusVariants[transaction.status] || "outline"}>{transaction.status}</Badge></TableCell>
+                      <TableCell>
+                        {transaction._isPending ? (
+                          <Badge variant="secondary">Pending</Badge>
+                        ) : transaction.verifiedAt ? (
+                          <Badge variant="default">Verified</Badge>
+                        ) : (
+                          <Badge variant="outline">Unverified</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Button variant="ghost" size="icon"><Eye className="h-4 w-4" /></Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             )}
           </CardContent>
         </Card>
+
+        <TransactionDetailsDialog transaction={selectedTransaction} open={detailsDialogOpen} onOpenChange={setDetailsDialogOpen} />
+
+        {transactions.length > 0 && (
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">Page {page} of {Math.ceil(transactions.length / 20) || 1}</p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>Previous</Button>
+              <Button variant="outline" size="sm" disabled={transactions.length < 20} onClick={() => setPage((p) => p + 1)}>Next</Button>
+            </div>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

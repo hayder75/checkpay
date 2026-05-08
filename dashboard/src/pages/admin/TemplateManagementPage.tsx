@@ -5,10 +5,23 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { adminAPI } from '@/lib';
 import { useToast } from '@/components/ui/use-toast';
-import { Plus, Trash2, Edit, ArrowLeft, Crown } from 'lucide-react';
+import { Plus, Trash2, ArrowLeft, Crown, RefreshCw, Edit, Eye } from 'lucide-react';
 import DashboardLayout from '@/components/layouts/DashboardLayout';
+
+function LoadingSkeleton() {
+  return (
+    <Table>
+      <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Preview</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+      <TableBody>{[...Array(5)].map((_, i) => (<TableRow key={i}>{[...Array(4)].map((_, j) => (<TableCell key={j}><Skeleton className="h-4 w-20" /></TableCell>))}</TableRow>))}</TableBody>
+    </Table>
+  );
+}
 
 export default function TemplateManagementPage() {
   const { countryCode } = useParams<{ countryCode: string }>();
@@ -16,237 +29,124 @@ export default function TemplateManagementPage() {
   const { toast } = useToast();
   const [templates, setTemplates] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [formData, setFormData] = useState({
-    smsText: '',
-    name: '',
-    description: '',
-    requiredPlan: 'FREE' as 'FREE' | 'PREMIUM',
-  });
+  const [showForm, setShowForm] = useState(false);
+  const [formData, setFormData] = useState({ name: '', smsText: '', description: '', useAI: false });
 
-  useEffect(() => {
-    if (countryCode) {
-      loadTemplates();
-    }
-  }, [countryCode]);
+  useEffect(() => { if (countryCode) loadTemplates(); }, [countryCode]);
 
   const loadTemplates = async () => {
-    if (!countryCode) return;
     setLoading(true);
     try {
       const response = await adminAPI.getTemplates(countryCode);
-      setTemplates(response.data.data);
+      setTemplates(response.data.data || []);
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to load templates',
-        variant: 'destructive',
-      });
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to load templates", variant: "destructive" });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCreateTemplate = async () => {
-    if (!countryCode) return;
-    if (!formData.smsText || !formData.name || !formData.description) {
-      toast({
-        title: 'Error',
-        description: 'Please fill in all required fields',
-        variant: 'destructive',
-      });
-      return;
-    }
-
+  const handleCreate = async () => {
     try {
-      await adminAPI.createTemplate(countryCode, formData);
-      toast({
-        title: 'Success',
-        description: 'Template created successfully',
-      });
-      setShowCreateForm(false);
-      setFormData({ smsText: '', name: '', description: '', requiredPlan: 'FREE' });
+      await adminAPI.createTemplate({ ...formData, countryCode });
+      toast({ title: "Success", description: "Template created" });
+      setShowForm(false);
+      setFormData({ name: '', smsText: '', description: '', useAI: false });
       loadTemplates();
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to create template',
-        variant: 'destructive',
-      });
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to create", variant: "destructive" });
     }
   };
 
-  const handleDeleteTemplate = async (templateId: string) => {
-    if (!confirm('Are you sure you want to delete this template?')) return;
-
+  const handleDelete = async (id: string) => {
+    if (!confirm('Delete this template?')) return;
     try {
-      await adminAPI.deleteTemplate(templateId);
-      toast({
-        title: 'Success',
-        description: 'Template deleted successfully',
-      });
+      await adminAPI.deleteTemplate(id);
+      toast({ title: "Template deleted" });
       loadTemplates();
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to delete template',
-        variant: 'destructive',
-      });
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to delete", variant: "destructive" });
     }
   };
-
-  if (!countryCode) {
-    return (
-      <DashboardLayout>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-muted-foreground">No country selected</p>
-            <Button onClick={() => navigate('/admin/countries')} className="mt-4">
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Countries
-            </Button>
-          </CardContent>
-        </Card>
-      </DashboardLayout>
-    );
-  }
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
+      <div className="space-y-8">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Templates for {countryCode}</h1>
-            <p className="text-muted-foreground">Manage pattern templates for this country</p>
+            <Button variant="ghost" size="sm" onClick={() => navigate('/dashboard/admin/countries')} className="mb-2">
+              <ArrowLeft className="h-4 w-4 mr-2" />Back
+            </Button>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-3">
+              <span>🌍</span> Templates - {countryCode}
+            </h1>
+            <p className="text-muted-foreground mt-1">Manage SMS templates for {countryCode}</p>
           </div>
           <div className="flex gap-2">
-            <Button onClick={() => navigate('/admin/countries')} variant="outline">
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back
-            </Button>
-            <Button onClick={() => setShowCreateForm(!showCreateForm)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create Template
-            </Button>
+            <Button variant="outline" size="sm" onClick={loadTemplates}><RefreshCw className="h-4 w-4 mr-2" />Refresh</Button>
+            <Button size="sm" onClick={() => setShowForm(true)}><Plus className="h-4 w-4 mr-2" />Add Template</Button>
           </div>
         </div>
 
-        {showCreateForm && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Create New Template</CardTitle>
-              <CardDescription>Add a pre-built pattern template for users</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <Label>Example SMS Text *</Label>
-                <Textarea
-                  value={formData.smsText}
-                  onChange={(e) => setFormData({ ...formData, smsText: e.target.value })}
-                  placeholder="Paste an example SMS message..."
-                  rows={5}
-                />
-              </div>
-              <div>
-                <Label>Template Name *</Label>
-                <Input
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="e.g., CBE to Telebirr"
-                />
-              </div>
-              <div>
-                <Label>Description *</Label>
-                <Textarea
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  placeholder="e.g., Receive money from Commercial Bank of Ethiopia to your Telebirr account"
-                  rows={2}
-                />
-              </div>
-              <div>
-                <Label>Required Plan</Label>
-                <select
-                  value={formData.requiredPlan}
-                  onChange={(e) => setFormData({ ...formData, requiredPlan: e.target.value as 'FREE' | 'PREMIUM' })}
-                  className="w-full px-3 py-2 border rounded-md"
-                >
-                  <option value="FREE">FREE</option>
-                  <option value="PREMIUM">PREMIUM</option>
-                </select>
-              </div>
-              <div className="flex gap-2">
-                <Button onClick={handleCreateTemplate} className="bg-[#F37100] hover:bg-[#F37100]/90">
-                  Create Template
-                </Button>
-                <Button variant="outline" onClick={() => setShowCreateForm(false)}>
-                  Cancel
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+        <Separator />
+
+        {loading ? <LoadingSkeleton /> : templates.length === 0 ? (
+          <Card><CardContent className="pt-6"><p className="text-center text-muted-foreground">No templates yet</p></CardContent></Card>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow><TableHead>Name</TableHead><TableHead>Preview</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
+              {templates.map((template) => (
+                <TableRow key={template.id}>
+                  <TableCell><p className="font-medium">{template.name}</p><p className="text-sm text-muted-foreground">{template.description}</p></TableCell>
+                  <TableCell className="max-w-xs"><p className="truncate text-sm">{template.smsText}</p></TableCell>
+                  <TableCell><Badge variant={template.isActive ? "default" : "secondary"}>{template.isActive ? 'Active' : 'Inactive'}</Badge></TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <Button variant="ghost" size="icon"><Eye className="h-4 w-4" /></Button>
+                      <Button variant="ghost" size="icon"><Edit className="h-4 w-4" /></Button>
+                      <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(template.id)}><Trash2 className="h-4 w-4" /></Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
 
-        {loading ? (
+        {showForm && (
           <Card>
-            <CardContent className="pt-6">
-              <p className="text-muted-foreground">Loading templates...</p>
+            <CardHeader>
+              <CardTitle>Create Template</CardTitle>
+              <CardDescription>Add new SMS template for {countryCode}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Template Name</Label>
+                <Input value={formData.name} onChange={(e) => setFormData(f => ({ ...f, name: e.target.value }))} placeholder="Verification code" />
+              </div>
+              <div className="space-y-2">
+                <Label>SMS Text</Label>
+                <Textarea value={formData.smsText} onChange={(e) => setFormData(f => ({ ...f, smsText: e.target.value }))} placeholder="Your verification code is {code}" />
+              </div>
+              <div className="space-y-2">
+                <Label>Description</Label>
+                <Input value={formData.description} onChange={(e) => setFormData(f => ({ ...f, description: e.target.value }))} placeholder="Description" />
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="useAI" checked={formData.useAI} onChange={(e) => setFormData(f => ({ ...f, useAI: e.target.checked }))} />
+                <Label htmlFor="useAI">Use AI to generate</Label>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>
+                <Button onClick={handleCreate}>Create Template</Button>
+              </div>
             </CardContent>
           </Card>
-        ) : templates.length === 0 ? (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center py-12">
-              <p className="text-muted-foreground mb-4">No templates yet</p>
-              <Button onClick={() => setShowCreateForm(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                Create First Template
-              </Button>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {templates.map((template) => (
-              <Card key={template.id}>
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <CardTitle>{template.name}</CardTitle>
-                      <CardDescription className="mt-1">
-                        {template.description || 'No description'}
-                      </CardDescription>
-                    </div>
-                    {template.requiredPlan === 'PREMIUM' && (
-                      <Crown className="h-5 w-5 text-yellow-500" />
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <span>{template.bank || 'Unknown Bank'}</span>
-                      <span>•</span>
-                      <span>{template.currency || 'No currency'}</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Used by {template.userCount || 0} user{template.userCount !== 1 ? 's' : ''}
-                    </p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleDeleteTemplate(template.id)}
-                      className="w-full"
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      Delete
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
         )}
       </div>
     </DashboardLayout>
   );
 }
-

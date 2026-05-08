@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { authAPI, auth } from '@/lib';
+import { auth } from '@/lib';
 import { useToast } from '@/components/ui/use-toast';
 import { RefreshCw } from 'lucide-react';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -70,7 +70,8 @@ export default function VerifyOTPPage() {
     setLoading(true);
 
     try {
-      const response = await authAPI.verifyOTP({ 
+      const apiClient = (await import('../../lib/api')).default;
+      const response = await apiClient.post('/auth/verify-otp', { 
         phone: phone || undefined,
         email: email || undefined,
         code,
@@ -116,14 +117,18 @@ export default function VerifyOTPPage() {
   const handleResendOTP = async () => {
     setResending(true);
     try {
-      const response = await authAPI.resendOTP({ 
+      // Note: resendOTP endpoint not implemented in backend yet
+      const response = await (await import('../../lib/api')).default.post('/auth/resend-otp', { 
         phone: phone || undefined,
         email: email || undefined,
       });
       
       // Log OTP to frontend console for testing
       if (response.data.debug?.otp) {
-        // OTP sent via SMS - no console logging
+        console.log(`\n🔐 ==========================================`);
+        console.log(`📱 OTP Code: ${response.data.debug.otp}`);
+        console.log(`⏰ Use this code to verify your account`);
+        console.log(`🔐 ==========================================\n`);
       }
       
       toast({

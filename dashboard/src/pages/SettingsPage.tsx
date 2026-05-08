@@ -4,127 +4,106 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { authAPI, auth } from '@/lib';
+import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { authAPI, auth, businessAPI } from '@/lib';
+import { COUNTRIES_LIST } from '@/utils/countries';
 import { useToast } from '@/components/ui/use-toast';
-import { Copy, RefreshCw, Plus, Trash2, AlertCircle } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Copy, RefreshCw, Save, Key, User, Lock, Eye, EyeOff, Building2, Bell, Shield, Palette } from 'lucide-react';
 
 export default function SettingsPage() {
   const { toast } = useToast();
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [regenerating, setRegenerating] = useState(false);
-  const [simCards, setSimCards] = useState<any[]>([]);
-  const [addingSim, setAddingSim] = useState(false);
-  const [newSimIccid, setNewSimIccid] = useState('');
-  const [newSimPhone, setNewSimPhone] = useState('');
-
-  useEffect(() => {
-    loadUser();
-  }, []);
+  const [businesses, setBusinesses] = useState<any[]>([]);
+  
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [updatingPassword, setUpdatingPassword] = useState(false);
+  
+  const [username, setUsername] = useState('');
+  const [phone, setPhone] = useState('');
+  const [country, setCountry] = useState('');
+  const [updatingProfile, setUpdatingProfile] = useState(false);
+  const [showPasswords, setShowPasswords] = useState({ current: false, new: false });
+  const [countries] = useState(COUNTRIES_LIST);
 
   const loadUser = async () => {
     try {
-      const response = await authAPI.getMe();
-      setUser(response.data.data);
-      auth.setUser(response.data.data);
-      setSimCards(response.data.data.simCards || []);
-      
-      // Also load SIM cards separately
-      try {
-        const simsResponse = await authAPI.getSimCards();
-        setSimCards(simsResponse.data.data || []);
-      } catch (err) {
-        // Ignore if endpoint doesn't exist yet
-      }
+      const res = await authAPI.getMe();
+      setUser(res.data.data);
+      setUsername(res.data.data.username || '');
+      setPhone(res.data.data.phone || '');
+      setCountry(res.data.data.country || '');
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to load user',
-        variant: 'destructive',
-      });
+      toast({ title: "Error", description: "Failed to load user", variant: "destructive" });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleRegenerateKey = async () => {
-    if (!confirm('Are you sure you want to regenerate your API key? This will invalidate your current key.')) {
+  useEffect(() => { loadUser(); }, []);
+
+  const handleUpdateProfile = async () => {
+    if (!username.trim()) {
+      toast({ title: "Error", description: "Username is required", variant: "destructive" });
       return;
     }
+    setUpdatingProfile(true);
+    try {
+      await authAPI.updateProfile({ username, phone, country });
+      toast({ title: "Success", description: "Profile updated successfully" });
+      loadUser();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to update profile", variant: "destructive" });
+    } finally {
+      setUpdatingProfile(false);
+    }
+  };
 
+  const handleUpdatePassword = async () => {
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      toast({ title: "Error", description: "All password fields are required", variant: "destructive" });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast({ title: "Error", description: "New passwords do not match", variant: "destructive" });
+      return;
+    }
+    setUpdatingPassword(true);
+    try {
+      await authAPI.updatePassword({ currentPassword, newPassword });
+      toast({ title: "Success", description: "Password updated successfully" });
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (error: any) {
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to update password", variant: "destructive" });
+    } finally {
+      setUpdatingPassword(false);
+    }
+  };
+
+  const handleRegenerateApiKey = async () => {
     setRegenerating(true);
     try {
-      const response = await authAPI.regenerateKey();
-      setUser(response.data.data);
-      auth.setUser(response.data.data);
-      toast({
-        title: 'Success',
-        description: 'API key regenerated successfully',
-      });
+      await authAPI.regenerateKey();
+      toast({ title: "Success", description: "API key regenerated" });
+      loadUser();
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to regenerate key',
-        variant: 'destructive',
-      });
+      toast({ title: "Error", description: error.response?.data?.error || "Failed to regenerate API key", variant: "destructive" });
     } finally {
       setRegenerating(false);
     }
   };
 
-  const handleAddSim = async () => {
-    if (!newSimIccid.trim() || !newSimPhone.trim()) {
-      toast({
-        title: 'Error',
-        description: 'Please enter both ICCID and phone number',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    setAddingSim(true);
-    try {
-      await authAPI.addSimCard({
-        iccid: newSimIccid.trim(),
-        phoneNumber: newSimPhone.trim(),
-      });
-      toast({
-        title: 'Success',
-        description: 'SIM card added successfully',
-      });
-      setNewSimIccid('');
-      setNewSimPhone('');
-      await loadUser();
-    } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to add SIM card',
-        variant: 'destructive',
-      });
-    } finally {
-      setAddingSim(false);
-    }
-  };
-
-  const handleRemoveSim = async (id: string) => {
-    if (!confirm('Are you sure you want to remove this SIM card?')) {
-      return;
-    }
-
-    try {
-      await authAPI.removeSimCard(id);
-      toast({
-        title: 'Success',
-        description: 'SIM card removed successfully',
-      });
-      await loadUser();
-    } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to remove SIM card',
-        variant: 'destructive',
-      });
+  const handleCopyApiKey = () => {
+    if (user?.apiKey) {
+      navigator.clipboard.writeText(user.apiKey);
+      toast({ title: "Copied", description: "API key copied to clipboard" });
     }
   };
 
@@ -140,156 +119,188 @@ export default function SettingsPage() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 max-w-4xl mx-auto">
+      <div className="space-y-8 max-w-4xl">
         <div>
-          <h1 className="text-3xl font-bold">Settings</h1>
-          <p className="text-muted-foreground">Manage your account settings</p>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Settings</h1>
+          <p className="text-muted-foreground mt-1">
+            Manage your account settings and preferences
+          </p>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>API Key</CardTitle>
-            <CardDescription>Your API key for authenticating requests</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center gap-2">
-              <code className="flex-1 px-3 py-2 bg-muted rounded-md text-sm">
-                {user?.apiKey}
-              </code>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  navigator.clipboard.writeText(user?.apiKey || '');
-                  toast({
-                    title: 'Copied',
-                    description: 'API key copied to clipboard',
-                  });
-                }}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
-            </div>
-            <Button
-              variant="outline"
-              onClick={handleRegenerateKey}
-              disabled={regenerating}
-            >
-              <RefreshCw className="mr-2 h-4 w-4" />
-              {regenerating ? 'Regenerating...' : 'Regenerate Key'}
-            </Button>
-          </CardContent>
-        </Card>
+        <Separator />
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Account Information</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <div className="text-sm text-muted-foreground">Email</div>
-              <div className="text-lg">{user?.email || 'Not set'}</div>
-            </div>
-            <div>
-              <div className="text-sm text-muted-foreground">Phone</div>
-              <div className="text-lg">{user?.phone || 'Not set'}</div>
-            </div>
-            <div>
-              <div className="text-sm text-muted-foreground">Plan</div>
-              <div className="text-lg flex items-center gap-2">
-                {user?.plan || 'FREE'}
-                {user?.plan === 'FREE' && (
-                  <Link to="/dashboard/premium">
-                    <Button size="sm" className="bg-[#F37100] hover:bg-[#F37100]/90">
-                      Upgrade to Premium
-                    </Button>
-                  </Link>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <Tabs defaultValue="profile" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-4">
+            <TabsTrigger value="profile" className="gap-2"><User className="h-4 w-4" /> Profile</TabsTrigger>
+            <TabsTrigger value="security" className="gap-2"><Shield className="h-4 w-4" /> Security</TabsTrigger>
+            <TabsTrigger value="api" className="gap-2"><Key className="h-4 w-4" /> API</TabsTrigger>
+            <TabsTrigger value="notifications" className="gap-2"><Bell className="h-4 w-4" /> Notifications</TabsTrigger>
+          </TabsList>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Registered SIM Cards</CardTitle>
-            <CardDescription>
-              {user?.plan === 'FREE' 
-                ? 'Free plan allows 1 SIM card. Upgrade to Premium to add more.'
-                : 'Premium plan allows up to 10 SIM cards.'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {simCards.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>No SIM cards registered yet.</p>
-                <p className="text-sm mt-2">SIM cards are registered automatically when you verify OTP from the mobile app.</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {simCards.map((sim) => (
-                  <div
-                    key={sim.id}
-                    className="flex items-center justify-between p-3 border rounded-md"
-                  >
-                    <div>
-                      <div className="font-medium">{sim.phoneNumber}</div>
-                      <div className="text-sm text-muted-foreground">
-                        ICCID: {sim.iccid.substring(0, 8)}...
-                      </div>
-                      <div className="text-xs text-muted-foreground mt-1">
-                        Added: {new Date(sim.createdAt).toLocaleDateString()}
-                      </div>
-                    </div>
-                    {sim.isActive && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleRemoveSim(sim.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    )}
+          <TabsContent value="profile">
+            <Card>
+              <CardHeader>
+                <CardTitle>Profile Information</CardTitle>
+                <CardDescription>Update your personal information</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="username">Username</Label>
+                    <Input id="username" value={username} onChange={(e) => setUsername(e.target.value)} />
                   </div>
-                ))}
-              </div>
-            )}
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email</Label>
+                    <Input id="email" value={user?.email || ''} disabled className="bg-muted" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="phone">Phone Number</Label>
+                    <Input id="phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+1234567890" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="country">Country</Label>
+                    <select 
+                      id="country" 
+                      value={country} 
+                      onChange={(e) => setCountry(e.target.value)}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    >
+                      <option value="">Select country</option>
+                      {countries.map((c) => (
+                        <option key={c.code} value={c.code}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 p-4 bg-muted rounded-lg">
+                  <User className="h-5 w-5 text-muted-foreground" />
+                  <div className="flex-1">
+                    <p className="font-medium">Role: {user?.role}</p>
+                    <p className="text-sm text-muted-foreground">Plan: {user?.plan || 'Free'}</p>
+                  </div>
+                </div>
+                <Button onClick={handleUpdateProfile} disabled={updatingProfile}>
+                  <Save className="h-4 w-4 mr-2" />
+                  {updatingProfile ? 'Saving...' : 'Save Changes'}
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-            {(user?.plan === 'PREMIUM' || simCards.length === 0) && (
-              <div className="pt-4 border-t space-y-4">
-                <div className="space-y-2">
-                  <Label>Add New SIM Card</Label>
-                  <Input
-                    placeholder="SIM ICCID (from mobile app)"
-                    value={newSimIccid}
-                    onChange={(e) => setNewSimIccid(e.target.value)}
+          <TabsContent value="security">
+            <Card>
+              <CardHeader>
+                <CardTitle>Change Password</CardTitle>
+                <CardDescription>Update your password to keep your account secure</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="space-y-4 max-w-md">
+                  <div className="space-y-2">
+                    <Label htmlFor="current">Current Password</Label>
+                    <div className="relative">
+                      <Input 
+                        id="current" 
+                        type={showPasswords.current ? "text" : "password"}
+                        value={currentPassword} 
+                        onChange={(e) => setCurrentPassword(e.target.value)} 
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-0 top-0 h-full px-3"
+                        onClick={() => setShowPasswords(p => ({ ...p, current: !p.current }))}
+                      >
+                        {showPasswords.current ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="new">New Password</Label>
+                    <Input 
+                      id="new" 
+                      type={showPasswords.new ? "text" : "password"}
+                      value={newPassword} 
+                      onChange={(e) => setNewPassword(e.target.value)} 
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="confirm">Confirm New Password</Label>
+                    <Input 
+                      id="confirm" 
+                      type={showPasswords.new ? "text" : "password"}
+                      value={confirmPassword} 
+                      onChange={(e) => setConfirmPassword(e.target.value)} 
+                    />
+                  </div>
+                </div>
+                <Button onClick={handleUpdatePassword} disabled={updatingPassword}>
+                  <Lock className="h-4 w-4 mr-2" />
+                  {updatingPassword ? 'Updating...' : 'Update Password'}
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="api">
+            <Card>
+              <CardHeader>
+                <CardTitle>API Key</CardTitle>
+                <CardDescription>Your API key for authenticating requests</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <Input 
+                    value={user?.apiKey || ''} 
+                    readOnly 
+                    className="font-mono"
                   />
-                  <Input
-                    placeholder="Phone Number"
-                    value={newSimPhone}
-                    onChange={(e) => setNewSimPhone(e.target.value)}
-                  />
-                  <Button
-                    onClick={handleAddSim}
-                    disabled={addingSim}
-                    className="bg-[#F37100] hover:bg-[#F37100]/90"
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    {addingSim ? 'Adding...' : 'Add SIM Card'}
+                  <Button variant="outline" onClick={handleCopyApiKey}>
+                    <Copy className="h-4 w-4 mr-2" />
+                    Copy
                   </Button>
                 </div>
-                {user?.plan === 'FREE' && simCards.length >= 1 && (
-                  <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
-                    <p className="text-sm text-yellow-800 dark:text-yellow-200">
-                      Free plan allows only 1 SIM card. <Link to="/dashboard/premium" className="underline font-medium">Upgrade to Premium</Link> to add more.
-                    </p>
+                <div className="flex gap-2">
+                  <Button variant="destructive" onClick={handleRegenerateApiKey} disabled={regenerating}>
+                    <RefreshCw className={`h-4 w-4 mr-2 ${regenerating ? 'animate-spin' : ''}`} />
+                    {regenerating ? 'Regenerating...' : 'Regenerate Key'}
+                  </Button>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Warning: Regenerating your API key will invalidate the old key.
+                </p>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="notifications">
+            <Card>
+              <CardHeader>
+                <CardTitle>Notification Preferences</CardTitle>
+                <CardDescription>Manage how you receive notifications</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {[
+                  { id: 'email', label: 'Email Notifications', desc: 'Receive notifications via email' },
+                  { id: 'sms', label: 'SMS Notifications', desc: 'Receive notifications via SMS' },
+                  { id: 'transactions', label: 'Transaction Alerts', desc: 'Get notified about new transactions' },
+                ].map((item) => (
+                  <div key={item.id} className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">{item.label}</p>
+                      <p className="text-sm text-muted-foreground">{item.desc}</p>
+                    </div>
+                    <Switch defaultChecked id={item.id} />
                   </div>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                ))}
+                <Button>
+                  <Save className="h-4 w-4 mr-2" />
+                  Save Preferences
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </div>
     </DashboardLayout>
   );

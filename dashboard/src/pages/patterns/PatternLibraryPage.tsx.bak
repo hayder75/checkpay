@@ -4,10 +4,9 @@ import DashboardLayout from '@/components/layouts/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
 import { patternsAPI, authAPI, businessAPI } from '@/lib';
 import { useToast } from '@/components/ui/use-toast';
-import { Plus, Trash2, Edit, Store, Building2, Smartphone, FileText, Eye } from 'lucide-react';
+import { Plus, Trash2, Edit, Store, Building2, Smartphone, FileText } from 'lucide-react';
 
 export default function PatternLibraryPage() {
   const { toast } = useToast();
@@ -21,8 +20,6 @@ export default function PatternLibraryPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [patternToDelete, setPatternToDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [viewPattern, setViewPattern] = useState<any>(null);
-  const [viewDialogOpen, setViewDialogOpen] = useState(false);
 
   useEffect(() => {
     loadUserInfo();
@@ -32,7 +29,7 @@ export default function PatternLibraryPage() {
     if (currentUser) {
       loadPatterns();
       if (currentUser.role === 'BUSINESS_OWNER') {
-        loadBusinesses();
+      loadBusinesses();
       }
     }
   }, [currentUser]);
@@ -68,6 +65,7 @@ export default function PatternLibraryPage() {
   const loadBusinessPatterns = async () => {
     if (!selectedBusinessId) return;
     try {
+      // Business patterns are included when getting business details
       const res = await businessAPI.getOne(selectedBusinessId);
       const business = res.data.data;
       setBusinessPatterns(business.businessPatterns || []);
@@ -98,11 +96,6 @@ export default function PatternLibraryPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleViewClick = (pattern: any) => {
-    setViewPattern(pattern);
-    setViewDialogOpen(true);
   };
 
   const handleDeleteClick = (id: string) => {
@@ -144,14 +137,8 @@ export default function PatternLibraryPage() {
     );
   }
 
-  const canCreateMore = true;
-
-  const getStatusBadge = (pattern: any) => {
-    if (pattern.isActive === false) {
-      return <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-red-100 text-red-800">Inactive</span>;
-    }
-    return <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold bg-green-100 text-green-800">Active</span>;
-  };
+  // Pattern limits are now handled by packages, not user plan
+  const canCreateMore = true; // Always allow creating (package will enforce limits)
 
   return (
     <DashboardLayout>
@@ -197,7 +184,7 @@ export default function PatternLibraryPage() {
                 disabled={!canCreateMore}
               >
                 <Plus className="mr-2 h-4 w-4" />
-                New Pattern
+                Create Pattern
               </Button>
             </Link>
           </div>
@@ -255,50 +242,28 @@ export default function PatternLibraryPage() {
               <Card key={pattern.id}>
                 <CardHeader>
                   <CardTitle>{pattern.name}</CardTitle>
-                  <CardDescription className="flex items-center gap-2 mt-1">
-                    {pattern.countryCode && (
-                      <span className="text-xs">Country: {pattern.countryCode}</span>
-                    )}
-                    {pattern.bank && <span className="text-xs">• {pattern.bank}</span>}
-                    {pattern.currency && <span className="text-xs">• {pattern.currency}</span>}
+                  <CardDescription>
+                    {pattern.bank || 'Unknown Bank'} • {pattern.currency || 'No currency'}
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  {pattern.smsText && (
-                    <div className="text-xs text-muted-foreground bg-muted p-2 rounded">
-                      <span className="font-medium">Preview:</span> {pattern.smsText.substring(0, 80)}{pattern.smsText.length > 80 ? '...' : ''}
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between">
-                    {getStatusBadge(pattern)}
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleViewClick(pattern)}
-                        title="View"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        asChild
-                        title="Edit"
-                      >
-                        <Link to={`/dashboard/patterns/${pattern.id}/edit`}>
-                          <Edit className="h-4 w-4" />
-                        </Link>
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleDeleteClick(pattern.id)}
-                        title="Delete"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+                <CardContent>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      asChild
+                    >
+                      <Link to={`/dashboard/patterns/${pattern.id}/edit`}>
+                        <Edit className="h-4 w-4" />
+                      </Link>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleDeleteClick(pattern.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
@@ -307,75 +272,6 @@ export default function PatternLibraryPage() {
         )}
         </div>
       </div>
-
-      {/* View Pattern Dialog */}
-      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Pattern Details</DialogTitle>
-            <DialogDescription>
-              View pattern information and configuration
-            </DialogDescription>
-          </DialogHeader>
-          {viewPattern && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-muted-foreground text-xs">Name</Label>
-                  <p className="font-medium">{viewPattern.name}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">Status</Label>
-                  <p>{getStatusBadge(viewPattern)}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">Country</Label>
-                  <p className="font-medium">{viewPattern.countryCode || 'Not set'}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">Bank</Label>
-                  <p className="font-medium">{viewPattern.bank || 'Not set'}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">Currency</Label>
-                  <p className="font-medium">{viewPattern.currency || 'Not set'}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">Description</Label>
-                  <p className="font-medium">{viewPattern.description || 'Not set'}</p>
-                </div>
-              </div>
-              {viewPattern.smsText && (
-                <div>
-                  <Label className="text-muted-foreground text-xs">SMS Text (Preview)</Label>
-                  <pre className="mt-1 p-3 bg-muted rounded-md text-sm whitespace-pre-wrap">
-{viewPattern.smsText}
-                  </pre>
-                </div>
-              )}
-              {viewPattern.pattern && (
-                <div>
-                  <Label className="text-muted-foreground text-xs">Pattern (Regex)</Label>
-                  <pre className="mt-1 p-3 bg-muted rounded-md text-xs overflow-x-auto">
-{viewPattern.pattern}
-                  </pre>
-                </div>
-              )}
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setViewDialogOpen(false)}>
-              Close
-            </Button>
-            <Button asChild>
-              <Link to={`/dashboard/patterns/${viewPattern?.id}/edit`}>
-                <Edit className="mr-2 h-4 w-4" />
-                Edit Pattern
-              </Link>
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

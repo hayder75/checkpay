@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/layouts/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -6,28 +6,45 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { patternsAPI } from '@/lib';
+import { patternsAPI, auth } from '@/lib';
 import { useToast } from '@/components/ui/use-toast';
-import { Sparkles, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Sparkles, CheckCircle2, AlertCircle, Globe } from 'lucide-react';
+import { COUNTRIES_LIST } from '@/utils/countries';
 
 export default function PatternBuilderPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [smsText, setSmsText] = useState('');
+  const [smsTexts, setSmsTexts] = useState<string[]>(['']); // Array for multi-language support
   const [patternName, setPatternName] = useState('');
   const [description, setDescription] = useState('');
+  const [countryCode, setCountryCode] = useState<string>(''); // Country for this pattern
   const [preview, setPreview] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [usingAI, setUsingAI] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
-  const [forceAI, setForceAI] = useState(false); // Toggle to force AI usage
+  // Security fields
+  const [allowedSenders, setAllowedSenders] = useState<string[]>([]);
+  const [senderInput, setSenderInput] = useState('');
+  const [requireSenderVerification, setRequireSenderVerification] = useState(true);
+  const [requireContactCheck, setRequireContactCheck] = useState(true);
 
-  const handleAnalyze = async () => {
-    if (!smsText || !patternName) {
+  // Initialize country from user's profile
+  useEffect(() => {
+    const currentUser = auth.getUser();
+    if (currentUser?.country) {
+      setCountryCode(currentUser.country);
+    }
+  }, []);
+
+  // Generate pattern using regex generator (default)
+  const handleGeneratePattern = async () => {
+    const validTexts = smsTexts.filter(text => text.trim().length > 0);
+
+    if (validTexts.length === 0 || !patternName) {
       toast({
         title: 'Error',
-        description: 'Please enter SMS text and pattern name',
+        description: 'Please enter at least one SMS text and pattern name',
         variant: 'destructive',
       });
       return;
@@ -35,13 +52,35 @@ export default function PatternBuilderPage() {
 
     setLoading(true);
     try {
-      const response = await patternsAPI.validate({ smsText, name: patternName });
-      setPreview(response.data.data);
-      setUsingAI(false); // Reset AI flag
+      // Use first SMS for validation/preview
+      const response = await patternsAPI.validate({ 
+        smsText: validTexts[0], 
+        name: patternName
+      });
+      
+      setPreview({
+        ...response.data.data,
+        method: response.data.data.method || 'rule-based',
+        canUseAI: response.data.data.canUseAI ?? true,
+        aiSuggested: response.data.data.aiSuggested ?? false,
+      });
+      
+      if (response.data.data.validation.valid) {
+        toast({
+          title: 'Success',
+          description: 'Pattern generated successfully! Review and save.',
+        });
+      } else {
+        toast({
+          title: 'Warning',
+          description: 'Pattern generated but some fields are missing. Consider using AI if needed.',
+          variant: 'destructive',
+        });
+      }
     } catch (error: any) {
       toast({
         title: 'Error',
-        description: error.response?.data?.error || 'Failed to analyze pattern',
+        description: error.response?.data?.error || 'Failed to generate pattern',
         variant: 'destructive',
       });
     } finally {
@@ -49,11 +88,14 @@ export default function PatternBuilderPage() {
     }
   };
 
+  // Use AI as fallback
   const handleUseAI = async () => {
-    if (!smsText || !patternName) {
+    const validTexts = smsTexts.filter(text => text.trim().length > 0);
+    
+    if (validTexts.length === 0 || !patternName) {
       toast({
         title: 'Error',
-        description: 'Please enter SMS text and pattern name',
+        description: 'Please enter at least one SMS text and pattern name',
         variant: 'destructive',
       });
       return;
@@ -61,14 +103,29 @@ export default function PatternBuilderPage() {
 
     setAiLoading(true);
     try {
-      const response = await patternsAPI.createWithAI({ smsText, name: patternName, description });
+      // Use the main create endpoint with useAI flag
+      const response = await patternsAPI.create({ 
+        smsTexts: validTexts, 
+        name: patternName, 
+        description,
+        countryCode: countryCode || undefined, // Include country if selected
+        useAI: true,
+        // Security fields
+        allowedSenders: allowedSenders.length > 0 ? allowedSenders : [],
+        requireSenderVerification,
+        requireContactCheck,
+      });
+      
+      const extracted = Array.isArray(response.data.extracted) 
+        ? response.data.extracted[0] 
+        : response.data.extracted;
+      
       setPreview({
         pattern: response.data.data,
         validation: { valid: true, errors: [] },
-        extractedValues: response.data.extracted,
+        extractedValues: extracted,
+        allExtracted: response.data.extracted,
         method: 'ai',
-        aiSuggested: false,
-        canUseAI: true,
       });
       setUsingAI(true);
       toast({
@@ -86,18 +143,34 @@ export default function PatternBuilderPage() {
     }
   };
 
+  const addAnotherLanguage = () => {
+    setSmsTexts([...smsTexts, '']);
+  };
+
+  const removeLanguage = (index: number) => {
+    if (smsTexts.length > 1) {
+      setSmsTexts(smsTexts.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateSmsText = (index: number, value: string) => {
+    const updated = [...smsTexts];
+    updated[index] = value;
+    setSmsTexts(updated);
+  };
+
   const handleSave = async () => {
-    if (!smsText || !patternName) {
+    const validTexts = smsTexts.filter(text => text.trim().length > 0);
+    
+    if (validTexts.length === 0 || !patternName) {
       toast({
         title: 'Error',
-        description: 'Please enter SMS text and pattern name',
+        description: 'Please enter at least one SMS text and pattern name',
         variant: 'destructive',
       });
       return;
     }
 
-    setSaving(true);
-    try {
       // If we used AI, the pattern is already created, just navigate
       if (usingAI && preview?.pattern) {
         toast({
@@ -108,34 +181,32 @@ export default function PatternBuilderPage() {
         return;
       }
 
-      // Otherwise, create pattern normally (with forceAI flag if set)
-      const response = await patternsAPI.create({ 
-        smsText, 
+    // Otherwise, create pattern using regex generator (default)
+    setSaving(true);
+    try {
+      await patternsAPI.create({ 
+        smsTexts: validTexts,
         name: patternName, 
         description,
-        useAI: forceAI, // Pass the toggle value
+        countryCode: countryCode || undefined, // Include country if selected
+        useAI: false, // Use regex generator by default
+        // Security fields
+        allowedSenders: allowedSenders.length > 0 ? allowedSenders : [],
+        requireSenderVerification,
+        requireContactCheck,
       });
       
       toast({
         title: 'Success',
-        description: `Pattern created successfully using ${response.data.method || 'rule-based'} extraction!`,
+        description: 'Pattern created successfully!',
       });
       navigate('/dashboard/patterns');
     } catch (error: any) {
-      // If error suggests AI, show that
-      if (error.response?.data?.canUseAI) {
-        toast({
-          title: 'Pattern Creation Failed',
-          description: error.response.data.suggestion || 'Try using AI for better accuracy',
-          variant: 'destructive',
-        });
-      } else {
         toast({
           title: 'Error',
           description: error.response?.data?.error || 'Failed to save pattern',
           variant: 'destructive',
         });
-      }
     } finally {
       setSaving(false);
     }
@@ -147,7 +218,7 @@ export default function PatternBuilderPage() {
         <div>
           <h1 className="text-3xl font-bold">Pattern Builder</h1>
           <p className="text-muted-foreground">
-            Paste an SMS and let AI build your parser pattern
+            Paste SMS messages to generate regex patterns. Use AI generation if needed.
           </p>
         </div>
 
@@ -156,19 +227,51 @@ export default function PatternBuilderPage() {
           <Card>
             <CardHeader>
               <CardTitle>Input SMS</CardTitle>
-              <CardDescription>Paste a real SMS from your bank or mobile money service</CardDescription>
+              <CardDescription>Paste SMS messages (add multiple languages if the same bank sends in different languages)</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="sms">SMS Text</Label>
+              {/* Multi-language SMS inputs */}
+              {smsTexts.map((text, index) => (
+                <div key={index} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor={`sms-${index}`}>
+                      SMS Text {index === 0 ? '(Primary)' : `(Language ${index + 1})`}
+                    </Label>
+                    {index > 0 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeLanguage(index)}
+                        className="text-red-500 hover:text-red-700"
+                      >
+                        Remove
+                      </Button>
+                    )}
+                  </div>
                 <Textarea
-                  id="sms"
-                  placeholder="You received KES 500 from JOHN DOE. Ref: MP123456789"
-                  value={smsText}
-                  onChange={(e) => setSmsText(e.target.value)}
-                  rows={6}
+                    id={`sms-${index}`}
+                    placeholder={
+                      index === 0
+                        ? "You received KES 500 from JOHN DOE. Ref: MP123456789"
+                        : "ውድ Ayantu፣ 5.00 ብር ከGemechu Girma Bekele..."
+                    }
+                    value={text}
+                    onChange={(e) => updateSmsText(index, e.target.value)}
+                    rows={4}
                 />
               </div>
+              ))}
+              
+              <Button
+                type="button"
+                variant="outline"
+                onClick={addAnotherLanguage}
+                className="w-full"
+              >
+                + Add Another Language
+              </Button>
+
               <div className="space-y-2">
                 <Label htmlFor="name">Pattern Name</Label>
                 <Input
@@ -188,51 +291,167 @@ export default function PatternBuilderPage() {
                 />
               </div>
               <div className="space-y-2">
-                <div className="flex items-center justify-between p-3 bg-muted rounded-md">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-purple-600" />
-                    <Label htmlFor="force-ai" className="text-sm font-medium cursor-pointer">
-                      Use AI for Pattern Creation
-                    </Label>
-                  </div>
-                  <input
-                    id="force-ai"
-                    type="checkbox"
-                    checked={forceAI}
-                    onChange={(e) => setForceAI(e.target.checked)}
-                    className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground px-1">
-                  {forceAI 
-                    ? 'AI will be used to create the pattern (may take longer)'
-                    : 'Rule-based extraction will be tried first, AI used if needed'}
-                </p>
-                <Button
-                  onClick={handleAnalyze}
-                  className="w-full bg-[#F37100] hover:bg-[#F37100]/90"
-                  disabled={loading || aiLoading || !smsText || !patternName}
+                <Label htmlFor="countryCode" className="flex items-center gap-2">
+                  <Globe className="w-4 h-4 text-[#F37100]" />
+                  Country (Optional)
+                </Label>
+                <select
+                  id="countryCode"
+                  value={countryCode}
+                  onChange={(e) => setCountryCode(e.target.value)}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 >
-                  {loading ? 'Analyzing...' : forceAI ? 'Analyze SMS (AI)' : 'Analyze SMS (Rule-Based)'}
-                </Button>
-                {preview?.aiSuggested && preview?.canUseAI && !forceAI && (
-                  <Button
-                    onClick={handleUseAI}
-                    className="w-full bg-purple-600 hover:bg-purple-700"
-                    disabled={aiLoading || loading || !smsText || !patternName}
+                  <option value="">Use my profile country (default)</option>
+                  {COUNTRIES_LIST.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  Select a country for this pattern. If not selected, your profile country will be used.
+                </p>
+              </div>
+
+              {/* Security Settings */}
+              <div className="space-y-4 pt-4 border-t">
+                <div>
+                  <Label className="text-base font-semibold">Security Settings</Label>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Configure sender verification to prevent fraudulent SMS
+                  </p>
+                </div>
+
+                {/* Allowed Senders */}
+                <div className="space-y-2">
+                  <Label htmlFor="sender">Allowed Senders (Phone/Name)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Add phone numbers or sender names that can send SMS for this pattern
+                  </p>
+                  <div className="flex gap-2">
+                    <Input
+                      id="sender"
+                      placeholder="e.g., +251911234567 or CBE"
+                      value={senderInput}
+                      onChange={(e) => setSenderInput(e.target.value)}
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter' && senderInput.trim()) {
+                          setAllowedSenders([...allowedSenders, senderInput.trim()]);
+                          setSenderInput('');
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        if (senderInput.trim()) {
+                          setAllowedSenders([...allowedSenders, senderInput.trim()]);
+                          setSenderInput('');
+                        }
+                      }}
+                    >
+                      Add
+                    </Button>
+                  </div>
+                  {allowedSenders.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {allowedSenders.map((sender, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center gap-1 px-2 py-1 bg-primary/10 text-primary rounded-md text-sm"
+                        >
+                          <span>{sender}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAllowedSenders(allowedSenders.filter((_, i) => i !== index));
+                            }}
+                            className="ml-1 hover:text-primary/70"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Security Toggles */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label>Require Sender Verification</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Only accept SMS from allowed senders
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setRequireSenderVerification(!requireSenderVerification)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        requireSenderVerification ? 'bg-primary' : 'bg-gray-200'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          requireSenderVerification ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label>Reject SMS from Contacts</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Reject SMS from numbers in your contacts (prevents spoofing)
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setRequireContactCheck(!requireContactCheck)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        requireContactCheck ? 'bg-primary' : 'bg-gray-200'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          requireContactCheck ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+              </div>
+              
+              <Button
+                onClick={handleGeneratePattern}
+                className="w-full bg-[#F37100] hover:bg-[#F37100]/90"
+                disabled={loading || smsTexts.every(t => !t.trim()) || !patternName}
+              >
+                {loading ? 'Generating Pattern...' : 'Generate Pattern'}
+              </Button>
+              
+              {preview?.aiSuggested && preview?.canUseAI && (
+                <Button
+                  onClick={handleUseAI}
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  disabled={aiLoading}
                   >
                     <Sparkles className="mr-2 h-4 w-4" />
-                    {aiLoading ? 'Using AI...' : 'Use AI to Create Pattern'}
+                  {aiLoading ? 'Creating with AI...' : 'Use AI Generation Instead'}
                   </Button>
                 )}
-              </div>
             </CardContent>
           </Card>
 
           {/* Preview Section */}
           <Card>
             <CardHeader>
-              <CardTitle>AI Analysis Preview</CardTitle>
+              <CardTitle>Pattern Preview</CardTitle>
               <CardDescription>What the system detected and extracted</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -302,20 +521,13 @@ export default function PatternBuilderPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Generated Regex</Label>
-                    <code className="block p-3 bg-muted rounded-md text-xs break-all">
-                      {preview.pattern.regex}
-                    </code>
-                  </div>
-
-                  <div className="space-y-2">
                     <Label>What /api/verify will return:</Label>
                     <div className="p-3 bg-muted rounded-md">
                       <pre className="text-xs">
 {JSON.stringify({
   confirmed: true,
   amount: preview.extractedValues?.amount || 0,
-  sender: preview.extractedValues?.sender ? preview.extractedValues.sender.replace(/\d{4,}/g, (match) => {
+  sender: preview.extractedValues?.sender ? preview.extractedValues.sender.replace(/\d{4,}/g, (match: string) => {
     // Mask phone numbers in sender
     if (match.length >= 10) {
       return match.substring(0, 4) + '****' + match.substring(match.length - 2);
