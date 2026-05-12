@@ -4,22 +4,30 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 import { errorHandler, AppError } from './middleware/errorHandler';
 import { requestLogger } from './middleware/requestLogger';
+import { generalRateLimiter } from './middleware/rateLimit';
 
 // Import routes
 import authRoutes from './routes/auth';
-import patternRoutes from './routes/patterns';
+import otpAuthRoutes from './routes/otpAuth';
+import telegramAuthRoutes from './routes/telegramAuth';
+import businessRoutes from './routes/businesses';
+import employeeRoutes from './routes/employees';
+import projectRoutes from './routes/projects';
+import packageRoutes from './routes/packages';
+import accessCodeRoutes from './routes/accessCodes';
 import ingestRoutes from './routes/ingest';
 import verifyRoutes from './routes/verify';
-import premiumRoutes from './routes/premium';
 import dashboardRoutes from './routes/dashboard';
-import configRoutes from './routes/config';
+import patternsRoutes from './routes/patterns';
 import adminRoutes from './routes/admin';
 import countriesRoutes from './routes/countries';
-import templateRoutes from './routes/templates';
-import testRoutes from './routes/test';
-import packageRoutes from './routes/packages';
-import userPackageRoutes from './routes/user-packages';
-import systemConfigRoutes from './routes/system-config';
+import ocrRoutes from './routes/ocr';
+import userPackageRoutes from './routes/userPackages';
+import notificationRoutes from './routes/notifications';
+import clusterRoutes from './routes/clusters';
+
+// Import Telegram bot
+import { initTelegramBot } from './utils/telegramBot';
 
 // Load environment variables
 dotenv.config();
@@ -27,86 +35,164 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS configuration - allow specific origins with credentials
+// Trust proxy for accurate rate limiting (Nginx)
+app.set('trust proxy', 1);
+
+// CORS configuration
 app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests from frontend dashboard, test page, or no origin (mobile apps, Postman, etc.)
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, Postman, etc.)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
     const allowedOrigins = [
-      'http://localhost:5173', // Frontend dashboard
-      'http://localhost:3006', // Test page
+      process.env.FRONTEND_URL || 'http://localhost:5173',
+      'http://localhost:5173',
       'http://127.0.0.1:5173',
-      'http://127.0.0.1:3006',
+      'http://localhost:3003',
+      'https://checkpay.live',
+      'https://www.checkpay.live',
+      'http://144.217.161.251',
+      'http://144.217.161.251:3003',
     ];
     
-    // Allow requests with no origin (like mobile apps or curl)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.includes(origin)) {
+    // Allow if origin is in allowed list OR if it's development mode
+    if (allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
       callback(null, true);
     } else {
-      callback(null, true); // Allow all for development - change in production
+      // In production, reject unauthorized origins
+      console.warn(`[CORS] Blocked origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'), false);
     }
   },
-  credentials: true, // Allow cookies/credentials
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'Accept', 'Origin', 'X-Requested-With', 'ngrok-skip-browser-warning'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'X-Business-Id', 'Accept', 'Origin', 'X-Requested-With'],
   exposedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 200,
+  preflightContinue: false,
   maxAge: 86400,
 }));
 
-// Security middleware - relaxed for local development
+// Explicitly handle OPTIONS requests for all routes
+app.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-Business-Id, Accept, Origin, X-Requested-With');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.sendStatus(200);
+});
+
+// Security middleware
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" },
-  contentSecurityPolicy: false, // Disable CSP for local dev
+  crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
+
+// Global rate limiting
+app.use(generalRateLimiter);
 
 // Body parsing middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Enhanced request/response logging with AI-friendly format
+// Initialize Passport for OAuth authentication
+import passport from './config/passport';
+app.use(passport.initialize());
+
+// Request logging
 app.use(requestLogger);
 
 // Health check endpoint
 app.get('/health', (req: Request, res: Response) => {
   res.json({
     success: true,
-    message: 'CheckPay API is running',
+    message: 'CheckPay API v2 is running',
     timestamp: new Date().toISOString(),
+    version: '2.0.0',
   });
 });
 
 // API routes
 app.use('/api/auth', authRoutes);
-app.use('/api/patterns', patternRoutes);
-app.use('/api/templates', templateRoutes);
+app.use('/api/auth/otp', otpAuthRoutes);
+app.use('/api/auth/telegram', telegramAuthRoutes);
+app.use('/api/businesses', businessRoutes);
+app.use('/api/employees', employeeRoutes);
+app.use('/api/projects', projectRoutes);
+app.use('/api/packages', packageRoutes);
+app.use('/api/access-codes', accessCodeRoutes);
 app.use('/api/ingest', ingestRoutes);
 app.use('/api/verify', verifyRoutes);
-app.use('/api/premium', premiumRoutes);
 app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/config', configRoutes);
+app.use('/api/patterns', patternsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/countries', countriesRoutes);
-app.use('/api/test', testRoutes);
-app.use('/api/packages', packageRoutes);
+app.use('/api/ocr', ocrRoutes);
 app.use('/api/user-packages', userPackageRoutes);
-app.use('/api/system-config', systemConfigRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/clusters', clusterRoutes);
 
-// 404 handler
+// 404 handler with helpful suggestions
 app.use((req: Request, res: Response, next: NextFunction) => {
+  // Check if request is missing /api prefix
+  if (!req.path.startsWith('/api') && req.path.startsWith('/auth')) {
+    return res.status(404).json({
+      success: false,
+      error: 'Route not found',
+      message: `Route ${req.method} ${req.path} not found. Did you mean ${req.method} /api${req.path}?`,
+      hint: 'All API routes must start with /api prefix',
+    });
+  }
+  
   next(new AppError(404, `Route ${req.method} ${req.path} not found`));
 });
 
 // Error handler (must be last)
 app.use(errorHandler);
 
-// Start server - listen on all interfaces (0.0.0.0) to allow network access
+// Start pending verification worker
+import { startPendingVerificationWorker } from './utils/pendingVerificationWorker';
+import { startNotificationCleanupWorker } from './utils/notificationCleanupWorker';
+import { getRedisClient, closeRedis } from './utils/redis';
+
+// Initialize Redis connection on startup
+getRedisClient().catch((err) => {
+  console.warn('⚠️  Redis connection failed, continuing without cache:', err.message);
+});
+
+startPendingVerificationWorker();
+startNotificationCleanupWorker();
+
+// Initialize Telegram bot
+initTelegramBot();
+
+// Start server
 const port = typeof PORT === 'string' ? parseInt(PORT, 10) : PORT;
-app.listen(port, '0.0.0.0', () => {
-  console.log(`🚀 CheckPay API server running on port ${port}`);
+const server = app.listen(port, '0.0.0.0', () => {
+  console.log(`🚀 CheckPay API v2 server running on port ${port}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 Health check: http://localhost:${port}/health`);
   console.log(`🌐 Network access: http://0.0.0.0:${port}/health`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, shutting down gracefully...');
+  server.close(() => {
+    console.log('HTTP server closed');
+  });
+  await closeRedis();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received, shutting down gracefully...');
+  server.close(() => {
+    console.log('HTTP server closed');
+  });
+  await closeRedis();
+  process.exit(0);
 });
 
 export default app;

@@ -6,29 +6,45 @@ import { ProtectedRoute } from '@/components/ProtectedRoute';
 import LandingPage from '@/pages/LandingPage';
 import LoginPage from '@/pages/auth/LoginPage';
 import RegisterPage from '@/pages/auth/RegisterPage';
-import VerifyOTPPage from '@/pages/auth/VerifyOTPPage';
+import GoogleCallbackPage from '@/pages/auth/GoogleCallbackPage';
+import RoleSelectionPage from '@/pages/auth/RoleSelectionPage';
 import DashboardPage from '@/pages/DashboardPage';
 import PatternBuilderPage from '@/pages/patterns/PatternBuilderPage';
 import PatternLibraryPage from '@/pages/patterns/PatternLibraryPage';
 import PatternEditPage from '@/pages/patterns/PatternEditPage';
 import PatternMarketplacePage from '@/pages/patterns/PatternMarketplacePage';
 import TransactionHistoryPage from '@/pages/TransactionHistoryPage';
-import PremiumPage from '@/pages/PremiumPage';
-import SettingsPage from '@/pages/SettingsPage';
-import MobileAppPage from '@/pages/MobileAppPage';
+import PendingOrdersPage from '@/pages/PendingOrdersPage';
 import AnalyticsPage from '@/pages/AnalyticsPage';
-import ApiDocsPage from '@/pages/ApiDocsPage';
+import SettingsPage from '@/pages/SettingsPage';
 import AdminDashboardPage from '@/pages/admin/AdminDashboardPage';
 import UserManagementPage from '@/pages/admin/UserManagementPage';
 import AdminAnalyticsPage from '@/pages/admin/AnalyticsPage';
 import PatternManagementPage from '@/pages/admin/PatternManagementPage';
 import TransactionMonitoringPage from '@/pages/admin/TransactionMonitoringPage';
 import CountryManagementPage from '@/pages/admin/CountryManagementPage';
+import CountryTemplatesPage from '@/pages/admin/CountryTemplatesPage';
 import TemplateManagementPage from '@/pages/admin/TemplateManagementPage';
 import MissingTemplatesPage from '@/pages/admin/MissingTemplatesPage';
 import AuditLogsPage from '@/pages/admin/AuditLogsPage';
 import SystemHealthPage from '@/pages/admin/SystemHealthPage';
+import PackagePurchaseVerificationPage from '@/pages/admin/PackagePurchaseVerificationPage';
+import AdminPackageManagementPage from '@/pages/admin/AdminPackageManagementPage';
 import VerifyPage from '@/pages/merchant/VerifyPage';
+import BusinessManagementPage from '@/pages/businesses/BusinessManagementPage';
+import EmployeeManagementPage from '@/pages/employees/EmployeeManagementPage';
+import ProjectManagementPage from '@/pages/projects/ProjectManagementPage';
+import ProjectDetailsPage from '@/pages/projects/ProjectDetailsPage';
+import UsagePage from '@/pages/packages/PackageManagementPage';
+import AccessCodeManagementPage from '@/pages/accessCodes/AccessCodeManagementPage';
+import EmployeeRegisterPage from '@/pages/employees/EmployeeRegisterPage';
+import EmployeeTransactionEntryPage from '@/pages/employees/EmployeeTransactionEntryPage';
+import AcceptTransferPage from '@/pages/projects/AcceptTransferPage';
+import ApiDocsPage from '@/pages/ApiDocsPage';
+import ProductsPage from '@/pages/ProductsPage';
+import PricingPage from '@/pages/PricingPage';
+import MobileAppPage from '@/pages/MobileAppPage';
+import PrivacyPolicyPage from '@/pages/PrivacyPolicyPage';
 
 function App() {
   return (
@@ -36,9 +52,16 @@ function App() {
       <Routes>
         {/* Public routes */}
         <Route path="/" element={<LandingPage />} />
+        <Route path="/products" element={<ProductsPage />} />
+        <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/api-docs" element={<ApiDocsPage />} />
+        <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
         <Route path="/auth/login" element={<LoginPage />} />
         <Route path="/auth/register" element={<RegisterPage />} />
-        <Route path="/auth/verify-otp" element={<VerifyOTPPage />} />
+        <Route path="/auth/google/callback" element={<GoogleCallbackPage />} />
+        <Route path="/auth/select-role" element={<RoleSelectionPage />} />
+        <Route path="/auth/employee/register" element={<EmployeeRegisterPage />} />
+        <Route path="/projects/accept-transfer" element={<AcceptTransferPage />} />
 
         {/* Protected routes */}
         <Route
@@ -90,26 +113,10 @@ function App() {
           }
         />
         <Route
-          path="/dashboard/premium"
+          path="/dashboard/pending-orders"
           element={
             <ProtectedRoute>
-              <PremiumPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/dashboard/settings"
-          element={
-            <ProtectedRoute>
-              <SettingsPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/dashboard/mobile-app"
-          element={
-            <ProtectedRoute>
-              <MobileAppPage />
+              <PendingOrdersPage />
             </ProtectedRoute>
           }
         />
@@ -122,10 +129,82 @@ function App() {
           }
         />
         <Route
-          path="/dashboard/api-docs"
+          path="/dashboard/settings"
           element={
             <ProtectedRoute>
-              <ApiDocsPage />
+              <SettingsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard/businesses"
+          element={
+            <ProtectedRoute>
+              <BusinessManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard/employees"
+          element={
+            <ProtectedRoute>
+              <EmployeeManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard/projects"
+          element={
+            <ProtectedRoute>
+              <ProjectManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard/projects/:id"
+          element={
+            <ProtectedRoute>
+              <ProjectDetailsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard/mobile"
+          element={
+            <ProtectedRoute>
+              <MobileAppPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard/usage"
+          element={
+            <ProtectedRoute>
+              <UsagePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard/packages"
+          element={
+            <ProtectedRoute>
+              <UsagePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard/access-codes"
+          element={
+            <ProtectedRoute>
+              <AccessCodeManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/dashboard/employees/record"
+          element={
+            <ProtectedRoute>
+              <EmployeeTransactionEntryPage />
             </ProtectedRoute>
           }
         />
@@ -183,7 +262,7 @@ function App() {
           path="/admin/countries/:countryCode/templates"
           element={
             <ProtectedRoute>
-              <TemplateManagementPage />
+              <CountryTemplatesPage />
             </ProtectedRoute>
           }
         />
@@ -208,6 +287,22 @@ function App() {
           element={
             <ProtectedRoute>
               <SystemHealthPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/packages"
+          element={
+            <ProtectedRoute>
+              <AdminPackageManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/package-purchases"
+          element={
+            <ProtectedRoute>
+              <PackagePurchaseVerificationPage />
             </ProtectedRoute>
           }
         />

@@ -1,32 +1,35 @@
 export interface User {
   id: string;
-  username?: string | null;
   email: string | null;
   phone: string | null;
   apiKey: string;
-  devApiKey?: string;
-  plan: 'FREE' | 'PREMIUM';
-  role?: 'USER' | 'ADMIN' | 'SUPER_ADMIN';
+  username?: string | null;
+  role?: string;
   country?: string | null;
+  plan: 'FREE' | 'PREMIUM';
   createdAt?: string;
   updatedAt?: string;
 }
 
+// Use sessionStorage instead of localStorage so each tab has its own session
+// This allows opening multiple users in different tabs
+const storage = sessionStorage;
+
 export const auth = {
   getToken: (): string | null => {
-    return localStorage.getItem('token');
+    return storage.getItem('token');
   },
 
   setToken: (token: string): void => {
-    localStorage.setItem('token', token);
+    storage.setItem('token', token);
   },
 
   removeToken: (): void => {
-    localStorage.removeItem('token');
+    storage.removeItem('token');
   },
 
   getUser: (): User | null => {
-    const userStr = localStorage.getItem('user');
+    const userStr = storage.getItem('user');
     if (!userStr) return null;
     try {
       return JSON.parse(userStr);
@@ -36,11 +39,11 @@ export const auth = {
   },
 
   setUser: (user: User): void => {
-    localStorage.setItem('user', JSON.stringify(user));
+    storage.setItem('user', JSON.stringify(user));
   },
 
   removeUser: (): void => {
-    localStorage.removeItem('user');
+    storage.removeItem('user');
   },
 
   logout: (): void => {

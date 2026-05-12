@@ -1,0 +1,728 @@
+/**
+ * Enhanced Regex Generator with Multi-Language Support
+ * Supports English, Amharic, and other common languages
+ */
+
+import { extractTransactionIds } from './transactionIdExtractor';
+import { extractBanksFromText } from './sameBankValidator';
+
+// Language-specific keywords for transaction SMS
+const languageKeywords = {
+  english: {
+    transactionId: ['transaction number', 'transaction id', 'txn', 'txn no', 'ref', 'reference', 'bank ref'],
+    amount: ['amount', 'received', 'credited', 'debited', 'balance', 'etb', 'kes', 'ngn', 'usd'],
+    sender: ['from', 'dear', 'sender', 'sent by'],
+    received: ['received', 'credited', 'deposited'],
+    sent: ['sent', 'debited', 'transferred'],
+  },
+  amharic: {
+    transactionId: ['የግብይት', 'ግብይት', 'የገንዘብ ዝውውር', 'መለያ', 'ቁጥር', 'የማጣቀሻ', 'ማጣቀሻ'],
+    amount: ['መጠን', 'ብር', 'ከ', 'ወደ', 'ቀሪ ሒሳብ'],
+    sender: ['ከ', 'ውድ', 'ያገኘው', 'በ'],
+    received: ['ተቀብለዋል', 'ደርሷል', 'ተገኘ'],
+    sent: ['ተላከ', 'ወጣ', 'ተሰጠ'],
+  },
+};
+
+interface ExtractionResult {
+  regex: string;
+  extractFields: any;
+  bank: string | null;
+  currency: string | null;
+  extractedValues: {
+    txnId: string | null;
+    referenceTxnId: string | null;
+    amount: number | null;
+    sender: string | null;
+    senderBank: string | null;
+    receiverBank: string | null;
+    currency: string | null;
+  };
+  confidence: number; // 0-1 score of how confident we are in the extraction
+}
+
+/**
+ * Detect language from SMS text
+ */
+function detectLanguage(smsText: string): 'english' | 'amharic' | 'mixed' {
+  const amharicPattern = /[\u1200-\u137F]/; // Amharic Unicode range
+  const hasAmharic = amharicPattern.test(smsText);
+  const hasEnglish = /[a-zA-Z]/.test(smsText);
+
+  if (hasAmharic && hasEnglish) return 'mixed';
+  if (hasAmharic) return 'amharic';
+  return 'english';
+}
+
+/**
+ * Extract amount with multi-language support
+ */
+function extractAmount(smsText: string, language: string): number | null {
+  const upperText = smsText.toUpperCase();
+  
+  // Currency codes (universal)
+  const currencyPatterns = [
+    /(?:ETB|KES|NGN|GHS|USD|EUR)\s*([\d,]+\.?\d*)/i,
+    /([\d,]+\.?\d*)\s*(?:ETB|KES|NGN|GHS|USD|EUR)/i,
+    /(?:ብር|birr)\s*([\d,]+\.?\d*)/i, // Amharic "birr"
+    /([\d,]+\.?\d*)\s*(?:ብር|birr)/i,
+  ];
+
+  // Amount keywords (language-specific)
+  const amountKeywords = {
+    english: [/amount[:\s]+([\d,]+\.?\d*)/i, /received[:\s]+(?:ETB|KES|NGN|USD|EUR)?\s*([\d,]+\.?\d*)/i],
+    amharic: [/መጠን[:\s]+([\d,]+\.?\d*)/i, /([\d,]+\.?\d*)\s*ብር/i],
+    mixed: [/amount[:\s]+([\d,]+\.?\d*)/i, /([\d,]+\.?\d*)\s*(?:ETB|KES|NGN|USD|EUR|ብር)/i],
+  };
+
+  // Try currency patterns first
+  for (const pattern of currencyPatterns) {
+    const match = smsText.match(pattern);
+    if (match && match[1]) {
+      const amountStr = match[1].replace(/,/g, '');
+      const parsed = parseFloat(amountStr);
+      if (!isNaN(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+  }
+
+  // Try language-specific patterns
+  const patterns = amountKeywords[language as keyof typeof amountKeywords] || amountKeywords.english;
+  for (const pattern of patterns) {
+    const match = smsText.match(pattern);
+    if (match && match[1]) {
+      const amountStr = match[1].replace(/,/g, '');
+      const parsed = parseFloat(amountStr);
+      if (!isNaN(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+  }
+
+  // Fallback: look for numbers with currency context
+  const numberPattern = /([\d,]+\.?\d{2})\s*(?:ETB|KES|NGN|USD|EUR|ብር|birr)/i;
+  const match = smsText.match(numberPattern);
+  if (match && match[1]) {
+    const parsed = parseFloat(match[1].replace(/,/g, ''));
+    if (!isNaN(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract sender name with multi-language support
+ */
+function extractSender(smsText: string, language: string): string | null {
+  const senderPatterns = {
+    english: [
+      // PRIORITY 1: "from" patterns (these are the actual sender, not recipient)
+      /from\s+([A-Za-z]+(?:\s+[A-Za-z]+)*?)(?:\s+to|\s+on|\.|\(|$)/i,
+      /received\s+from\s+([A-Za-z]+(?:\s+[A-Za-z]+)*?)(?:\s+on|\.|\(|$)/i,
+      /credited\s+with\s+.*?\s+from\s+([A-Za-z]+(?:\s+[A-Za-z]+)*?)(?:\s*,|\s+on|\.|$)/i,
+      // Pattern for "from NAME(phone)" format - HIGH PRIORITY
+      /from\s+([A-Za-z]+(?:\s+[A-Za-z]+)*?)\s*\(/i,
+      // PRIORITY 2: Other sender patterns
+      /sender[:\s]+([A-Za-z]+(?:\s+[A-Za-z]+)*?)(?:\s|$)/i,
+      // PRIORITY 3: "dear" patterns (usually recipient, not sender - use as last resort)
+      /dear\s+([A-Za-z]+(?:\s+[A-Za-z]+)*?)(?:\s*\n|,|\.|your|account|you)/i,
+    ],
+    amharic: [
+      /ውድ\s+([^\s]+(?:\s+[^\s]+){0,4})(?:\s*\n|,|\.|፣)/i, // "ውድ" = "Dear"
+      /ከ([^\s]+(?:\s+[^\s]+){0,4})(?:\s+በ|\s+ወደ|\.|፣)/i, // "ከ" = "from"
+      /([A-Za-z]+(?:\s+[A-Za-z]+)*?)\s*\(?\d{3,}\)/i, // Name followed by phone number
+      // Pattern for "ለNAME phone" format (M-PESA)
+      /ለ([^\s]+(?:\s+[^\s]+){0,4})\s+\d/i,
+    ],
+    mixed: [
+      /(?:dear|ውድ)\s+([A-Za-z\u1200-\u137F]+(?:\s+[A-Za-z\u1200-\u137F]+)*?)(?:\s*\n|,|\.)/i,
+      /(?:from|ከ)\s+([A-Za-z\u1200-\u137F]+(?:\s+[A-Za-z\u1200-\u137F]+)*?)(?:\s+to|\s+on|\.|\(|$)/i,
+      /([A-Za-z\u1200-\u137F]+(?:\s+[A-Za-z\u1200-\u137F]+)*?)\s*\(?\d{3,}\)/i,
+    ],
+  };
+
+  const patterns = senderPatterns[language as keyof typeof senderPatterns] || senderPatterns.english;
+  
+  for (const pattern of patterns) {
+    const match = smsText.match(pattern);
+    if (match && match[1]) {
+      const sender = match[1].trim();
+      // Clean up common suffixes and stop at newlines
+      const cleaned = sender
+        .replace(/\s*\n.*$/, '') // Remove everything after newline
+        .replace(/\s*(\(|\)|,|\.|፣).*$/, '') // Remove suffixes
+        .trim();
+      if (cleaned.length > 2 && cleaned.length < 50) {
+        return cleaned;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Robust Regex Generator (No String Mutation!) — Fixes all issues:
+ * - Hardcoded values → generic
+ * - Broken dates, multiple amounts → deduplicated
+ * - Safe capture group numbering
+ */
+export function generateRegexPattern(smsText: string): ExtractionResult {
+  const language = detectLanguage(smsText);
+  
+  // Extract transaction IDs (works for all languages)
+  const extractedIds = extractTransactionIds(smsText);
+  
+  // Extract banks
+  const banks = extractBanksFromText(smsText);
+  
+  // Extract amount
+  const amount = extractAmount(smsText, language);
+  
+  // Extract sender
+  const sender = extractSender(smsText, language);
+  
+  // Determine currency
+  let currency: string | null = null;
+  if (smsText.match(/ETB|ብር|birr/i)) currency = 'ETB';
+  else if (smsText.match(/KES/i)) currency = 'KES';
+  else if (smsText.match(/NGN/i)) currency = 'NGN';
+  else if (smsText.match(/GHS/i)) currency = 'GHS';
+  else if (smsText.match(/USD/i)) currency = 'USD';
+  else if (smsText.match(/EUR/i)) currency = 'EUR';
+  
+  // Determine bank
+  let bank: string | null = null;
+  if (banks.senderBank) bank = banks.senderBank;
+  else if (banks.receiverBank) bank = banks.receiverBank;
+  else if (smsText.match(/CBE|COMMERCIAL BANK OF ETHIOPIA/i)) bank = 'CBE';
+  else if (smsText.match(/M-PESA|MPESA/i)) bank = 'M-PESA';
+  else if (smsText.match(/TELEBIRR|telebirr/i)) bank = 'Telebirr';
+  else if (smsText.match(/AWASH/i)) bank = 'Awash';
+  else if (smsText.match(/DASHE/i)) bank = 'Dashen';
+  else if (smsText.match(/SAFARICOM/i)) bank = 'Safaricom';
+
+  // Build regex pattern with capture groups
+  // Strategy: Replace ALL specific values with generic patterns to make it work for ANY similar SMS
+  // Normalize newlines first (handle both \r\n and \n)
+  let regex = smsText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const extractFields: any = {};
+  let groupIndex = 1;
+  
+  // IMPORTANT: We need to replace ALL hardcoded values BEFORE we start adding capture groups
+  // This ensures the pattern works for ANY similar SMS, not just the example
+  
+  // Account numbers will be replaced later in STEP 4 to avoid conflicts
+  
+  // Replace transaction ID with capture group (from end to start to preserve indices)
+  if (extractedIds.primaryTxnId) {
+    const txnId = extractedIds.primaryTxnId;
+    // Try to find the transaction ID with context (more reliable)
+    const txnIdContexts = [
+      `transaction number is ${txnId}`,
+      `transaction number: ${txnId}`,
+      `txn: ${txnId}`,
+      `ref no ${txnId}`,
+      `ref: ${txnId}`,
+      `reference ${txnId}`,
+      `መለያ ቁጥር ${txnId}`, // Amharic "transaction number"
+      txnId, // Fallback to just the ID
+    ];
+    
+    for (const context of txnIdContexts) {
+      const lastIndex = regex.lastIndexOf(context);
+      if (lastIndex !== -1) {
+        // Replace the ID part with capture group
+        const idIndex = lastIndex + context.length - txnId.length;
+        regex = regex.substring(0, idIndex) + 
+                `([A-Z0-9]{${Math.max(6, txnId.length)},})` + 
+                regex.substring(idIndex + txnId.length);
+        extractFields.txnId = { group: groupIndex++, type: 'string' };
+        break;
+      }
+    }
+  }
+  
+  // Replace reference ID with capture group (if different from primary)
+  if (extractedIds.referenceTxnId && extractedIds.referenceTxnId !== extractedIds.primaryTxnId) {
+    const refId = extractedIds.referenceTxnId;
+    // Try to find with context
+    const refContexts = [
+      `ref no ${refId}`,
+      `ref: ${refId}`,
+      `reference ${refId}`,
+      `with ref no ${refId}`,
+      refId, // Fallback
+    ];
+    
+    for (const context of refContexts) {
+      const lastIndex = regex.lastIndexOf(context);
+      if (lastIndex !== -1) {
+        const idIndex = lastIndex + context.length - refId.length;
+        regex = regex.substring(0, idIndex) + 
+                `([A-Z0-9]{${Math.max(6, refId.length)},})` + 
+                regex.substring(idIndex + refId.length);
+        extractFields.referenceTxnId = { group: groupIndex++, type: 'string' };
+        break;
+      }
+    }
+  }
+  
+  // Replace dates FIRST (before amount replacement to avoid conflicts)
+  // Patterns like "11/11/2025", "25/12/2025", "2025-12-25", etc.
+  const dateMatches: Array<{ index: number; length: number; replacement: string }> = [];
+  
+  const datePatterns = [
+    /\b(\d{1,2}\/\d{1,2}\/\d{4})\b/g, // DD/MM/YYYY or MM/DD/YYYY
+    /\b(\d{4}-\d{1,2}-\d{1,2})\b/g, // YYYY-MM-DD
+    /\b(\d{1,2}-\d{1,2}-\d{4})\b/g, // DD-MM-YYYY
+  ];
+  
+  for (const pattern of datePatterns) {
+    let dateMatch;
+    pattern.lastIndex = 0;
+    while ((dateMatch = pattern.exec(regex)) !== null) {
+      if (dateMatch[1] && dateMatch.index !== undefined) {
+        let replacement: string;
+        if (dateMatch[1].includes('/')) {
+          replacement = '\\d{1,2}/\\d{1,2}/\\d{4}';
+        } else if (dateMatch[1].startsWith('20') || dateMatch[1].startsWith('19')) {
+          replacement = '\\d{4}-\\d{1,2}-\\d{1,2}';
+        } else {
+          replacement = '\\d{1,2}-\\d{1,2}-\\d{4}';
+        }
+        dateMatches.push({
+          index: dateMatch.index,
+          length: dateMatch[1].length,
+          replacement,
+        });
+      }
+    }
+  }
+  
+  // Replace dates from end to start
+  dateMatches.sort((a, b) => b.index - a.index);
+  for (const dm of dateMatches) {
+    regex = regex.substring(0, dm.index) + 
+            dm.replacement + 
+            regex.substring(dm.index + dm.length);
+  }
+
+  // Replace times with generic time patterns
+  regex = regex.replace(/\b(\d{1,2}:\d{2}:\d{2})\b/g, '\\d{1,2}:\\d{2}:\\d{2}');
+
+  // Replace amount with capture group (ONLY the transaction amount, not all amounts)
+  if (amount) {
+    const amountStr = amount.toString();
+    // Try to find amount with various formats (with and without decimals)
+    const amountVariations = [
+      amountStr,
+      amountStr.replace('.', ','),
+      amountStr.replace(',', '.'),
+    ];
+    
+    // Also try with currency prefix
+    const currencyPrefixes = ['ETB', 'KES', 'NGN', 'USD', 'EUR', 'ብር', 'birr'];
+    for (const currency of currencyPrefixes) {
+      amountVariations.push(`${currency} ${amountStr}`);
+    }
+    
+    // Find the transaction amount (first occurrence after "Credited with" or similar)
+    let amountFound = false;
+    for (const amountVar of amountVariations) {
+      // Look for "Credited with ETB 5.00" or "received ETB 5.00" pattern
+      const contexts = [
+        `Credited with ${amountVar}`,
+        `credited with ${amountVar}`,
+        `received ${amountVar}`,
+        `Received ${amountVar}`,
+        `${currencyPrefixes[0]} ${amountVar}`, // ETB 5.00
+      ];
+      
+      for (const context of contexts) {
+        const contextIndex = regex.indexOf(context);
+        if (contextIndex !== -1) {
+          const amountIndex = contextIndex + context.length - amountVar.length;
+          // Check if it's not already in a capture group
+          const beforeAmount = regex.substring(Math.max(0, amountIndex - 10), amountIndex);
+          if (!beforeAmount.includes('(') || beforeAmount.lastIndexOf('(') < beforeAmount.lastIndexOf(')')) {
+            regex = regex.substring(0, amountIndex) + 
+                    '([\\d,]+(?:\\.\\d+)?)' + 
+                    regex.substring(amountIndex + amountVar.length);
+            extractFields.amount = { group: groupIndex++, type: 'number' };
+            amountFound = true;
+            break;
+          }
+        }
+      }
+      if (amountFound) break;
+    }
+    
+    // Fallback: use flexible pattern near currency
+    if (!amountFound) {
+      const amountPattern = /(?:ETB|KES|NGN|USD|EUR|ብር|birr)\s+([\d,]+\.?\d*)/i;
+      const match = regex.match(amountPattern);
+      if (match && match.index !== undefined && match[1]) {
+        const amountIndex = match.index + match[0].indexOf(match[1]);
+        const beforeAmount = regex.substring(Math.max(0, amountIndex - 10), amountIndex);
+        if (!beforeAmount.includes('(') || beforeAmount.lastIndexOf('(') < beforeAmount.lastIndexOf(')')) {
+          regex = regex.substring(0, amountIndex) + 
+                  '([\\d,]+(?:\\.\\d+)?)' + 
+                  regex.substring(amountIndex + match[1].length);
+          extractFields.amount = { group: groupIndex++, type: 'number' };
+        }
+      }
+    }
+  }
+  
+  // STEP 1: Replace recipient names FIRST (after "Dear", "ውድ", etc.) with generic patterns
+  // This handles names like "Dear Gemechu", "Dear HAYDER", etc.
+  // Do this before sender replacement to avoid conflicts
+  // Process ALL occurrences, not just the first one
+  const recipientNamePatterns = [
+    /(Dear|ውድ|ውድዬ)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)/gi,
+    /(Dear|ውድ|ውድዬ)\s+([A-Z]+)/g, // All caps names like "HAYDER"
+  ];
+  
+  const recipientMatches: Array<{ index: number; length: number; nameLength: number }> = [];
+  for (const pattern of recipientNamePatterns) {
+    let recipientMatch;
+    while ((recipientMatch = pattern.exec(regex)) !== null) {
+      if (recipientMatch[2]) {
+        const nameIndex = recipientMatch.index + recipientMatch[1].length + 1; // After "Dear "
+        recipientMatches.push({
+          index: nameIndex,
+          length: recipientMatch[2].length,
+          nameLength: recipientMatch[2].length,
+        });
+      }
+    }
+  }
+  
+  // Replace from end to start to preserve indices
+  recipientMatches.sort((a, b) => b.index - a.index);
+  for (const rm of recipientMatches) {
+    const namePattern = language === 'amharic' 
+      ? '([\\u1200-\\u137Fa-zA-Z]+(?:\\s+[\\u1200-\\u137Fa-zA-Z]+)*?)'
+      : '([A-Z][A-Za-z]*(?:\\s+[A-Z][A-Za-z]*)*?)'; // Capitalized name pattern
+    
+    regex = regex.substring(0, rm.index) + 
+            namePattern + 
+            regex.substring(rm.index + rm.nameLength);
+  }
+
+  // STEP 2: Replace sender with capture group
+  // IMPORTANT: Do this BEFORE date/time replacements to preserve the sender string
+  // Find ALL occurrences of sender name and replace them
+  if (sender) {
+    // Find all occurrences of sender name (case-insensitive)
+    const senderMatches: Array<{ index: number; length: number }> = [];
+    const lowerRegex = regex.toLowerCase();
+    const lowerSender = sender.toLowerCase();
+    let searchIndex = 0;
+    
+    while (true) {
+      const foundIndex = lowerRegex.indexOf(lowerSender, searchIndex);
+      if (foundIndex === -1) break;
+      
+      // Check if it's not already in a capture group
+      const beforeSender = regex.substring(Math.max(0, foundIndex - 10), foundIndex);
+      if (!beforeSender.includes('(') || beforeSender.lastIndexOf('(') < beforeSender.lastIndexOf(')')) {
+        senderMatches.push({
+          index: foundIndex,
+          length: sender.length,
+        });
+      }
+      searchIndex = foundIndex + 1;
+    }
+    
+    // Replace from end to start to preserve indices
+    senderMatches.sort((a, b) => b.index - a.index);
+    
+    // Only replace the FIRST occurrence as the sender (for extractFields)
+    // But replace ALL occurrences with generic pattern
+    let isFirstSender = true;
+    for (const sm of senderMatches) {
+      const namePattern = language === 'amharic' 
+        ? '([\\u1200-\\u137Fa-zA-Z]+(?:\\s+[\\u1200-\\u137Fa-zA-Z]+)*?)' // Amharic names (non-greedy)
+        : language === 'mixed'
+        ? '([\\u1200-\\u137Fa-zA-Z]+(?:\\s+[\\u1200-\\u137Fa-zA-Z]+)*?)' // Mixed (non-greedy)
+        : '([A-Za-z]+(?:\\s+[A-Za-z]+)*?)'; // English names (non-greedy, stops at non-letter)
+      
+      regex = regex.substring(0, sm.index) + 
+              namePattern + 
+              regex.substring(sm.index + sm.length);
+      
+      // Only add to extractFields for the first occurrence (the actual sender)
+      if (isFirstSender) {
+        extractFields.sender = { group: groupIndex++, type: 'string' };
+        isFirstSender = false;
+      }
+    }
+  }
+  
+  // Dates and times are already replaced above (before amount replacement)
+
+  // Replace times with generic time patterns
+  // Patterns like "11:32:30", "09:39:52", etc.
+  regex = regex.replace(/\b(\d{1,2}:\d{2}:\d{2})\b/g, '\\d{1,2}:\\d{2}:\\d{2}');
+
+  // STEP 3: Replace balance amounts (not the transaction amount) with generic patterns
+  // Look for "balance", "current balance", "account balance", etc. followed by amount
+  const balanceMatches: Array<{ index: number; amountIndex: number; amountLength: number }> = [];
+  const balancePatterns = [
+    /(?:current\s+)?(?:account\s+)?balance\s+(?:is\s+)?(?:ETB|KES|NGN|USD|EUR|ብር|birr)?\s*([\d,]+\.?\d*)/gi,
+    /balance\s+(?:of\s+)?(?:ETB|KES|NGN|USD|EUR|ብር|birr)?\s*([\d,]+\.?\d*)/gi,
+  ];
+  
+  for (const pattern of balancePatterns) {
+    let balanceMatch;
+    while ((balanceMatch = pattern.exec(regex)) !== null) {
+      if (balanceMatch[1]) {
+        const amountIndex = balanceMatch.index + balanceMatch[0].indexOf(balanceMatch[1]);
+        balanceMatches.push({
+          index: balanceMatch.index,
+          amountIndex,
+          amountLength: balanceMatch[1].length,
+        });
+      }
+    }
+  }
+  
+  // Replace from end to start
+  balanceMatches.sort((a, b) => b.amountIndex - a.amountIndex);
+  for (const bm of balanceMatches) {
+    regex = regex.substring(0, bm.amountIndex) + 
+            '([\\d,]+(?:\\.[\\d]+)?)' + 
+            regex.substring(bm.amountIndex + bm.amountLength);
+  }
+
+  // STEP 4: Replace specific account numbers with generic patterns
+  // Pattern: "Account 1*********8423" or "your Account 1*********8423" or "Account 1234567890"
+  const accountMatches: Array<{ index: number; length: number; replacement: string }> = [];
+  
+  // Account with asterisks - match "Account" or "your Account" or "account"
+  let accountMatch1;
+  const accountPattern1 = /(?:your\s+)?[Aa]ccount\s+(\d+\*+\d+)/gi;
+  while ((accountMatch1 = accountPattern1.exec(regex)) !== null) {
+    if (accountMatch1[1] && accountMatch1.index !== undefined) {
+      const asteriskCount = (accountMatch1[1].match(/\*/g) || []).length;
+      const accountIndex = accountMatch1.index + accountMatch1[0].indexOf(accountMatch1[1]);
+      accountMatches.push({
+        index: accountIndex,
+        length: accountMatch1[1].length,
+        replacement: `\\d+${'\\*'.repeat(asteriskCount)}\\d+`,
+      });
+    }
+  }
+  
+  // Account without asterisks (long numbers)
+  let accountMatch2;
+  const accountPattern2 = /(?:your\s+)?[Aa]ccount\s+(\d{10,})/gi;
+  while ((accountMatch2 = accountPattern2.exec(regex)) !== null) {
+    if (accountMatch2[1] && accountMatch2.index !== undefined) {
+      const accountIndex = accountMatch2.index + accountMatch2[0].indexOf(accountMatch2[1]);
+      accountMatches.push({
+        index: accountIndex,
+        length: accountMatch2[1].length,
+        replacement: '\\d{10,}',
+      });
+    }
+  }
+  
+  // Replace from end to start
+  accountMatches.sort((a, b) => b.index - a.index);
+  for (const am of accountMatches) {
+    regex = regex.substring(0, am.index) + 
+            am.replacement + 
+            regex.substring(am.index + am.length);
+  }
+
+  // STEP 5: Replace phone numbers with generic patterns
+  // Patterns like "(2519****3024)", "2519****3024", etc.
+  const phoneMatches: Array<{ index: number; length: number; asteriskCount: number }> = [];
+  const phonePattern = /\(?(\d{3,5}\*+\d{3,5})\)?/g;
+  let phoneMatch;
+  while ((phoneMatch = phonePattern.exec(regex)) !== null) {
+    if (phoneMatch[1]) {
+      const asteriskCount = (phoneMatch[1].match(/\*/g) || []).length;
+      phoneMatches.push({
+        index: phoneMatch.index + (phoneMatch[0].startsWith('(') ? 1 : 0),
+        length: phoneMatch[1].length,
+        asteriskCount,
+      });
+    }
+  }
+  
+  // Replace from end to start
+  phoneMatches.sort((a, b) => b.index - a.index);
+  for (const pm of phoneMatches) {
+    const replacement = `\\d{${Math.min(3, pm.length - pm.asteriskCount)}}\\*{${pm.asteriskCount}}\\d{${Math.min(3, pm.length - pm.asteriskCount)}}`;
+    regex = regex.substring(0, pm.index) + 
+            replacement + 
+            regex.substring(pm.index + pm.length);
+  }
+
+  // STEP 6: Replace URL IDs with generic patterns (if not already captured as referenceTxnId)
+  // Pattern: "?id=FT25315HZNYL50058423" or similar
+  if (!extractFields.referenceTxnId) {
+    const urlIdMatches: Array<{ index: number; length: number }> = [];
+    const urlIdPattern = /\?id=([A-Z0-9]{10,})/gi;
+    let urlIdMatch;
+    while ((urlIdMatch = urlIdPattern.exec(regex)) !== null) {
+      if (urlIdMatch[1]) {
+        urlIdMatches.push({
+          index: urlIdMatch.index + urlIdMatch[0].indexOf(urlIdMatch[1]),
+          length: urlIdMatch[1].length,
+        });
+      }
+    }
+    
+    // Replace from end to start
+    urlIdMatches.sort((a, b) => b.index - a.index);
+    for (const um of urlIdMatches) {
+      regex = regex.substring(0, um.index) + 
+              '([A-Z0-9]{10,})' + 
+              regex.substring(um.index + um.length);
+    }
+  }
+
+  // Replace any remaining specific numeric values that look like amounts (but weren't the transaction amount)
+  // This catches things like "5.00" in "ETB 5.00" if it wasn't the main amount
+  // We need to be careful not to replace the amount we already captured
+  // Look for currency followed by amount patterns that aren't in our extractFields
+  // Process from end to start to preserve indices
+  const currencyAmountPattern = /(?:ETB|KES|NGN|USD|EUR|ብር|birr)\s+([\d,]+\.?\d*)/gi;
+  const amountMatches: Array<{ index: number; length: number; amount: string }> = [];
+  let amountMatch;
+  while ((amountMatch = currencyAmountPattern.exec(regex)) !== null) {
+    // Check if this is already a capture group (would contain parentheses)
+    const beforeMatch = regex.substring(Math.max(0, amountMatch.index - 10), amountMatch.index);
+    if (!beforeMatch.includes('(') || beforeMatch.lastIndexOf('(') < beforeMatch.lastIndexOf(')')) {
+      // Not already in a capture group
+      amountMatches.push({
+        index: amountMatch.index + amountMatch[0].indexOf(amountMatch[1]),
+        length: amountMatch[1].length,
+        amount: amountMatch[1],
+      });
+    }
+  }
+  
+  // Replace from end to start to preserve indices
+  amountMatches.sort((a, b) => b.index - a.index);
+  for (const amtMatch of amountMatches) {
+    // Skip if this is the transaction amount (already captured)
+    if (extractFields.amount) {
+      // Check if this amount position matches where we put the amount capture group
+      // This is approximate - we'll be conservative and only replace if it's clearly a different amount
+      continue;
+    }
+    // Replace with generic pattern
+    regex = regex.substring(0, amtMatch.index) + 
+            '([\\d,]+(?:\\.[\\d]+)?)' + 
+            regex.substring(amtMatch.index + amtMatch.length);
+  }
+  
+  // Now escape all special regex characters except inside capture groups
+  // We'll do this by splitting on capture groups
+  // Updated pattern to match both [A-Za-z...] and [\d...] style capture groups
+  const captureGroupRegex = /\(\[[^\]]+\](?:\+|\*|\?|\{[^}]+\})?\)/g;
+  const parts: string[] = [];
+  let lastIndex = 0;
+  const matches: Array<{ index: number; length: number; text: string }> = [];
+  
+  // Collect all capture group matches
+  let match;
+  while ((match = captureGroupRegex.exec(regex)) !== null) {
+    matches.push({
+      index: match.index,
+      length: match[0].length,
+      text: match[0],
+    });
+  }
+  
+  // Sort matches by index (forward order for processing)
+  matches.sort((a, b) => a.index - b.index);
+  
+  // Process each segment (from start to end)
+  for (const matchInfo of matches) {
+    // Escape text before capture group
+    const before = regex.substring(lastIndex, matchInfo.index);
+    
+    // Escape the before part, but preserve newlines and whitespace patterns
+    const escapedBefore = before
+      .replace(/\n/g, '\\n') // Preserve newlines as \n
+      .replace(/\r/g, '\\r') // Preserve carriage returns
+      .replace(/\t/g, '\\t') // Preserve tabs
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // Escape other special chars
+    
+    parts.push(escapedBefore);
+    // Keep capture group as-is
+    parts.push(matchInfo.text);
+    lastIndex = matchInfo.index + matchInfo.length;
+  }
+  
+  // Add remaining text (escaped)
+  const remaining = regex.substring(lastIndex);
+  const escapedRemaining = remaining
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t')
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  parts.push(escapedRemaining);
+  regex = parts.join('');
+  
+  // Handle phone numbers with asterisks - preserve literal asterisks
+  // Pattern like (2519****3729) should become \(2519\*\*\*\*3729\)
+  // But we need to be careful not to break quantifiers
+  regex = regex.replace(/(\d+)\*+(\d+)/g, (match, before, after) => {
+    // Count asterisks
+    const asteriskCount = match.match(/\*/g)?.length || 0;
+    return `${before}${'\\*'.repeat(asteriskCount)}${after}`;
+  });
+  
+  // If no capture groups were added, create a basic generic pattern
+  if (Object.keys(extractFields).length === 0) {
+    regex = smsText
+      .replace(/\d+/g, '\\d+')
+      .replace(/[A-Za-z]+/g, '[A-Za-z]+')
+      .replace(/[\u1200-\u137F]+/g, '[\\u1200-\\u137F]+') // Amharic characters
+      .replace(/\s+/g, '\\s+')
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  // Calculate confidence score (0-1)
+  let confidence = 0;
+  if (extractedIds.primaryTxnId) confidence += 0.4;
+  if (amount) confidence += 0.3;
+  if (sender) confidence += 0.2;
+  if (bank || currency) confidence += 0.1;
+
+  return {
+    regex,
+    extractFields,
+    bank,
+    currency,
+    extractedValues: {
+      txnId: extractedIds.primaryTxnId,
+      referenceTxnId: extractedIds.referenceTxnId,
+      amount,
+      sender,
+      senderBank: banks.senderBank,
+      receiverBank: banks.receiverBank,
+      currency,
+    },
+    confidence,
+  };
+}
+
+/**
+ * Generate regex patterns for multiple SMS texts (multi-language support)
+ */
+export function generateRegexPatternsMultiLanguage(smsTexts: string[]): ExtractionResult[] {
+  return smsTexts.map(text => generateRegexPattern(text));
+}
+

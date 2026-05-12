@@ -1,0 +1,359 @@
+import { Response } from 'express';
+import { z } from 'zod';
+import prisma from '../utils/prisma';
+import { AppError } from '../middleware/errorHandler';
+import { AuthRequest } from '../middleware/auth';
+import { generateOwnerCode, validateOwnerCodeFormat } from '../utils/ownerCodeGenerator';
+
+async function ensureOwnerCode(userId: string): Promise<string> {
+  const current = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { ownerCode: true },
+  });
+
+  if (!current) {
+    throw new AppError(404, 'User not found');
+  }
+
+  if (current.ownerCode) {
+    return current.ownerCode;
+  }
+
+  for (let i = 0; i < 20; i++) {
+    const candidate = generateOwnerCode();
+    const exists = await prisma.user.findUnique({
+      where: { ownerCode: candidate },
+      select: { id: true },
+    });
+
+    if (!exists) {
+      const updated = await prisma.user.update({
+        where: { id: userId },
+        data: {
+          ownerCode: candidate,
+          ownerCodeAssignedAt: new Date(),
+        },
+        select: { ownerCode: true },
+      });
+      return updated.ownerCode as string;
+    }
+  }
+
+  throw new AppError(500, 'Failed to allocate owner ID. Please try again.');
+}
+
+const createClusterRequestSchema = z.object({
+  ownerCode: z.string().regex(/^\d{6}$/, 'ownerCode must be a 6-digit code'),
+  projectId: z.string().optional(),
+  message: z.string().max(500).optional(),
+  expiresInHours: z.number().int().min(1).max(168).optional().default(72),
+});
+
+export async function getClusterMe(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const canOwnCluster = req.user.role === 'BUSINESS_OWNER' || req.user.role === 'ADMIN' || req.user.role === 'SUPER_ADMIN';
+  const ownerCode = canOwnCluster ? await ensureOwnerCode(req.user.id) : null;
+
+  const [incomingPendingCount, outgoingPendingCount] = await Promise.all([
+    prisma.clusterRequest.count({
+      where: {
+        ownerId: req.user.id,
+        status: 'PENDING',
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+      },
+    }),
+    prisma.clusterRequest.count({
+      where: {
+        developerId: req.user.id,
+        status: 'PENDING',
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+      },
+    }),
+  ]);
+
+  res.json({
+    success: true,
+    data: {
+      role: req.user.role,
+      ownerCode,
+      incomingPendingCount,
+      outgoingPendingCount,
+    },
+  });
+}
+
+export async function createClusterRequest(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  if (!['DEVELOPER', 'ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
+    throw new AppError(403, 'Only developers can send cluster requests');
+  }
+
+  const data = createClusterRequestSchema.parse(req.body);
+
+  if (!validateOwnerCodeFormat(data.ownerCode)) {
+    throw new AppError(400, 'Invalid owner ID format');
+  }
+
+  const owner = await prisma.user.findUnique({
+    where: { ownerCode: data.ownerCode },
+    select: { id: true, role: true, username: true, phone: true, ownerCode: true },
+  });
+
+  if (!owner) {
+    throw new AppError(404, 'Owner ID not found');
+  }
+
+  if (!['BUSINESS_OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(owner.role)) {
+    throw new AppError(400, 'Owner ID does not belong to a business owner account');
+  }
+
+  if (owner.id === req.user.id) {
+    throw new AppError(400, 'You cannot send a cluster request to yourself');
+  }
+
+  if (data.projectId) {
+    const project = await prisma.project.findUnique({
+      where: { id: data.projectId },
+      select: { id: true, developerId: true },
+    });
+    if (!project) {
+      throw new AppError(404, 'Project not found');
+    }
+    if (project.developerId !== req.user.id && !['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
+      throw new AppError(403, 'You can only link your own project');
+    }
+  }
+
+  await prisma.clusterRequest.updateMany({
+    where: {
+      developerId: req.user.id,
+      ownerId: owner.id,
+      projectId: data.projectId ?? null,
+      status: 'PENDING',
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+    },
+    data: {
+      status: 'EXPIRED',
+      respondedAt: new Date(),
+    },
+  });
+
+  const expiresAt = new Date(Date.now() + data.expiresInHours * 60 * 60 * 1000);
+
+  const request = await prisma.clusterRequest.create({
+    data: {
+      developerId: req.user.id,
+      ownerId: owner.id,
+      ownerCode: data.ownerCode,
+      projectId: data.projectId ?? null,
+      message: data.message ?? null,
+      expiresAt,
+      status: 'PENDING',
+    },
+    include: {
+      owner: { select: { id: true, username: true, phone: true, ownerCode: true } },
+      project: { select: { id: true, name: true } },
+    },
+  });
+
+  res.status(201).json({
+    success: true,
+    data: request,
+    message: 'Cluster request sent successfully',
+  });
+}
+
+export async function getIncomingClusterRequests(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const requests = await prisma.clusterRequest.findMany({
+    where: {
+      ownerId: req.user.id,
+      OR: [{ status: 'PENDING' }, { status: 'ACCEPTED' }, { status: 'REJECTED' }],
+    },
+    include: {
+      developer: { select: { id: true, username: true, email: true, phone: true } },
+      project: { select: { id: true, name: true, status: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 100,
+  });
+
+  res.json({ success: true, data: requests });
+}
+
+export async function getOutgoingClusterRequests(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  if (!['DEVELOPER', 'ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
+    throw new AppError(403, 'Only developers can view outgoing cluster requests');
+  }
+
+  const requests = await prisma.clusterRequest.findMany({
+    where: { developerId: req.user.id },
+    include: {
+      owner: { select: { id: true, username: true, phone: true, ownerCode: true } },
+      project: { select: { id: true, name: true, status: true, ingestUserId: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 100,
+  });
+
+  res.json({ success: true, data: requests });
+}
+
+export async function acceptClusterRequest(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const requestId = String(req.params.id);
+
+  const request = await prisma.clusterRequest.findUnique({
+    where: { id: requestId },
+    include: {
+      project: { select: { id: true, status: true } },
+    },
+  });
+
+  if (!request) {
+    throw new AppError(404, 'Cluster request not found');
+  }
+
+  if (request.ownerId !== req.user.id && !['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
+    throw new AppError(403, 'You can only accept your own incoming requests');
+  }
+
+  if (request.status !== 'PENDING') {
+    throw new AppError(400, "Request is no longer pending");
+  }
+
+  if (request.expiresAt && request.expiresAt < new Date()) {
+    await prisma.clusterRequest.update({
+      where: { id: requestId },
+      data: { status: 'EXPIRED', respondedAt: new Date() },
+    });
+    throw new AppError(400, 'Cluster request has expired');
+  }
+
+  const accepted = await prisma.$transaction(async (tx) => {
+    const updated = await tx.clusterRequest.update({
+      where: { id: requestId },
+      data: {
+        status: 'ACCEPTED',
+        respondedAt: new Date(),
+        acceptedByOwnerId: req.user!.id,
+      },
+      include: {
+        developer: { select: { id: true, username: true, email: true } },
+        owner: { select: { id: true, username: true, phone: true, ownerCode: true } },
+        project: { select: { id: true, name: true, status: true, ingestUserId: true } },
+      },
+    });
+
+    if (request.projectId) {
+      await tx.project.update({
+        where: { id: request.projectId },
+        data: {
+            ingestUserId: request.ownerId,
+          },
+      });
+    }
+
+    return updated;
+  });
+
+  res.json({
+    success: true,
+    data: accepted,
+    message: 'Cluster request accepted',
+  });
+}
+
+export async function rejectClusterRequest(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const requestId = String(req.params.id);
+
+  const request = await prisma.clusterRequest.findUnique({
+    where: { id: requestId },
+    select: { id: true, ownerId: true, status: true },
+  });
+
+  if (!request) {
+    throw new AppError(404, 'Cluster request not found');
+  }
+
+  if (request.ownerId !== req.user.id && !['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
+    throw new AppError(403, 'You can only reject your own incoming requests');
+  }
+
+  if (request.status !== 'PENDING') {
+    throw new AppError(400, "Request is no longer pending");
+  }
+
+  const updated = await prisma.clusterRequest.update({
+    where: { id: requestId },
+    data: {
+      status: 'REJECTED',
+      respondedAt: new Date(),
+    },
+  });
+
+  res.json({
+    success: true,
+    data: updated,
+    message: 'Cluster request rejected',
+  });
+}
+
+export async function cancelClusterRequest(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const requestId = String(req.params.id);
+
+  const request = await prisma.clusterRequest.findUnique({
+    where: { id: requestId },
+    select: { id: true, developerId: true, status: true },
+  });
+
+  if (!request) {
+    throw new AppError(404, 'Cluster request not found');
+  }
+
+  if (request.developerId !== req.user.id && !['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
+    throw new AppError(403, 'You can only cancel your own outgoing requests');
+  }
+
+  if (request.status !== 'PENDING') {
+    throw new AppError(400, "Request is no longer pending");
+  }
+
+  const updated = await prisma.clusterRequest.update({
+    where: { id: requestId },
+    data: {
+      status: 'CANCELED',
+      respondedAt: new Date(),
+    },
+  });
+
+  res.json({
+    success: true,
+    data: updated,
+    message: 'Cluster request canceled',
+  });
+}

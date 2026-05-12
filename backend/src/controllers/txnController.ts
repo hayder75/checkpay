@@ -4,19 +4,52 @@ import prisma from '../utils/prisma';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../middleware/auth';
 import { trackUsage, getUsageStats } from '../utils/usageTracker';
-import { resolveIngestEntitlement, consumePhoneQuota } from '../utils/entitlement';
+import { requireBusinessAccess } from '../utils/businessValidator';
+import { extractTransactionIds } from '../utils/transactionIdExtractor';
+import cache from '../utils/redis';
+import { createNotification } from '../utils/notificationService';
+import { NotificationType } from '@prisma/client';
 
-// Validation schemas
+// Updated validation schema
 const ingestSchema = z.object({
   txnId: z.string().min(1),
-  amount: z.number().positive(),
-  sender: z.string(),
+  referenceTxnId: z.string().optional(), // Optional: bank reference number
+  referenceId: z.string().optional(), // Alias: reference ID from paired institution/wallet
+  amount: z.number().min(0),
+  sender: z.string().min(1), // Required and must not be empty
   bank: z.string().optional(),
   pattern: z.string().optional(),
-  iccid: z.string().optional(), // SIM card ICCID from mobile app
-  sendFrom: z.string().nullable().optional(), // Institution/account sending money
-  sendTo: z.string().nullable().optional(),   // Institution/account receiving money
+  businessId: z.string().optional(), // Optional: will be auto-created if needed for regular users
+  employeeId: z.string().optional(),
+  source: z.enum(['SMS', 'OCR', 'MANUAL']).default('SMS'),
+  smsText: z.string().optional(), // For bank extraction and transaction ID extraction
+  sendFrom: z.string().nullable().optional(),
+  sendTo: z.string().nullable().optional(),
+  senderBank: z.string().nullable().optional(), // Extracted sender bank
+  receiverBank: z.string().nullable().optional(), // Extracted receiver bank
 });
+
+const MIN_AMOUNT_TOLERANCE = 1;
+const PERCENT_AMOUNT_TOLERANCE = 0.003;
+const MAX_AMOUNT_TOLERANCE = 15;
+
+function toNumberOrNull(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function getAmountTolerance(amount: number): number {
+  const dynamicTolerance = Math.max(MIN_AMOUNT_TOLERANCE, amount * PERCENT_AMOUNT_TOLERANCE);
+  return Math.min(dynamicTolerance, MAX_AMOUNT_TOLERANCE);
+}
+
+function isAmountWithinTolerance(expectedAmount: number, providedAmount: number): boolean {
+  return Math.abs(expectedAmount - providedAmount) <= getAmountTolerance(expectedAmount);
+}
 
 /**
  * Ingest transaction from mobile app
@@ -26,39 +59,134 @@ export async function ingestTransaction(req: AuthRequest, res: Response) {
     throw new AppError(401, 'Not authenticated');
   }
 
-  const data = ingestSchema.parse(req.body);
+  const parsed = ingestSchema.parse(req.body);
+  const data = {
+    ...parsed,
+    referenceTxnId: parsed.referenceTxnId || parsed.referenceId || null,
+  };
 
-  // Check SIM card registration if ICCID provided
-  if (data.iccid) {
-    const simCard = await prisma.simCard.findFirst({
-      where: {
-        iccid: data.iccid,
-        userId: req.user.id,
-        isActive: true,
-      },
-    });
+  // SMS -> phone token, OCR/MANUAL -> verified token
+  const tokenType = data.source === 'SMS' ? 'phone' : 'verified';
+  const { checkAndConsumeToken } = await import('../utils/tokenUsage');
 
-    if (!simCard) {
-      throw new AppError(403, 'This SIM card is not registered. Please use the SIM card you registered with, or upgrade to Premium to add more SIMs.');
+  // Resolve billing owner for token usage.
+  // Employees should consume package credits from their business owner account.
+  let tokenOwnerUserId = req.user.id;
+  let tokenOwnerRole = req.user.role;
+
+  if (req.user.role === 'EMPLOYEE' || data.employeeId) {
+    const employeeRecord = data.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: data.employeeId },
+          select: { userId: true, business: { select: { ownerId: true, owner: { select: { role: true } } } } },
+        })
+      : await prisma.employee.findFirst({
+          where: { userId: req.user.id, isActive: true },
+          select: { userId: true, business: { select: { ownerId: true, owner: { select: { role: true } } } } },
+        });
+
+    if (employeeRecord) {
+      if (data.employeeId && employeeRecord.userId !== req.user.id) {
+        throw new AppError(403, 'Employee does not belong to authenticated user');
+      }
+
+      if (employeeRecord.business?.ownerId) {
+        tokenOwnerUserId = employeeRecord.business.ownerId;
+        tokenOwnerRole = employeeRecord.business.owner?.role || tokenOwnerRole;
+      }
     }
   }
 
-  // Mode-aware entitlement: trial, fixed-price unlimited, or count-based quotas.
-  const entitlement = await resolveIngestEntitlement(req.user.id);
+  // Check if this is a project-scoped transaction
+  const project = (req as any).project;
+  let projectId: string | null = null;
+  let finalBusinessId: string | null = data.businessId || null;
 
-  // Check if transaction already exists
-  const existing = await prisma.transaction.findUnique({
-    where: {
-      userId_txnId: {
-        userId: req.user.id,
-        txnId: data.txnId,
-      },
-    },
-  });
+  if (project) {
+    // Project API key was used (for backend verify)
+    projectId = project.id;
+    if (project.businessId) {
+      finalBusinessId = project.businessId;
+    }
+  } else {
+    // User API key was used (for ingest from phone)
+    // Check if this user matches any project's ingestUserId
+    const matchingProject = await prisma.project.findFirst({
+      where: { ingestUserId: req.user.id },
+      select: { id: true, businessId: true },
+    });
+    if (matchingProject) {
+      projectId = matchingProject.id;
+      if (matchingProject.businessId) {
+        finalBusinessId = matchingProject.businessId;
+      }
+    }
+  }
+
+  if (data.employeeId) {
+    const employee = await prisma.employee.findUnique({
+      where: { id: data.employeeId },
+      select: { businessId: true, userId: true },
+    });
+    if (employee) {
+      if (employee.userId !== req.user.id) {
+        throw new AppError(403, 'Employee does not belong to authenticated user');
+      }
+      finalBusinessId = employee.businessId;
+    }
+  } else if (!finalBusinessId && req.user.role === 'BUSINESS_OWNER') {
+    const businesses = await prisma.business.findMany({
+      where: { ownerId: req.user.id, isActive: true },
+      orderBy: { createdAt: 'desc' },
+      take: 1,
+    });
+    if (businesses.length > 0) {
+      finalBusinessId = businesses[0].id;
+    }
+  }
+
+  if (finalBusinessId) {
+    await requireBusinessAccess(req.user.id, finalBusinessId);
+  }
+
+  // Extract transaction IDs from SMS
+  let extractedIds: { primaryTxnId: string; referenceTxnId: string | null; allIds: string[] } = {
+    primaryTxnId: data.txnId,
+    referenceTxnId: data.referenceTxnId || null,
+    allIds: [data.txnId]
+  };
+
+  if (data.smsText) {
+    const extracted = extractTransactionIds(data.smsText, data.txnId);
+    extractedIds = {
+      primaryTxnId: extracted.primaryTxnId || data.txnId,
+      referenceTxnId: extracted.referenceTxnId || data.referenceTxnId || null,
+      allIds: extracted.allIds.length > 0 ? extracted.allIds : [data.txnId]
+    };
+    if (extracted.primaryTxnId && !data.txnId) data.txnId = extracted.primaryTxnId;
+    if (extractedIds.referenceTxnId && !data.referenceTxnId) data.referenceTxnId = extractedIds.referenceTxnId;
+  }
+
+  // Check if transaction already exists (Deduplication)
+  const existingWhere: any = {
+    userId: req.user.id,
+    OR: [
+      { txnId: data.txnId },
+      { referenceTxnId: data.txnId },
+      ...(data.referenceTxnId ? [{ referenceTxnId: data.referenceTxnId }] : []),
+      ...(data.referenceTxnId ? [{ txnId: data.referenceTxnId }] : []),
+    ],
+  };
+
+  if (projectId) {
+    existingWhere.projectId = projectId;
+  } else if (finalBusinessId) {
+    existingWhere.businessId = finalBusinessId;
+  }
+
+  const existing = await prisma.transaction.findFirst({ where: existingWhere });
 
   if (existing) {
-    // Return success but don't create duplicate
-    console.log(`[INGEST] Duplicate transaction detected: userId=${req.user.id}, txnId=${data.txnId}`);
     return res.json({
       success: true,
       data: existing,
@@ -70,211 +198,443 @@ export async function ingestTransaction(req: AuthRequest, res: Response) {
   let pattern = null;
   if (data.pattern) {
     pattern = await prisma.pattern.findFirst({
+      where: { userId: req.user.id, name: data.pattern },
+    });
+  }
+
+  // SMS Security Verification
+  if (pattern && pattern.requireSenderVerification !== false && data.source === 'SMS') {
+    const { verifySMSecurity } = await import('../utils/senderVerification');
+    const verification = await verifySMSecurity(
+      data.sendFrom || '',
+      Date.now(),
+      data.amount,
+      data.txnId,
+      pattern,
+      async (txnId: string) => {
+        const existing = await prisma.transaction.findFirst({
+          where: {
+            userId: req.user!.id,
+            txnId,
+            ...(finalBusinessId ? { businessId: finalBusinessId } : {}),
+          },
+        });
+        return !!existing;
+      },
+      async () => false
+    );
+
+    if (!verification.valid) {
+      return res.status(403).json({
+        success: false,
+        error: 'SMS verification failed',
+        reasons: verification.reasons,
+      });
+    }
+  }
+
+  // OPTIMIZED: Check for matching OCR or PendingVerification in parallel
+  const [matchingOCRTxn, pending] = await Promise.all([
+    prisma.transaction.findFirst({
       where: {
         userId: req.user.id,
-        name: data.pattern,
+        businessId: finalBusinessId || null,
+        source: 'OCR',
+        OR: [
+          { txnId: data.txnId },
+          { txnId: extractedIds.primaryTxnId || data.txnId },
+          ...(data.referenceTxnId ? [{ txnId: data.referenceTxnId }] : []),
+          ...(extractedIds.referenceTxnId ? [{ txnId: extractedIds.referenceTxnId }] : []),
+          ...(extractedIds.allIds.map(id => ({ txnId: id }))),
+        ],
+        isValidated: false,
       },
-    });
-  }
+    }),
+    prisma.pendingVerification.findFirst({
+      where: {
+        txnId: data.txnId,
+        status: 'PENDING',
+        OR: [
+          { businessId: finalBusinessId },
+          { userId: req.user.id }
+        ]
+      }
+    })
+  ]);
 
-  // Extract prefix for partial matching (optional optimization)
-  const { extractPrefix } = await import('../utils/partialTxnIdMatcher');
-  const txnIdPrefix = extractPrefix(data.txnId, 8);
+  const pendingRequestedAmount = toNumberOrNull((pending?.metadata as any)?.requestedAmount);
+  const matchedPending = pending && (
+    pendingRequestedAmount === null || isAmountWithinTolerance(pendingRequestedAmount, data.amount)
+  ) ? pending : null;
+
+  const isValidated = !!(matchingOCRTxn || matchedPending);
+  const verifiedAt = isValidated ? new Date() : null;
+
+  // Consume credits only for a brand-new accepted transaction.
+  // Duplicates, rejected SMS, and verification misses should not deduct credits.
+  try {
+    await checkAndConsumeToken(tokenOwnerUserId, tokenType, tokenOwnerRole);
+  } catch (error: any) {
+    if (error.message?.includes('exhausted') || error.message?.includes('No active package')) {
+      const msg = tokenType === 'phone'
+        ? 'Package limit reached. You have used all available phone transaction tokens. Please upgrade your package to continue.'
+        : 'Package limit reached. You have used all available verification tokens. Please upgrade your package to continue.';
+      throw new AppError(403, msg);
+    }
+    throw error;
+  }
 
   // Create transaction
-  try {
-    const transaction = await prisma.transaction.create({
-      data: {
-        userId: req.user.id,
-        txnId: data.txnId,
-        txnIdPrefix: txnIdPrefix,
-        amount: data.amount,
-        sender: data.sender, // Already masked by mobile app
-        bank: data.bank,
-        sendFrom: data.sendFrom || null,
-        sendTo: data.sendTo || null,
-        patternId: pattern?.id,
-        receivedAt: new Date(),
-      },
-    });
-
-    console.log(`[INGEST] Transaction created: id=${transaction.id}, userId=${req.user.id}, txnId=${data.txnId}, amount=${data.amount}`);
-
-    // Track usage for app requests (ingest)
-    await trackUsage(req.user.id, 'app');
-
-    if (entitlement.shouldDecrementPhoneQuota && entitlement.userPackageId) {
-      await consumePhoneQuota(entitlement.userPackageId);
+  const transaction = await prisma.transaction.create({
+    data: {
+      userId: req.user.id,
+      businessId: finalBusinessId,
+      employeeId: data.employeeId || null,
+      projectId: projectId,
+      txnId: data.txnId,
+      referenceTxnId: data.referenceTxnId || null,
+      amount: data.amount,
+      sender: data.sender,
+      bank: data.bank || matchingOCRTxn?.bank || null,
+      sendFrom: data.sendFrom || matchingOCRTxn?.sendFrom || null,
+      sendTo: data.sendTo || matchingOCRTxn?.sendTo || null,
+      senderBank: data.senderBank || null,
+      receiverBank: data.receiverBank || null,
+      patternId: pattern?.id,
+      source: data.source,
+      isValidated,
+      verifiedAt,
+      receivedAt: new Date(),
+    },
+    include: {
+      pattern: { select: { name: true, bank: true } },
+      business: { select: { id: true, name: true } },
+      employee: { select: { id: true, name: true } },
     }
+  });
 
-    res.status(201).json({
-      success: true,
-      data: transaction,
+  // Update related records if verified
+  if (matchingOCRTxn) {
+    await prisma.transaction.update({
+      where: { id: matchingOCRTxn.id },
+      data: { isValidated: true, verifiedAt: new Date() },
     });
-  } catch (error: any) {
-    console.error('[INGEST] Error creating transaction:', error);
-    // If it's a unique constraint violation, it means duplicate was created between check and insert
-    if (error.code === 'P2002') {
-      // Try to find the existing transaction
-      const existingTxn = await prisma.transaction.findUnique({
-        where: {
-          userId_txnId: {
-            userId: req.user.id,
-            txnId: data.txnId,
-          },
-        },
-      });
-      if (existingTxn) {
-        return res.json({
-          success: true,
-          data: existingTxn,
-          message: 'Transaction already exists',
-        });
-      }
-    }
-    throw new AppError(500, 'Failed to create transaction');
   }
+
+  if (matchedPending) {
+    await prisma.pendingVerification.update({
+      where: { id: matchedPending.id },
+      data: { status: 'VERIFIED', verifiedAt: new Date() },
+    });
+
+    // REAL-TIME WEBHOOK TRIGGER
+    if (matchedPending.webhookUrl) {
+      const { queueVerificationWebhook } = await import('../utils/webhook');
+      queueVerificationWebhook(matchedPending.webhookUrl, transaction);
+    }
+  }
+
+  // Notification
+  const notifType = isValidated ? NotificationType.TRANSACTION_VERIFIED : NotificationType.TRANSACTION_RECEIVED;
+  const notifTitle = isValidated ? 'Transaction Verified' : 'Transaction Received';
+  const notifBody = isValidated 
+    ? `Transaction ${data.txnId} of ${data.amount} has been verified.`
+    : `Transaction ${data.txnId} of ${data.amount} received.`;
+    
+  createNotification(req.user.id, notifType, notifTitle, notifBody, { txnId: data.txnId, amount: data.amount })
+    .catch(err => console.error('Notification failed:', err));
+
+  // Track usage & Invalidate cache
+  await trackUsage(req.user.id, 'app', req.user.role);
+
+  const cacheKey = projectId
+    ? `txn:project:${projectId}:${data.txnId}`
+    : finalBusinessId
+      ? `txn:business:${finalBusinessId}:${data.txnId}`
+      : `txn:user:${req.user.id}:${data.txnId}`;
+  await cache.del(cacheKey);
+  await cache.del(`stats:${req.user.id}:${finalBusinessId || 'none'}`);
+
+  return res.status(201).json({
+    success: true,
+    data: transaction,
+    message: isValidated ? (matchingOCRTxn ? 'Transaction verified (matched with OCR scan)' : 'Transaction verified (matched with pending request)') : undefined,
+    matched: isValidated,
+  });
 }
 
 /**
- * Verify a transaction
- * Supports exact and partial transaction ID matching
+ * Verify a transaction (business-scoped)
+ * GET: Check if transaction exists
+ * POST: Record a verification attempt (scanned/manual)
  */
 export async function verifyTransaction(req: AuthRequest, res: Response) {
-  if (!req.user) {
-    throw new AppError(401, 'Not authenticated');
+  // Support business API key, user API key, or project API key
+  const businessId = req.business?.id || (req as any).businessContext?.id;
+  const userId = req.user?.id;
+  const project = (req as any).project;
+
+  if (!businessId && !userId && !project) {
+    throw new AppError(401, 'Authentication required');
   }
 
-  // Support both query param (GET) and body (POST)
-  const txnId = (req.query.txn as string) || (req.body?.txnId as string) || (req.body?.txn as string);
-  
+  let txnId = (req.query.txn as string) || (req.body?.txnId as string) || (req.body?.txn as string);
+
   if (!txnId) {
     throw new AppError(400, 'Transaction ID is required');
   }
 
-  const allowPartialMatch = req.body?.allowPartialMatch !== false; // Default to true
+  // Clean up txnId
+  txnId = String(txnId).trim().replace(/^"+|"+$/g, '');
 
-  // First, try exact match
-  const exactMatch = await prisma.transaction.findFirst({
-    where: {
-      userId: req.user.id,
-      txnId,
-    },
-    include: {
-      pattern: {
-        select: {
-          name: true,
-          bank: true,
+  const requestedAmountRaw = (req.query.amount as string) ?? req.body?.amount;
+  const requestedAmount = requestedAmountRaw === undefined ? null : toNumberOrNull(requestedAmountRaw);
+  if (requestedAmountRaw !== undefined && requestedAmount === null) {
+    throw new AppError(400, 'Amount must be a valid number when provided');
+  }
+  if (requestedAmount !== null && requestedAmount < 0) {
+    throw new AppError(400, 'Valid amount is required for verification');
+  }
+
+  const webhookUrlRaw = req.body?.webhookUrl;
+  const requestedWebhookUrl = typeof webhookUrlRaw === 'string' && webhookUrlRaw.trim().length > 0
+    ? webhookUrlRaw.trim()
+    : null;
+
+  if (requestedWebhookUrl) {
+    try {
+      new URL(requestedWebhookUrl);
+    } catch {
+      throw new AppError(400, 'webhookUrl must be a valid URL');
+    }
+  }
+
+  let userRole: string | undefined;
+
+  // Handle POST request: Record verification attempt (Manual/Scan)
+  if (req.method === 'POST') {
+    // Only check tokens if using user API key (not business or project)
+    if (userId && !businessId && !project) {
+      const { checkAndConsumeToken } = await import('../utils/tokenUsage');
+      const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+      userRole = user?.role;
+
+      try {
+        await checkAndConsumeToken(userId, 'verified', userRole);
+      } catch (error: any) {
+        if (error.message?.includes('exhausted') || error.message?.includes('No active package')) {
+          throw new AppError(403, 'You are out of credit. Please upgrade your package to continue verifying transactions.');
+        }
+        throw error;
+      }
+    }
+
+    const existing = await prisma.transaction.findFirst({
+      where: {
+        txnId,
+        OR: [
+          { businessId: businessId || undefined },
+          { userId: userId || undefined }
+        ]
+      }
+    });
+
+    if (existing) {
+      if (requestedAmount !== null && !isAmountWithinTolerance(existing.amount, requestedAmount)) {
+        return res.json({
+          success: true,
+          data: {
+            confirmed: false,
+            matchType: 'amount_mismatch',
+            message: 'Transaction found but amount mismatch.',
+            txnId: existing.txnId,
+            expectedAmount: existing.amount,
+            providedAmount: requestedAmount,
+            tolerance: getAmountTolerance(existing.amount),
+          },
+        });
+      }
+
+      if (!existing.isValidated) {
+        await prisma.transaction.update({
+          where: { id: existing.id },
+          data: { isValidated: true, verifiedAt: new Date() }
+        });
+
+        if (userId) {
+          createNotification(
+             userId,
+             NotificationType.TRANSACTION_VERIFIED,
+             'Transaction Verified',
+             `Transaction ${txnId} has been verified.`,
+             { txnId }
+          ).catch(console.error);
+        }
+
+        await trackUsage(userId || '', 'dev', userRole);
+      }
+
+      return res.json({
+        success: true,
+        data: {
+          confirmed: true,
+          matchType: 'exact',
+          amount: existing.amount,
+          sender: existing.sender,
+          bank: existing.bank,
+          receivedAt: existing.receivedAt,
+          txnId: existing.txnId
+        }
+      });
+    }
+
+    // If not found, create PendingVerification
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const pendingMetadata = {
+        source: req.body.source || 'MANUAL',
+        ocrText: req.body.ocrText || null,
+        requestedAt: new Date().toISOString(),
+        requestedAmount,
+        amountTolerance: requestedAmount === null ? null : getAmountTolerance(requestedAmount),
+        nextCheckAt: new Date().toISOString(),
+      };
+
+      const pending = await prisma.pendingVerification.upsert({
+        where: {
+          id: (await prisma.pendingVerification.findFirst({
+            where: { txnId, status: 'PENDING', userId: userId || '' }
+          }))?.id || 'new-id'
         },
-      },
+        update: {
+          expiresAt,
+          retryCount: { increment: 1 },
+          metadata: pendingMetadata,
+          ...(requestedWebhookUrl ? { webhookUrl: requestedWebhookUrl } : {}),
+        },
+        create: {
+          userId: userId || '',
+          businessId: businessId || null,
+          projectId: project?.id || null,
+          txnId,
+          webhookUrl: requestedWebhookUrl,
+          expiresAt,
+          status: 'PENDING',
+          metadata: pendingMetadata,
+        }
+      });
+
+      return res.json({
+      success: true,
+      data: {
+        confirmed: false,
+        message: 'Verification recorded. Transaction will be marked as verified when received.',
+        pendingVerificationId: pending.id,
+        expiresAt: expiresAt.toISOString()
+      }
+    });
+  }
+
+  // Handle GET request: Check status
+  const cacheKey = project
+      ? `txn:project:${project.id}:${txnId}:${requestedAmount}`
+      : businessId
+        ? `txn:business:${businessId}:${txnId}:${requestedAmount}`
+        : `txn:user:${userId}:${txnId}:${requestedAmount}`;
+
+  const cachedResult = await cache.get<any>(cacheKey);
+  if (cachedResult && cachedResult.confirmed) {
+    return res.json({ success: true, data: cachedResult });
+  }
+
+  const where: any = { OR: [{ txnId }, { referenceTxnId: txnId }] };
+  if (project) where.projectId = project.id;
+  else if (businessId) where.businessId = businessId;
+  else if (userId) where.userId = userId;
+
+  const exactMatch = await prisma.transaction.findFirst({
+    where,
+    include: {
+      pattern: { select: { name: true, bank: true } },
+      business: { select: { id: true, name: true } },
+      employee: { select: { id: true, name: true } },
     },
   });
 
   if (exactMatch) {
-    // Mark transaction as verified
-    await prisma.transaction.update({
-      where: { id: exactMatch.id },
-      data: {
-        verified: true,
-        verifiedAt: new Date(),
-      },
-    });
-    
-    // Track usage for dev requests (verify)
-    await trackUsage(req.user.id, 'dev');
-    
-    return res.json({
-      success: true,
-      data: {
-        confirmed: true,
-        matchType: 'exact',
-        amount: exactMatch.amount,
-        sender: exactMatch.sender,
-        bank: exactMatch.bank || exactMatch.pattern?.bank || null,
-        receivedAt: exactMatch.receivedAt,
-        txnId: exactMatch.txnId,
-      },
-    });
-  }
-
-  // If exact match not found and partial matching is allowed, try partial match
-  if (allowPartialMatch) {
-    const { findTransactionsByPrefix } = await import('../utils/partialTxnIdMatcher');
-    
-    // Get all transactions for this user (limit to recent ones for performance)
-    const recentTransactions = await prisma.transaction.findMany({
-      where: {
-        userId: req.user.id,
-        receivedAt: {
-          gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // Last 30 days
-        },
-      },
-      include: {
-        pattern: {
-          select: {
-            name: true,
-            bank: true,
-          },
-        },
-      },
-      orderBy: {
-        receivedAt: 'desc',
-      },
-      take: 1000, // Limit to 1000 most recent transactions
-    });
-
-    const partialMatches = findTransactionsByPrefix(recentTransactions, txnId, 8);
-
-    if (partialMatches.length > 0) {
-      const bestMatch = partialMatches[0];
-      
-      // Only return match if confidence is high enough (>= 0.75)
-      if (bestMatch.confidence >= 0.75) {
-        // Mark transaction as verified
-        await prisma.transaction.update({
-          where: { id: bestMatch.transaction.id },
-          data: {
-            verified: true,
-            verifiedAt: new Date(),
-          },
-        });
-        
-        // Track usage for dev requests (verify)
-        await trackUsage(req.user.id, 'dev');
-        
+      if (requestedAmount !== null && !isAmountWithinTolerance(exactMatch.amount, requestedAmount)) {
         return res.json({
           success: true,
           data: {
-            confirmed: true,
-            matchType: 'partial',
-            confidence: bestMatch.confidence,
-            commonPrefix: bestMatch.commonPrefix,
-            amount: bestMatch.transaction.amount,
-            sender: bestMatch.transaction.sender,
-            bank: bestMatch.transaction.bank || bestMatch.transaction.pattern?.bank || null,
-            receivedAt: bestMatch.transaction.receivedAt,
-            txnId: bestMatch.transaction.txnId,
+            confirmed: false,
+            matchType: 'amount_mismatch',
+            message: 'Transaction found but amount mismatch.',
+            txnId: exactMatch.txnId,
+            expectedAmount: exactMatch.amount,
+            providedAmount: requestedAmount,
+            tolerance: getAmountTolerance(exactMatch.amount),
           },
         });
       }
+
+      if (!exactMatch.isValidated) {
+      // Check tokens for verification if needed
+      if (userId && !businessId && !project) {
+        const { checkAndConsumeToken } = await import('../utils/tokenUsage');
+        const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+        userRole = user?.role;
+        try {
+          await checkAndConsumeToken(userId, 'verified', userRole);
+        } catch (error: any) {
+          if (error.message?.includes('exhausted') || error.message?.includes('No active package')) {
+            throw new AppError(403, 'You are out of credit. Please upgrade your package to continue verifying transactions.');
+          }
+          throw error;
+        }
+        await trackUsage(userId, 'dev', userRole);
+      }
+
+      await prisma.transaction.update({
+        where: { id: exactMatch.id },
+        data: { isValidated: true, verifiedAt: new Date() },
+      });
+
+      if (userId) {
+        createNotification(
+           userId,
+           NotificationType.TRANSACTION_VERIFIED,
+           'Transaction Verified',
+           `Transaction ${exactMatch.txnId} has been verified.`,
+           { txnId: exactMatch.txnId }
+        ).catch(console.error);
+     }
     }
+
+    const responseData = {
+      confirmed: true,
+      matchType: 'exact',
+      amount: exactMatch.amount,
+      sender: exactMatch.sender,
+      bank: exactMatch.bank || exactMatch.pattern?.bank || null,
+      receivedAt: exactMatch.receivedAt,
+      txnId: exactMatch.txnId,
+      referenceTxnId: exactMatch.referenceTxnId || null,
+      business: exactMatch.business,
+      employee: exactMatch.employee,
+      source: exactMatch.source,
+    };
+
+    await cache.set(cacheKey, responseData, 600);
+    return res.json({ success: true, data: responseData });
   }
 
-  // Track usage for dev requests (verify) - even if not found
-  await trackUsage(req.user.id, 'dev');
-
-  // No match found
   return res.json({
     success: true,
-    data: {
-      confirmed: false,
-      message: 'Transaction not found',
-    },
+    data: { confirmed: false, message: 'Transaction not found.' },
   });
 }
 
 /**
- * Get transaction history
+ * Get transactions with filters
  */
 export async function getTransactions(req: AuthRequest, res: Response) {
   if (!req.user) {
@@ -284,27 +644,120 @@ export async function getTransactions(req: AuthRequest, res: Response) {
   const page = parseInt(req.query.page as string) || 1;
   const limit = parseInt(req.query.limit as string) || 20;
   const skip = (page - 1) * limit;
-  const verified = req.query.verified === 'true' ? true : req.query.verified === 'false' ? false : undefined;
-  const search = req.query.search as string | undefined;
+
+  const businessId = req.query.businessId as string;
+  const projectId = req.query.projectId as string;
+  const employeeId = req.query.employeeId as string;
+  const dateFrom = req.query.dateFrom as string;
+  const dateTo = req.query.dateTo as string;
 
   // Build where clause
-  const where: any = {
-    userId: req.user.id,
-  };
+  const where: any = {};
 
-  if (verified !== undefined) {
-    where.verified = verified;
+  // Role-based filtering
+  if (req.user.role === 'EMPLOYEE') {
+    // Employees see their own transactions, or all picked transactions if enabled for this employee
+    const employee = await prisma.employee.findFirst({
+      where: {
+        userId: req.user.id,
+        isActive: true,
+      },
+    });
+    if (employee) {
+      if (employee.allowAccessAllTransactions) {
+        // If enabled for this employee, they can see all picked (validated) transactions from their business
+        where.businessId = employee.businessId;
+        where.isValidated = true; // Only show picked/validated transactions
+      } else {
+        // Default: employees only see their own transactions
+        where.employeeId = employee.id;
+        where.businessId = employee.businessId;
+      }
+    } else {
+      return res.json({
+        success: true,
+        data: {
+          transactions: [],
+          pagination: {
+            page,
+            limit,
+            total: 0,
+            pages: 0,
+          },
+        },
+      });
+    }
+  } else if (projectId && req.user.role === 'DEVELOPER') {
+    // Developers can filter by projectId
+    // Verify project belongs to developer
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: { developerId: true },
+    });
+    if (!project || project.developerId !== req.user.id) {
+      throw new AppError(403, 'Project not found or access denied');
+    }
+    where.projectId = projectId;
+  } else if (businessId) {
+    // Validate business access
+    await requireBusinessAccess(req.user.id, businessId);
+    where.businessId = businessId;
+  } else if (req.user.role === 'BUSINESS_OWNER') {
+    // Business owners see all their businesses' transactions AND their personal transactions
+    const businesses = await prisma.business.findMany({
+      where: { ownerId: req.user.id },
+      select: { id: true },
+    });
+    const businessIds = businesses.map(b => b.id);
+    if (businessIds.length > 0) {
+      // Show transactions from their businesses OR their personal transactions (no businessId)
+      where.OR = [
+        { businessId: { in: businessIds } },
+        { AND: [{ userId: req.user.id }, { businessId: null }] },
+      ];
+    } else {
+      // No businesses yet - show personal transactions
+      where.userId = req.user.id;
+    }
+  } else if (req.user.role === 'DEVELOPER') {
+    // Developers see transactions from all their projects OR transactions directly assigned to them
+    const projects = await prisma.project.findMany({
+      where: { developerId: req.user.id },
+      select: { id: true },
+    });
+    const projectIds = projects.map(p => p.id);
+
+    if (projectIds.length > 0) {
+      // Show transactions from their projects OR transactions directly assigned to them (no projectId)
+      where.OR = [
+        { projectId: { in: projectIds } },
+        { AND: [{ userId: req.user.id }, { projectId: null }] },
+      ];
+    } else {
+      // No projects yet - show transactions directly assigned to them (with or without projectId)
+      where.userId = req.user.id;
+    }
+  } else {
+    // Default: user's transactions
+    where.userId = req.user.id;
   }
 
-  if (search) {
-    where.OR = [
-      { txnId: { contains: search, mode: 'insensitive' } },
-      { sender: { contains: search, mode: 'insensitive' } },
-      { bank: { contains: search, mode: 'insensitive' } },
-    ];
+  // Additional filters
+  if (employeeId) {
+    where.employeeId = employeeId;
   }
 
-  const [transactions, total, verifiedCount, unverifiedCount, verifiedAmount, unverifiedAmount] = await Promise.all([
+  if (dateFrom || dateTo) {
+    where.receivedAt = {};
+    if (dateFrom) {
+      where.receivedAt.gte = new Date(dateFrom);
+    }
+    if (dateTo) {
+      where.receivedAt.lte = new Date(dateTo);
+    }
+  }
+
+  const [transactions, total] = await Promise.all([
     prisma.transaction.findMany({
       where,
       orderBy: {
@@ -319,39 +772,27 @@ export async function getTransactions(req: AuthRequest, res: Response) {
             bank: true,
           },
         },
+        business: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        employee: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        project: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
       },
     }),
     prisma.transaction.count({ where }),
-    prisma.transaction.count({
-      where: {
-        userId: req.user.id,
-        verified: true,
-      },
-    }),
-    prisma.transaction.count({
-      where: {
-        userId: req.user.id,
-        verified: false,
-      },
-    }),
-    prisma.transaction.aggregate({
-      where: {
-        userId: req.user.id,
-        verified: true,
-      },
-      _sum: {
-        amount: true,
-      },
-    }),
-    prisma.transaction.aggregate({
-      where: {
-        userId: req.user.id,
-        verified: false,
-      },
-      _sum: {
-        amount: true,
-      },
-    }),
   ]);
 
   res.json({
@@ -363,14 +804,6 @@ export async function getTransactions(req: AuthRequest, res: Response) {
         limit,
         total,
         pages: Math.ceil(total / limit),
-      },
-      stats: {
-        verifiedCount,
-        unverifiedCount,
-        totalCount: verifiedCount + unverifiedCount,
-        verifiedAmount: verifiedAmount._sum.amount || 0,
-        unverifiedAmount: unverifiedAmount._sum.amount || 0,
-        totalAmount: (verifiedAmount._sum.amount || 0) + (unverifiedAmount._sum.amount || 0),
       },
     },
   });
@@ -384,79 +817,462 @@ export async function getStats(req: AuthRequest, res: Response) {
     throw new AppError(401, 'Not authenticated');
   }
 
-  const now = new Date();
-  const todayStart = new Date(now.setHours(0, 0, 0, 0));
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const businessId = req.query.businessId as string;
+  const cacheKey = `stats:${req.user.id}:${businessId || 'none'}`;
 
-  const [txnsToday, txnsThisMonth, totalTxns, totalPatterns, plan, usageStats] = await Promise.all([
-    prisma.transaction.count({
-      where: {
-        userId: req.user.id,
-        createdAt: {
-          gte: todayStart,
-        },
-      },
-    }),
-    prisma.transaction.count({
-      where: {
-        userId: req.user.id,
-        createdAt: {
-          gte: monthStart,
-        },
-      },
-    }),
-    prisma.transaction.count({
-      where: {
-        userId: req.user.id,
-      },
-    }),
-    prisma.pattern.count({
-      where: {
-        userId: req.user.id,
-      },
-    }),
-    prisma.user.findUnique({
+  // Try cache first
+  try {
+    const cached = await cache.get<any>(cacheKey);
+    if (cached) {
+      return res.json(cached); // Fast path!
+    }
+  } catch (error) {
+    // Cache error - continue without cache
+  }
+
+  // Initialize defaults
+  let txnsToday = 0;
+  let txnsThisMonth = 0;
+  let totalTxns = 0;
+  let patternCount = 0;
+  let projectCount: [number, number] = [0, 0];
+  let usageStats = {
+    appRequestsToday: 0,
+    appRequestsMonth: 0,
+    devRequestsToday: 0,
+    devRequestsMonth: 0,
+  };
+  let usageStatsResult: any = null;
+  let allDays: { date: string; count: number }[] = [];
+  let dailyApiUsage: { date: string; app: number; dev: number }[] = [];
+  let user = null;
+  let packageInfo = null;
+  let userPackage = null;
+
+  try {
+    const now = new Date();
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // Build where clause
+    const where: any = {};
+
+    if (businessId) {
+      if (req.user.role !== 'DEVELOPER') {
+        await requireBusinessAccess(req.user.id, businessId);
+        where.businessId = businessId;
+      } else {
+        where.userId = req.user.id;
+      }
+    } else if (req.user.role === 'BUSINESS_OWNER') {
+      const businesses = await prisma.business.findMany({
+        where: { ownerId: req.user.id },
+        select: { id: true },
+      });
+      if (businesses && businesses.length > 0) {
+        where.businessId = { in: businesses.map(b => b.id) };
+      } else {
+        where.userId = req.user.id;
+      }
+    } else if (req.user.role === 'EMPLOYEE') {
+      const employee = await prisma.employee.findFirst({
+        where: { userId: req.user.id, isActive: true },
+      });
+      if (employee) {
+        if (employee.allowAccessAllTransactions) {
+          // If enabled for this employee, they can see all picked (validated) transactions from their business
+          where.businessId = employee.businessId;
+          where.isValidated = true; // Only show picked/validated transactions
+        } else {
+          // Default: employees only see their own transactions
+          where.employeeId = employee.id;
+        }
+      } else {
+        where.userId = req.user.id;
+      }
+    } else if (req.user.role === 'DEVELOPER') {
+      const ownProjects = await prisma.project.findMany({
+        where: { developerId: req.user.id, isOwnProject: true },
+        select: { id: true },
+      });
+
+      if (ownProjects && ownProjects.length > 0) {
+        where.OR = [
+          { userId: req.user.id },
+          { projectId: { in: ownProjects.map(p => p.id) } },
+        ];
+      } else {
+        where.userId = req.user.id;
+      }
+    } else {
+      where.userId = req.user.id;
+    }
+
+    // Get user info
+    user = await prisma.user.findUnique({
       where: { id: req.user.id },
-      select: { plan: true },
-    }),
-    getUsageStats(req.user.id),
-  ]);
+      select: { plan: true, role: true },
+    });
 
-  const rateLimit = plan?.plan === 'PREMIUM' 
-    ? parseInt(process.env.RATE_LIMIT_PREMIUM_MAX || '1000000')
-    : parseInt(process.env.RATE_LIMIT_FREE_MAX || '100');
+    // Get user package
+    const { getActiveUserPackage } = await import('../utils/tokenUsage');
+    userPackage = await getActiveUserPackage(req.user.id);
+    if (userPackage && userPackage.package) {
+      packageInfo = {
+        id: userPackage.package.id,
+        name: userPackage.package.name,
+        transactionLimit: userPackage.package.transactionLimit,
+        maxPhoneTxns: userPackage.package.maxPhoneTxns,
+        maxVerifiedTxns: userPackage.package.maxVerifiedTxns,
+      };
+    }
 
-  const totalRequests = usageStats.appRequestsMonth + usageStats.devRequestsMonth;
+    // Get business package if applicable
+    if (!packageInfo && businessId) {
+      const business = await prisma.business.findUnique({
+        where: { id: businessId },
+        include: { package: true },
+      });
+      if (business?.package) {
+        packageInfo = {
+          id: business.package.id,
+          name: business.package.name,
+          transactionLimit: business.package.transactionLimit,
+          maxPhoneTxns: business.package.maxPhoneTxns,
+          maxVerifiedTxns: business.package.maxVerifiedTxns,
+        };
+      }
+    }
 
-  res.json({
-    success: true,
-    data: {
-      transactions: {
-        today: txnsToday,
-        thisMonth: txnsThisMonth,
-        total: totalTxns,
+    // Get counts
+    [txnsToday, txnsThisMonth, totalTxns, usageStatsResult, patternCount, projectCount] = await Promise.all([
+      prisma.transaction.count({
+        where: { ...where, createdAt: { gte: todayStart } },
+      }).catch(() => 0),
+      prisma.transaction.count({
+        where: { ...where, createdAt: { gte: monthStart } },
+      }).catch(() => 0),
+      prisma.transaction.count({ where }).catch(() => 0),
+      getUsageStats(req.user.id).catch(() => ({
+        appRequestsToday: 0,
+        appRequestsMonth: 0,
+        devRequestsToday: 0,
+        devRequestsMonth: 0,
+      })),
+      prisma.pattern.count({
+        where: { userId: req.user.id },
+      }).catch(() => 0),
+      req.user.role === 'DEVELOPER' ? Promise.all([
+        prisma.project.count({
+          where: { developerId: req.user.id, isOwnProject: true },
+        }).catch(() => 0),
+        prisma.project.count({
+          where: { developerId: req.user.id, isOwnProject: false },
+        }).catch(() => 0),
+      ]) : Promise.resolve<[number, number]>([0, 0]),
+    ]);
+
+    usageStats = usageStatsResult || usageStats;
+    if (Array.isArray(projectCount)) {
+      projectCount = [projectCount[0], projectCount[1]];
+    } else {
+      projectCount = [0, 0];
+    }
+
+    // Daily counts
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    thirtyDaysAgo.setHours(0, 0, 0, 0);
+
+    const recentTransactions = await prisma.transaction.findMany({
+      where: { ...where, createdAt: { gte: thirtyDaysAgo } },
+      select: { createdAt: true },
+      take: 10000,
+    }).catch(() => []);
+
+    const dailyMap = new Map<string, number>();
+    recentTransactions.forEach((txn) => {
+      const dateStr = new Date(txn.createdAt).toISOString().split('T')[0];
+      dailyMap.set(dateStr, (dailyMap.get(dateStr) || 0) + 1);
+    });
+
+    for (let i = 29; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      date.setHours(0, 0, 0, 0);
+      const dateStr = date.toISOString().split('T')[0];
+      allDays.push({ date: dateStr, count: dailyMap.get(dateStr) || 0 });
+    }
+
+    // API usage
+    const auditLogs = await prisma.auditLog.findMany({
+      where: {
+        userId: req.user.id,
+        createdAt: { gte: thirtyDaysAgo },
+        OR: [
+          { endpoint: { contains: '/ingest' } },
+          { endpoint: { contains: '/verify' } },
+        ],
       },
-      patterns: {
-        total: totalPatterns,
-      },
-      plan: plan?.plan || 'FREE',
-      rateLimit: {
-        max: rateLimit,
-        remaining: Math.max(0, rateLimit - totalRequests),
-        used: totalRequests,
-      },
-      usage: {
-        app: {
-          today: usageStats.appRequestsToday,
-          month: usageStats.appRequestsMonth,
+      select: { endpoint: true, createdAt: true },
+    }).catch(() => []);
+
+    const dailyAppUsage = new Map<string, number>();
+    const dailyDevUsage = new Map<string, number>();
+
+    auditLogs.forEach((log) => {
+      const dateStr = new Date(log.createdAt).toISOString().split('T')[0];
+      if (log.endpoint.includes('/ingest')) {
+        dailyAppUsage.set(dateStr, (dailyAppUsage.get(dateStr) || 0) + 1);
+      } else if (log.endpoint.includes('/verify')) {
+        dailyDevUsage.set(dateStr, (dailyDevUsage.get(dateStr) || 0) + 1);
+      }
+    });
+
+    dailyApiUsage = allDays.map((day) => ({
+      date: day.date,
+      app: dailyAppUsage.get(day.date) || 0,
+      dev: dailyDevUsage.get(day.date) || 0,
+    }));
+
+    // Rate limit and token usage
+    let maxRequests = 100;
+    let tokenInfo: any = null;
+
+    if (userPackage) {
+      tokenInfo = {
+        phoneTxnsRemaining: userPackage.phoneTxnsRemaining,
+        phoneTxnsUsed: userPackage.phoneTxnsUsed || 0,
+        verifiedTxnsRemaining: userPackage.verifiedTxnsRemaining,
+        verifiedTxnsUsed: userPackage.verifiedTxnsUsed || 0,
+        maxPhoneTxns: userPackage.package?.maxPhoneTxns || null,
+        maxVerifiedTxns: userPackage.package?.maxVerifiedTxns || null,
+      };
+
+      if (userPackage.package?.maxPhoneTxns) {
+        maxRequests = userPackage.package.maxPhoneTxns;
+      } else if (userPackage.package?.maxVerifiedTxns) {
+        maxRequests = userPackage.package.maxVerifiedTxns;
+      }
+    } else if (packageInfo?.transactionLimit) {
+      maxRequests = packageInfo.transactionLimit;
+    } else if (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') {
+      maxRequests = 1000000;
+    }
+
+    const totalMonthlyRequests = (usageStats.appRequestsMonth || 0) + (usageStats.devRequestsMonth || 0);
+    const remainingRequests = Math.max(0, maxRequests - totalMonthlyRequests);
+
+    const responseData = {
+      success: true,
+      data: {
+        transactions: { today: txnsToday, thisMonth: txnsThisMonth, total: totalTxns, daily: allDays },
+        apiUsage: { daily: dailyApiUsage },
+        patterns: { total: patternCount },
+        projects: req.user.role === 'DEVELOPER' ? {
+          own: projectCount[0],
+          client: projectCount[1],
+          total: projectCount[0] + projectCount[1],
+        } : undefined,
+        usage: {
+          app: { today: usageStats.appRequestsToday || 0, month: usageStats.appRequestsMonth || 0 },
+          dev: { today: usageStats.devRequestsToday || 0, month: usageStats.devRequestsMonth || 0 },
         },
-        dev: {
-          today: usageStats.devRequestsToday,
-          month: usageStats.devRequestsMonth,
-        },
-        total: totalRequests,
+        rateLimit: { remaining: remainingRequests, max: maxRequests, used: totalMonthlyRequests },
+        tokens: tokenInfo ? {
+          phone: { remaining: tokenInfo.phoneTxnsRemaining, used: tokenInfo.phoneTxnsUsed, max: tokenInfo.maxPhoneTxns },
+          verified: { remaining: tokenInfo.verifiedTxnsRemaining, used: tokenInfo.verifiedTxnsUsed, max: tokenInfo.maxVerifiedTxns },
+        } : undefined,
+        plan: user?.plan || 'FREE',
+        package: packageInfo,
       },
-    },
-  });
+    };
+
+    await cache.set(cacheKey, responseData, 120).catch(() => { });
+    return res.json(responseData);
+  } catch (error) {
+    throw new AppError(500, 'Failed to get dashboard statistics');
+  }
 }
 
+/**
+ * Verify transaction by cluster relationship (clusterId + txnId).
+ * Uses signed API auth and per-system rate limiting at route level.
+ */
+export async function verifyClusterTransaction(req: AuthRequest, res: Response) {
+  const clusterIdRaw = (req.query.clusterId as string) || (req.body?.clusterId as string);
+  const txnIdRaw = (req.query.txn as string) || (req.query.txnId as string) || (req.body?.txn as string) || (req.body?.txnId as string);
+
+  const clusterId = String(clusterIdRaw || '').trim();
+  const txnId = String(txnIdRaw || '').trim().replace(/^"+|"+$/g, '');
+
+  if (!clusterId) {
+    throw new AppError(400, 'clusterId is required');
+  }
+
+  if (!txnId) {
+    throw new AppError(400, 'txnId is required');
+  }
+
+  const cluster = await prisma.clusterRequest.findFirst({
+    where: {
+      id: clusterId,
+      status: 'ACCEPTED',
+    },
+    include: {
+      project: {
+        select: {
+          id: true,
+          name: true,
+          businessId: true,
+          developerId: true,
+          ingestUserId: true,
+        },
+      },
+      developer: { select: { id: true, username: true } },
+      owner: { select: { id: true, username: true, ownerCode: true } },
+    },
+  });
+
+  if (!cluster) {
+    throw new AppError(404, 'Cluster not found or not active');
+  }
+
+  const apiProjectId = (req as any).project?.id as string | undefined;
+  const apiBusinessId = req.business?.id;
+  const apiUserId = req.user?.id;
+
+  const allowedByProject = Boolean(apiProjectId && cluster.projectId && apiProjectId === cluster.projectId);
+  const allowedByBusiness = Boolean(apiBusinessId && cluster.project?.businessId && apiBusinessId === cluster.project.businessId);
+  const allowedByOwnerOrDeveloper = Boolean(apiUserId && (apiUserId === cluster.ownerId || apiUserId === cluster.developerId));
+
+  if (!allowedByProject && !allowedByBusiness && !allowedByOwnerOrDeveloper) {
+    throw new AppError(403, 'API key is not authorized for this cluster');
+  }
+
+  const idempotencyKey = (req.headers['x-idempotency-key'] as string | undefined)?.trim();
+  const idempotencyCacheKey = idempotencyKey
+    ? 'cluster-verify:idem:' + cluster.id + ':' + idempotencyKey
+    : null;
+
+  if (req.method === 'POST' && idempotencyCacheKey) {
+    const cached = await cache.get<any>(idempotencyCacheKey);
+    if (cached) {
+      return res.json({
+        success: true,
+        data: {
+          ...cached,
+          idempotent: true,
+        },
+      });
+    }
+  }
+
+  const txnWhere: any = {
+    OR: [{ txnId }, { referenceTxnId: txnId }],
+  };
+
+  if (cluster.projectId) {
+    txnWhere.projectId = cluster.projectId;
+  } else {
+    txnWhere.OR = [
+      {
+        AND: [
+          { OR: [{ txnId }, { referenceTxnId: txnId }] },
+          { userId: cluster.ownerId },
+        ],
+      },
+      {
+        AND: [
+          { OR: [{ txnId }, { referenceTxnId: txnId }] },
+          { userId: cluster.developerId },
+        ],
+      },
+    ];
+  }
+
+  const found = await prisma.transaction.findFirst({
+    where: txnWhere,
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      txnId: true,
+      referenceTxnId: true,
+      amount: true,
+      sender: true,
+      bank: true,
+      source: true,
+      projectId: true,
+      businessId: true,
+      userId: true,
+      receivedAt: true,
+      isValidated: true,
+      verifiedAt: true,
+    },
+  });
+
+  if (found && !found.isValidated) {
+    await prisma.transaction.update({
+      where: { id: found.id },
+      data: {
+        isValidated: true,
+        verifiedAt: new Date(),
+      },
+    });
+  }
+
+  const responseData = found
+    ? {
+        confirmed: true,
+        clusterId: cluster.id,
+        ownerCode: cluster.ownerCode,
+        txnId: found.txnId,
+        referenceTxnId: found.referenceTxnId,
+        amount: found.amount,
+        sender: found.sender,
+        bank: found.bank,
+        source: found.source,
+        receivedAt: found.receivedAt,
+        verifiedAt: found.verifiedAt || new Date(),
+        projectId: found.projectId,
+      }
+    : {
+        confirmed: false,
+        clusterId: cluster.id,
+        ownerCode: cluster.ownerCode,
+        txnId,
+        message: 'Transaction not found for this cluster',
+      };
+
+  if (req.method === 'POST' && idempotencyCacheKey) {
+    await cache.set(idempotencyCacheKey, responseData, 24 * 60 * 60);
+  }
+
+  await prisma.auditLog.create({
+    data: {
+      userId: req.user?.id || null,
+      action: 'CLUSTER_VERIFY',
+      endpoint: '/verify/cluster',
+      ipAddress: req.ip || req.socket.remoteAddress || undefined,
+      metadata: {
+        method: req.method,
+        clusterId: cluster.id,
+        ownerCode: cluster.ownerCode,
+        txnId,
+        confirmed: Boolean(found),
+        apiKeyType: req.apiKeyType || 'unknown',
+        projectId: (req as any).project?.id || null,
+        businessId: req.business?.id || null,
+        idempotencyKey: idempotencyKey || null,
+      },
+    },
+  }).catch((error) => {
+    console.error('Cluster verify audit error:', error);
+  });
+
+  return res.json({
+    success: true,
+    data: responseData,
+  });
+}

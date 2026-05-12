@@ -1,0 +1,64 @@
+import axios from 'axios';
+import { Transaction, Pattern, Business, Employee } from '@prisma/client';
+
+interface WebhookPayload {
+    success: boolean;
+    data: {
+        confirmed: boolean;
+        matchType: string;
+        txnId: string;
+        referenceTxnId: string | null;
+        amount: number;
+        sender: string;
+        bank: string | null;
+        receivedAt: Date;
+        verifiedAt: Date;
+        business?: { id: string; name: string | null } | null;
+        employee?: { id: string; name: string } | null;
+        source: string;
+    };
+}
+
+/**
+ * Send a webhook notification for a verified transaction
+ */
+export async function sendVerificationWebhook(
+    webhookUrl: string,
+    transaction: Transaction & {
+        pattern?: { name: string; bank: string | null } | null;
+        business?: { id: string; name: string | null } | null;
+        employee?: { id: string; name: string } | null;
+    }
+) {
+    const payload: WebhookPayload = {
+        success: true,
+        data: {
+            confirmed: true,
+            matchType: 'exact',
+            txnId: transaction.txnId,
+            referenceTxnId: transaction.referenceTxnId || null,
+            amount: transaction.amount,
+            sender: transaction.sender,
+            bank: transaction.bank || transaction.pattern?.bank || null,
+            receivedAt: transaction.receivedAt,
+            verifiedAt: transaction.verifiedAt || new Date(),
+            business: transaction.business,
+            employee: transaction.employee,
+            source: transaction.source,
+        },
+    };
+
+    try {
+        await axios.post(webhookUrl, payload, {
+            timeout: 5000,
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        });
+        console.log(`[Webhook] Sent successfully to ${webhookUrl}`);
+        return true;
+    } catch (error: any) {
+        console.error(`[Webhook] Failed to send to ${webhookUrl}:`, error?.message);
+        return false;
+    }
+}

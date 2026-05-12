@@ -1,0 +1,198 @@
+import prisma from '../utils/prisma';
+
+/**
+ * Process pending verifications - checks for matching transactions
+ * This should be called periodically (every 2-5 minutes) by a background job
+ */
+export async function processPendingVerifications() {
+  const now = new Date();
+
+  // Get all pending verifications that haven't expired
+  const pending = await prisma.pendingVerification.findMany({
+    where: {
+      status: 'PENDING',
+      expiresAt: {
+        gt: now,
+      },
+    },
+    include: {
+      user: true,
+      business: true,
+      project: true,
+    },
+    orderBy: {
+      createdAt: 'asc', // Process oldest first
+    },
+    take: 100, // Process in batches
+  });
+
+  let processed = 0;
+  let verified = 0;
+
+  for (const verification of pending) {
+    try {
+      // Build where clause similar to verifyTransaction
+      const where: any = {
+        OR: [
+          { txnId: verification.txnId },
+          { referenceTxnId: verification.txnId },
+        ],
+      };
+
+      if (verification.projectId) {
+        where.projectId = verification.projectId;
+      } else if (verification.businessId) {
+        where.businessId = verification.businessId;
+      } else {
+        where.userId = verification.userId;
+      }
+
+      // Try to find matching transaction
+      const transaction = await prisma.transaction.findFirst({
+        where,
+        include: {
+          pattern: {
+            select: {
+              name: true,
+              bank: true,
+            },
+          },
+          business: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          employee: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+
+      if (transaction) {
+        // Transaction found! Mark as verified
+        await prisma.$transaction(async (tx) => {
+          // Mark transaction as verified
+          await tx.transaction.update({
+            where: { id: transaction.id },
+            data: { verifiedAt: new Date() },
+          });
+
+          // Update pending verification
+          await tx.pendingVerification.update({
+            where: { id: verification.id },
+            data: {
+              status: 'VERIFIED',
+              verifiedAt: new Date(),
+            },
+          });
+        });
+
+        // Send webhook if configured
+        if (verification.webhookUrl) {
+          const { sendVerificationWebhook } = await import('../utils/webhook');
+          await sendVerificationWebhook(verification.webhookUrl, transaction);
+        }
+
+        verified++;
+      } else {
+        // Transaction not found yet, increment retry count
+        const updated = await prisma.pendingVerification.update({
+          where: { id: verification.id },
+          data: {
+            retryCount: {
+              increment: 1,
+            },
+          },
+        });
+
+        // Mark as failed if exceeded max retries
+        if (updated.retryCount >= updated.maxRetries) {
+          await prisma.pendingVerification.update({
+            where: { id: verification.id },
+            data: {
+              status: 'FAILED',
+            },
+          });
+        }
+      }
+
+      processed++;
+    } catch (error: any) {
+      console.error(`[PendingVerification] Error processing ${verification.id}:`, error);
+
+      // Mark as failed if too many retries
+      if (verification.retryCount >= verification.maxRetries - 1) {
+        await prisma.pendingVerification.update({
+          where: { id: verification.id },
+          data: {
+            status: 'FAILED',
+          },
+        });
+      }
+    }
+  }
+
+  // Clean up expired verifications
+  const expiredResult = await prisma.pendingVerification.updateMany({
+    where: {
+      status: 'PENDING',
+      expiresAt: {
+        lte: now,
+      },
+    },
+    data: {
+      status: 'EXPIRED',
+    },
+  });
+
+  if (expiredResult.count > 0) {
+    console.log(`[PendingVerification] Expired ${expiredResult.count} verifications`);
+  }
+
+  return { processed, verified };
+}
+
+/**
+ * Get pending verifications for the authenticated user
+ */
+export async function getPendingVerifications(userId: string, businessId?: string, projectId?: string) {
+  const where: any = {
+    userId,
+    status: {
+      in: ['PENDING', 'VERIFIED', 'FAILED', 'EXPIRED'],
+    },
+  };
+
+  if (projectId) {
+    where.projectId = projectId;
+  } else if (businessId) {
+    where.businessId = businessId;
+  }
+
+  const verifications = await prisma.pendingVerification.findMany({
+    where,
+    include: {
+      business: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+      project: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+  });
+
+  return verifications;
+}

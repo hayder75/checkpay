@@ -3,32 +3,50 @@ import { Request, Response } from 'express';
 import { AuthRequest } from './auth';
 import prisma from '../utils/prisma';
 import { getUsageStats } from '../utils/usageTracker';
-import { getSystemConfig } from '../utils/systemConfigStore';
 
 /**
- * Custom rate limiter that checks user's plan and usage stats
- * Tracks app requests (ingest) and dev requests (verify) separately
+ * Custom rate limiter that checks business package limits
  */
 export async function customRateLimiter(req: AuthRequest, res: Response, next: any) {
-  if (!req.user) {
+  if (!req.user && !req.business) {
     return res.status(401).json({ success: false, error: 'Authentication required' });
   }
 
-  const apiKeyType = req.apiKeyType || 'app'; // Default to app for ingest endpoint
-  const freeMax = parseInt(process.env.RATE_LIMIT_FREE_MAX || '100');
-  const premiumMax = parseInt(process.env.RATE_LIMIT_PREMIUM_MAX || '1000000');
-  const config = await getSystemConfig();
-  const maxRequests = config.billingMode === 'FIXED_PRICE'
-    ? Number.MAX_SAFE_INTEGER
-    : (req.user.plan === 'PREMIUM' ? premiumMax : freeMax);
+  // Get business context if available
+  const businessId = (req as any).businessContext?.id || req.business?.id;
+  
+  let maxRequests = 100; // Default free limit
+  
+  if (businessId) {
+    // Get business package limits
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      include: { package: true },
+    });
+    
+    if (business?.package) {
+      maxRequests = business.package.transactionLimit || 1000000;
+    }
+  } else if (req.user) {
+    // Check user role - admins have unlimited
+    if (req.user.role === 'ADMIN' || req.user.role === 'SUPER_ADMIN') {
+      maxRequests = 1000000; // Unlimited for admins
+    } else {
+      const freeMax = parseInt(process.env.RATE_LIMIT_FREE_MAX || '100');
+      maxRequests = freeMax;
+    }
+  }
 
   // Get usage stats
-  const usageStats = await getUsageStats(req.user.id);
-  
-  // Check monthly limit (both app and dev requests count towards total)
+  const userId = req.user?.id;
+  if (!userId) {
+    return next();
+  }
+
+  const usageStats = await getUsageStats(userId);
   const totalMonthlyRequests = usageStats.appRequestsMonth + usageStats.devRequestsMonth;
   
-  if (maxRequests !== Number.MAX_SAFE_INTEGER && totalMonthlyRequests >= maxRequests) {
+  if (totalMonthlyRequests >= maxRequests) {
     return res.status(429).json({
       success: false,
       error: `Rate limit exceeded. ${maxRequests} requests per month.`,
@@ -49,11 +67,9 @@ export async function customRateLimiter(req: AuthRequest, res: Response, next: a
   }
 
   // Add rate limit info to response headers
-  const remaining = maxRequests === Number.MAX_SAFE_INTEGER
-    ? Number.MAX_SAFE_INTEGER
-    : maxRequests - totalMonthlyRequests;
-  res.setHeader('X-RateLimit-Limit', maxRequests === Number.MAX_SAFE_INTEGER ? 'unlimited' : maxRequests.toString());
-  res.setHeader('X-RateLimit-Remaining', remaining === Number.MAX_SAFE_INTEGER ? 'unlimited' : remaining.toString());
+  const remaining = maxRequests - totalMonthlyRequests;
+  res.setHeader('X-RateLimit-Limit', maxRequests.toString());
+  res.setHeader('X-RateLimit-Remaining', remaining.toString());
   res.setHeader('X-RateLimit-Usage-App', usageStats.appRequestsMonth.toString());
   res.setHeader('X-RateLimit-Usage-Dev', usageStats.devRequestsMonth.toString());
 
@@ -65,9 +81,28 @@ export async function customRateLimiter(req: AuthRequest, res: Response, next: a
  */
 export const generalRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // 100 requests per window
+  max: 2000, // 2000 requests per window (increased for production dashboard usage)
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
 });
 
+
+/**
+ * Stricter rate limiter for signed cluster verification endpoint.
+ * Keyed per API key (or IP fallback) so each integrating system is isolated.
+ */
+export const clusterVerifyRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: parseInt(process.env.CLUSTER_VERIFY_RATE_MAX || '120', 10),
+  keyGenerator: (req: Request) => {
+    const apiKey = (req.headers['x-api-key'] as string | undefined)?.trim();
+    return apiKey || req.ip || 'unknown';
+  },
+  message: {
+    success: false,
+    error: 'Too many cluster verification requests. Please retry shortly.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});

@@ -1,12 +1,20 @@
 import prisma from './prisma';
+import cache from './redis';
 
 /**
  * Track usage for app requests (ingest) or dev requests (verify)
  */
 export async function trackUsage(
   userId: string,
-  type: 'app' | 'dev'
+  type: 'app' | 'dev',
+  userRole?: string // User role to check if admin (unlimited tokens)
 ): Promise<void> {
+  if (!userId) {
+    return;
+  }
+  // Note: Token consumption is now handled directly by controllers 
+  // to allow for better error handling and transaction rollbacks.
+
   const now = new Date();
   const todayStart = new Date(now.setHours(0, 0, 0, 0));
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -52,12 +60,24 @@ export async function trackUsage(
     where: { userId },
     data: updates,
   });
+
+  // Invalidate usage cache
+  await cache.del(`usage:${userId}`);
+  // Also invalidate stats cache
+  await cache.delPattern(`stats:${userId}:*`);
 }
 
 /**
  * Get usage stats for a user
  */
 export async function getUsageStats(userId: string) {
+  // Try cache first
+  const cacheKey = `usage:${userId}`;
+  const cached = await cache.get<any>(cacheKey);
+  if (cached) {
+    return cached; // Fast path!
+  }
+
   let usageStats = await prisma.usageStats.findUnique({
     where: { userId },
   });
@@ -73,6 +93,9 @@ export async function getUsageStats(userId: string) {
       },
     });
   }
+
+  // Cache for 2 minutes
+  await cache.set(cacheKey, usageStats, 120);
 
   return usageStats;
 }

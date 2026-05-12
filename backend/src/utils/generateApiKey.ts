@@ -1,12 +1,10 @@
+import * as crypto from 'crypto';
+
 /**
  * Generates a new API key with prefix 'ckp_'
  */
 export function generateApiKey(): string {
-  const randomPart = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-  
+  const randomPart = crypto.randomBytes(16).toString('hex');
   return `ckp_${randomPart}`;
 }
-
 

@@ -13,7 +13,7 @@ import {
 import { 
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue 
 } from '@/components/ui/select';
-import { adminAPI, packageAPI } from '@/lib';
+import { packageAPI } from '@/lib';
 import { useToast } from '@/components/ui/use-toast';
 import { Plus, Edit2, Save, X, Settings, Zap, RefreshCw, Package, DollarSign, Eye, Trash2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -40,36 +40,8 @@ export default function AdminPackageManagementPage() {
   const [showDialog, setShowDialog] = useState(false);
   const [editingPackage, setEditingPackage] = useState<any>(null);
   const [formData, setFormData] = useState({ name: '', tier: '', price: '', description: '' });
-  const [billingMode, setBillingMode] = useState<'COUNT_BASED' | 'FIXED_PRICE'>('COUNT_BASED');
-  const [savingBillingMode, setSavingBillingMode] = useState(false);
 
-  useEffect(() => {
-    loadPackages();
-    loadSystemConfig();
-  }, []);
-
-  const loadSystemConfig = async () => {
-    try {
-      const response = await adminAPI.getSystemConfig();
-      if (response.data?.success && response.data?.data?.billingMode) {
-        setBillingMode(response.data.data.billingMode);
-      }
-    } catch (error: any) {
-      toast({ title: 'Error', description: error.response?.data?.error || 'Failed to load billing mode', variant: 'destructive' });
-    }
-  };
-
-  const handleBillingModeSave = async () => {
-    try {
-      setSavingBillingMode(true);
-      await adminAPI.updateBillingMode(billingMode);
-      toast({ title: 'Success', description: `Billing mode set to ${billingMode}` });
-    } catch (error: any) {
-      toast({ title: 'Error', description: error.response?.data?.error || 'Failed to update billing mode', variant: 'destructive' });
-    } finally {
-      setSavingBillingMode(false);
-    }
-  };
+  useEffect(() => { loadPackages(); }, []);
 
   const loadPackages = async () => {
     setLoading(true);
@@ -115,30 +87,6 @@ export default function AdminPackageManagementPage() {
         </div>
 
         <Separator />
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Billing Mode</CardTitle>
-            <CardDescription>Controls package behavior across web and mobile.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col sm:flex-row gap-3 sm:items-end">
-            <div className="space-y-2 min-w-[240px]">
-              <Label>Mode</Label>
-              <Select value={billingMode} onValueChange={(v: 'COUNT_BASED' | 'FIXED_PRICE') => setBillingMode(v)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select billing mode" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="COUNT_BASED">Count Based</SelectItem>
-                  <SelectItem value="FIXED_PRICE">Fixed Price</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Button onClick={handleBillingModeSave} disabled={savingBillingMode}>
-              {savingBillingMode ? 'Saving...' : 'Save Billing Mode'}
-            </Button>
-          </CardContent>
-        </Card>
 
         <Card>
           <CardHeader className="pb-0">

@@ -17,4 +17,3 @@ export function maskPhone(phone: string): string {
   return `${prefix}${'*'.repeat(maskedLength)}${suffix}`;
 }
 
-

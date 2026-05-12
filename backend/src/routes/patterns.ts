@@ -1,45 +1,1521 @@
 import { Router } from 'express';
-import {
-  createPattern,
-  createPatternWithAI,
-  getPatterns,
-  getPattern,
-  updatePattern,
-  deletePattern,
-  validatePatternEndpoint,
-  getInstitutionPattern,
-  createPatternFromSample,
-  checkPatternAndExtract,
-  getInstitutionsWithPatterns,
-  getCountryPatterns,
-  getGlobalPatterns,
-  selectGlobalPattern,
-} from '../controllers/patternController';
+import { z } from 'zod';
 import { authenticate } from '../middleware/auth';
-import { auditLog } from '../middleware/auditLog';
+import { asyncHandler } from '../middleware/errorHandler';
+import { AppError } from '../middleware/errorHandler';
+import { AuthRequest } from '../middleware/auth';
+import { Response } from 'express';
+import prisma from '../utils/prisma';
 
 const router = Router();
 
-// Institution pattern routes (can be accessed without auth for onboarding)
-router.get('/institution/:institution', getInstitutionPattern as any);
-router.get('/institutions', getInstitutionsWithPatterns as any);
-router.get('/country/:countryCode', getCountryPatterns as any);
-router.post('/check-and-extract', checkPatternAndExtract as any);
-router.post('/create-from-sample', createPatternFromSample as any);
+// Public endpoint for signup: fetch institutions without authentication
+router.get('/institutions', asyncHandler(getPublicInstitutions as any));
 
-// All other pattern routes require authentication
+// All routes require authentication
 router.use(authenticate as any);
-router.use(auditLog as any);
 
-router.post('/', createPattern as any);
-router.post('/create-with-ai', createPatternWithAI as any);
-router.get('/', getPatterns as any);
-router.get('/global', getGlobalPatterns as any);
-router.post('/global/:patternId/select', selectGlobalPattern as any);
-router.get('/:id', getPattern as any);
-router.put('/:id', updatePattern as any);
-router.delete('/:id', deletePattern as any);
-router.post('/validate', validatePatternEndpoint as any);
+async function getPublicInstitutions(req: any, res: Response) {
+  const country = typeof req.query.country === 'string' ? req.query.country.toUpperCase() : null;
+
+  const patternWhere: any = {
+    isFlagged: false,
+    bank: { not: null },
+  };
+
+  const ocrWhere: any = {
+    isActive: true,
+  };
+
+  if (country) {
+    patternWhere.OR = [
+      { countryCode: country },
+      { countryCode: null },
+    ];
+    ocrWhere.countryCode = country;
+  }
+
+  const [patterns, ocrPatterns] = await Promise.all([
+    prisma.pattern.findMany({
+      where: patternWhere,
+      select: {
+        bank: true,
+      },
+      take: 1000,
+    }),
+    prisma.oCRPattern.findMany({
+      where: ocrWhere,
+      select: {
+        bank: true,
+        institution: true,
+      },
+      take: 1000,
+    }),
+  ]);
+
+  const banks = Array.from(new Set(
+    [
+      ...patterns.map((p) => (p.bank || '').trim()),
+      ...ocrPatterns.map((p) => (p.bank || '').trim()),
+      ...ocrPatterns.map((p) => (p.institution || '').trim()),
+    ].filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b));
+
+  res.json({
+    success: true,
+    data: banks,
+  });
+}
+
+
+/**
+ * Get all patterns for current user
+ * Returns patterns created by user OR linked via UserPattern junction table
+ */
+async function getAllPatterns(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  try {
+    const patternMap = new Map();
+
+    // For employees, get business patterns + universal OCR patterns
+    if (req.user.role === 'EMPLOYEE') {
+      const employee = await prisma.employee.findFirst({
+        where: {
+          userId: req.user.id,
+          isActive: true,
+        },
+        include: {
+          business: {
+            include: {
+              businessPatterns: {
+                where: {
+                  isActive: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      // Get user's country code if available
+      const userCountry = req.user.country || null;
+      let hasBusinessPatterns = false;
+
+      if (employee && employee.business) {
+        // Get pattern IDs from business patterns
+        const patternIds = employee.business.businessPatterns
+          .map(bp => bp.patternId)
+          .filter((id): id is string => id !== null);
+
+        if (patternIds.length > 0) {
+          // Fetch the actual patterns
+          const businessPatterns = await prisma.pattern.findMany({
+            where: {
+              id: { in: patternIds },
+              isFlagged: false,
+            },
+          });
+
+          // Add business patterns to map
+          businessPatterns.forEach(pattern => {
+            if (!patternMap.has(pattern.id)) {
+              patternMap.set(pattern.id, pattern);
+            }
+          });
+          hasBusinessPatterns = businessPatterns.length > 0;
+        }
+      }
+
+      // If no business patterns, or as supplement, get country-specific patterns
+      if (!hasBusinessPatterns || userCountry) {
+        const countryPatternsWhere: any = {
+          isFlagged: false,
+          OR: [
+            { isTemplate: true }, // Admin templates
+            { isTemplate: false, userId: { not: null } }, // User-created patterns
+          ],
+        };
+
+        if (userCountry) {
+          countryPatternsWhere.countryCode = userCountry.toUpperCase();
+        }
+
+        const countryPatterns = await prisma.pattern.findMany({
+          where: countryPatternsWhere,
+          orderBy: [
+            { usageCount: 'desc' },
+            { createdAt: 'desc' },
+          ],
+          take: 100, // Limit to top 100 patterns
+        });
+
+        // Add country patterns to map
+        countryPatterns.forEach(pattern => {
+          if (!patternMap.has(pattern.id)) {
+            patternMap.set(pattern.id, pattern);
+          }
+        });
+      }
+
+      // Also get universal OCR patterns for employees (as fallback/supplement)
+      const ocrPatternsWhere: any = {
+        isActive: true,
+        isVerified: true,
+      };
+      
+      if (userCountry) {
+        ocrPatternsWhere.countryCode = userCountry.toUpperCase();
+      }
+
+      const ocrPatterns = await prisma.oCRPattern.findMany({
+        where: ocrPatternsWhere,
+        orderBy: [
+          { usageCount: 'desc' },
+          { createdAt: 'desc' },
+        ],
+        take: 50, // Limit to top 50 most used patterns
+      });
+
+      // Convert OCR patterns to Pattern format for compatibility
+      ocrPatterns.forEach(ocrPattern => {
+        // Create a unique key for OCR patterns (use institution + countryCode)
+        const patternKey = `ocr_${ocrPattern.institution}_${ocrPattern.countryCode}_${ocrPattern.id}`;
+        
+        // Convert OCR pattern to Pattern-like object
+        const patternLike = {
+          id: patternKey,
+          name: ocrPattern.name,
+          bank: ocrPattern.bank || ocrPattern.institution,
+          institution: ocrPattern.institution,
+          regex: ocrPattern.regex,
+          extractFields: ocrPattern.extractFields,
+          currency: ocrPattern.currency || 'ETB',
+          countryCode: ocrPattern.countryCode,
+          description: ocrPattern.description,
+          usageCount: ocrPattern.usageCount,
+          createdAt: ocrPattern.createdAt,
+          updatedAt: ocrPattern.updatedAt,
+        };
+
+        if (!patternMap.has(patternKey)) {
+          patternMap.set(patternKey, patternLike);
+        }
+      });
+    } else {
+      // For regular users, get patterns via UserPattern junction table (new marketplace model)
+      const userPatterns = await prisma.userPattern.findMany({
+        where: {
+          userId: req.user.id,
+          isActive: true,
+        },
+        include: {
+          pattern: true,
+        },
+        orderBy: {
+          addedAt: 'desc',
+        },
+      });
+
+      // Also get patterns directly created by user (legacy support)
+      const createdPatterns = await prisma.pattern.findMany({
+        where: {
+          OR: [
+            { userId: req.user.id },
+            { creatorId: req.user.id },
+          ],
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
+      
+      // Add patterns from UserPattern junction
+      userPatterns.forEach(up => {
+        if (up.pattern && !patternMap.has(up.pattern.id)) {
+          patternMap.set(up.pattern.id, up.pattern);
+        }
+      });
+      
+      // Add directly created patterns (if not already included)
+      createdPatterns.forEach(pattern => {
+        if (!patternMap.has(pattern.id)) {
+          patternMap.set(pattern.id, pattern);
+        }
+      });
+    }
+
+    const patterns = Array.from(patternMap.values());
+
+    res.json({
+      success: true,
+      data: patterns || [],
+    });
+  } catch (error: any) {
+    // Error fetching patterns - fallback below
+    // Fallback to simple query if UserPattern table doesn't exist
+    try {
+      const patterns = await prisma.pattern.findMany({
+        where: {
+          OR: [
+            { userId: req.user.id },
+            { creatorId: req.user.id },
+          ],
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
+      res.json({
+        success: true,
+        data: patterns || [],
+      });
+    } catch (fallbackError: any) {
+      // Fallback query failed - return empty array
+      res.json({
+        success: true,
+        data: [],
+      });
+    }
+  }
+}
+
+/**
+ * Get single pattern
+ */
+async function getPattern(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const { id } = req.params;
+  const pattern = await prisma.pattern.findUnique({
+    where: { id },
+  });
+
+  if (!pattern) {
+    throw new AppError(404, 'Pattern not found');
+  }
+
+  if (pattern.userId !== req.user.id && req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+    throw new AppError(403, 'Access denied');
+  }
+
+  res.json({
+    success: true,
+    data: pattern,
+  });
+}
+
+/**
+ * Create pattern - Uses smart template matching first, then AI as fallback
+ */
+async function createPattern(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  // Log raw request body for debugging
+  console.log('[Pattern Create] Raw request body:', {
+    hasAllowedSenders: 'allowedSenders' in req.body,
+    allowedSenders: req.body.allowedSenders,
+    allowedSendersType: typeof req.body.allowedSenders,
+    isArray: Array.isArray(req.body.allowedSenders),
+    allowedSendersStringified: JSON.stringify(req.body.allowedSenders),
+    fullBodyKeys: Object.keys(req.body),
+  });
+
+  const { 
+    smsText, 
+    smsTexts, 
+    name, 
+    description, 
+    countryCode: requestedCountryCode, // Country code from request (optional)
+    useAI,
+    // Security fields for sender verification
+    allowedSenders,
+    requireSenderVerification,
+    senderVerificationMode,
+    maxAmountThreshold,
+    requireContactCheck,
+  } = z.object({
+    smsText: z.string().min(1).optional(),
+    smsTexts: z.array(z.string().min(1)).optional(),
+    name: z.string().min(1),
+    description: z.string().optional(),
+    countryCode: z.string().length(2).optional(), // ISO country code (e.g., "ET", "KE")
+    useAI: z.boolean().optional().default(false),
+    // Security fields - accept array of strings (we'll filter empty ones later)
+    allowedSenders: z.array(z.string()).optional(),
+    requireSenderVerification: z.boolean().optional().default(true),
+    senderVerificationMode: z.enum(['STRICT', 'WARN', 'NONE']).optional().default('STRICT'),
+    maxAmountThreshold: z.number().positive().optional(),
+    requireContactCheck: z.boolean().optional().default(true),
+  }).parse(req.body);
+  
+  // Filter out empty strings from allowedSenders if provided
+  let filteredAllowedSenders: string[] | undefined = undefined;
+  if (allowedSenders !== undefined) {
+    if (Array.isArray(allowedSenders)) {
+      filteredAllowedSenders = allowedSenders.filter(s => s && typeof s === 'string' && s.trim().length > 0);
+      if (filteredAllowedSenders.length === 0) {
+        filteredAllowedSenders = undefined; // Empty after filtering = not provided
+      }
+    }
+  }
+  const finalAllowedSenders = filteredAllowedSenders;
+  
+  console.log('[Pattern Create] Parsed security fields:', {
+    allowedSendersRaw: allowedSenders,
+    allowedSendersFiltered: finalAllowedSenders,
+    allowedSendersType: typeof allowedSenders,
+    allowedSendersIsArray: Array.isArray(allowedSenders),
+    allowedSendersLength: Array.isArray(allowedSenders) ? allowedSenders.length : 'N/A',
+    requireSenderVerification,
+    senderVerificationMode,
+    maxAmountThreshold,
+    requireContactCheck,
+  });
+
+  // Normalize to array - use smsTexts if provided, otherwise use single smsText
+  const texts = smsTexts && smsTexts.length > 0 ? smsTexts : (smsText ? [smsText] : []);
+  
+  if (texts.length === 0) {
+    throw new AppError(400, 'At least one SMS text is required');
+  }
+
+  // If useAI is explicitly true, use AI generation directly
+  if (useAI) {
+    return createPatternWithAI(req, res);
+  }
+
+  // Use smart pattern generator with template matching
+  try {
+    const { generateSmartPatternsMultiple, detectBank, detectCurrency } = await import('../utils/smartPatternGenerator');
+    
+    // Generate patterns for all SMS texts
+    const patternResults = generateSmartPatternsMultiple(texts);
+
+    // Use the result with highest confidence as primary
+    const primaryResult = patternResults.reduce((best, current) => 
+      current.confidence > best.confidence ? current : best
+    );
+  
+    // Validate that we have required fields
+    // Required: txnId and amount (sender is optional if we have bank)
+    const hasTxnId = primaryResult.extractedValues.txnId && primaryResult.extractedValues.txnId.trim() !== '';
+    const hasAmount = primaryResult.extractedValues.amount !== null && primaryResult.extractedValues.amount > 0;
+    const hasBank = primaryResult.bank && primaryResult.bank.trim() !== '';
+    
+    // If smart pattern generation failed, try AI as fallback
+    if (!hasTxnId || !hasAmount) {
+      // Smart pattern failed, trying AI fallback
+      
+      // Try AI generation
+      try {
+        const { extractPatternsMultiLanguage } = await import('../utils/geminiAI');
+        const aiResults = await extractPatternsMultiLanguage(texts);
+        
+        if (aiResults.length > 0 && aiResults[0].regex && aiResults[0].extractedValues.txnId) {
+          const aiResult = aiResults[0];
+          
+          // Get user's country code - use requested countryCode if provided, otherwise use user's country, fallback to ET
+          const user = await prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: { country: true },
+          });
+          const countryCode = requestedCountryCode?.toUpperCase() || user?.country || 'ET';
+          
+          // Check if pattern exists in ENTIRE SYSTEM before creating
+          const existingPatterns = await prisma.pattern.findMany({
+            where: {
+              isFlagged: false,
+              bank: aiResult.bank || undefined,
+            },
+            select: { id: true, name: true, regex: true },
+          });
+
+          const newRegex = aiResult.regex;
+          for (const existing of existingPatterns) {
+            const normalizedExisting = existing.regex.replace(/\([^)]+\)/g, '()');
+            const normalizedNew = newRegex.replace(/\([^)]+\)/g, '()');
+            if (normalizedExisting === normalizedNew || 
+                Math.abs(existing.regex.length - newRegex.length) < 10) {
+              throw new AppError(409, `A pattern "${existing.name}" already exists in the system. Please browse the marketplace to add it to your library instead of creating a new one.`);
+            }
+          }
+          
+          // Create pattern from AI result
+          const allowedSendersToSave = (finalAllowedSenders !== undefined && finalAllowedSenders.length > 0) ? finalAllowedSenders : undefined;
+          
+          console.log('[Pattern Create AI] Security fields received:', {
+            allowedSendersRaw: allowedSenders,
+            allowedSendersFiltered: finalAllowedSenders,
+            allowedSendersToSave,
+            requireSenderVerification,
+            senderVerificationMode,
+            maxAmountThreshold,
+            requireContactCheck,
+          });
+          
+          const pattern = await prisma.pattern.create({
+            data: {
+              userId: req.user.id,
+              creatorId: req.user.id, // Original creator
+              name,
+              regex: aiResult.regex,
+              extractFields: aiResult.extractFields,
+              bank: aiResult.bank,
+              currency: aiResult.currency,
+              description: description || null,
+              countryCode: countryCode,
+              isTemplate: true, // Automatically approved - new pattern becomes template
+              isApproved: true, // Auto-approved
+              // Security fields - save array if provided and has values, otherwise undefined
+              allowedSenders: allowedSendersToSave,
+              requireSenderVerification: requireSenderVerification ?? true,
+              senderVerificationMode: senderVerificationMode || 'STRICT',
+              maxAmountThreshold: maxAmountThreshold || null,
+              requireContactCheck: requireContactCheck ?? true,
+            },
+          });
+          
+          console.log('[Pattern Create AI] Pattern created with security fields:', {
+            id: pattern.id,
+            name: pattern.name,
+            allowedSenders: pattern.allowedSenders,
+            allowedSendersType: typeof pattern.allowedSenders,
+            allowedSendersIsArray: Array.isArray(pattern.allowedSenders),
+            allowedSendersJSON: JSON.stringify(pattern.allowedSenders),
+            requireSenderVerification: pattern.requireSenderVerification,
+          });
+          
+          return res.status(201).json({
+            success: true,
+            data: pattern,
+            extracted: aiResult.extractedValues,
+            method: 'ai',
+            confidence: aiResult.confidence,
+          });
+        }
+      } catch (aiError: any) {
+        // AI fallback failed - will throw error below
+      }
+      
+      throw new AppError(400, 'Could not extract pattern from SMS. Please ensure the SMS contains a valid transaction with transaction ID and amount.');
+    }
+  
+    // Get user's country code - use requested countryCode if provided, otherwise use user's country, fallback to ET
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { country: true },
+    });
+    const countryCode = requestedCountryCode?.toUpperCase() || user?.country || 'ET';
+
+    // Check for duplicate patterns in ENTIRE SYSTEM (not just user's patterns)
+    // Check ALL patterns (templates and non-templates) to prevent duplicates
+    // If pattern exists, tell user it exists - they should use marketplace instead
+    const existingPatterns = await prisma.pattern.findMany({
+      where: {
+        isFlagged: false,
+        // Check by bank if available, otherwise check all
+        ...(primaryResult.bank ? { bank: primaryResult.bank } : {}),
+      },
+      select: { id: true, name: true, regex: true, isTemplate: true },
+    });
+
+    // Check if any existing pattern has the same or very similar regex
+    const newPrimaryRegex = primaryResult.regex;
+    for (const existing of existingPatterns) {
+      // Exact match
+      if (existing.regex === newPrimaryRegex) {
+        throw new AppError(409, `A pattern "${existing.name}" with the same format already exists in the system. Please browse the marketplace to add it to your library instead of creating a new one.`);
+      }
+      
+      // Normalized match (ignore capture groups)
+      const normalizedExisting = existing.regex.replace(/\([^)]+\)/g, '()');
+      const normalizedNew = newPrimaryRegex.replace(/\([^)]+\)/g, '()');
+      if (normalizedExisting === normalizedNew) {
+        throw new AppError(409, `A pattern "${existing.name}" with a similar format already exists in the system. Please browse the marketplace to add it to your library instead of creating a new one.`);
+      }
+      
+      // Length-based similarity check (very similar patterns)
+      if (Math.abs(existing.regex.length - newPrimaryRegex.length) < 10 && 
+          existing.regex.length > 20 && newPrimaryRegex.length > 20) {
+        // Additional check: if more than 80% of characters match
+        const longer = existing.regex.length > newPrimaryRegex.length ? existing.regex : newPrimaryRegex;
+        const shorter = existing.regex.length <= newPrimaryRegex.length ? existing.regex : newPrimaryRegex;
+        let matches = 0;
+        for (let i = 0; i < shorter.length; i++) {
+          if (longer.includes(shorter[i])) matches++;
+        }
+        const similarity = matches / shorter.length;
+        if (similarity > 0.8) {
+          throw new AppError(409, `A very similar pattern "${existing.name}" already exists in the system. Please browse the marketplace to add it to your library instead of creating a new one.`);
+        }
+      }
+    }
+
+    // Create pattern with security fields
+    // Log security fields for debugging
+    console.log('[Pattern Create] Security fields before saving:', {
+      allowedSenders,
+      allowedSendersType: typeof allowedSenders,
+      allowedSendersIsArray: Array.isArray(allowedSenders),
+      allowedSendersLength: Array.isArray(allowedSenders) ? allowedSenders.length : 'N/A',
+      allowedSendersValue: JSON.stringify(allowedSenders),
+      requireSenderVerification,
+      senderVerificationMode,
+      maxAmountThreshold,
+      requireContactCheck,
+    });
+    
+    // Determine what to save - use filtered version
+    const allowedSendersToSave = (finalAllowedSenders !== undefined && finalAllowedSenders.length > 0) ? finalAllowedSenders : undefined;
+    console.log('[Pattern Create] allowedSendersToSave calculation:', {
+      finalAllowedSenders,
+      finalAllowedSendersUndefined: finalAllowedSenders === undefined,
+      finalAllowedSendersLength: Array.isArray(finalAllowedSenders) ? finalAllowedSenders.length : 'N/A',
+      condition: finalAllowedSenders !== undefined && (Array.isArray(finalAllowedSenders) ? finalAllowedSenders.length > 0 : false),
+      result: allowedSendersToSave,
+      resultType: typeof allowedSendersToSave,
+      resultIsArray: Array.isArray(allowedSendersToSave),
+      resultStringified: JSON.stringify(allowedSendersToSave),
+    });
+    
+    // Create pattern as template (automatically approved) since it's new and doesn't exist in system
+    const pattern = await prisma.pattern.create({
+      data: {
+        userId: req.user.id,
+        creatorId: req.user.id, // Original creator
+        name,
+        regex: primaryResult.regex,
+        extractFields: primaryResult.extractFields,
+        bank: primaryResult.bank,
+        currency: primaryResult.currency,
+        description: description || null,
+        countryCode: countryCode,
+        isTemplate: true, // Automatically approved - new pattern becomes template
+        isApproved: true, // Auto-approved
+        // Security fields - save array if provided and has values, otherwise null
+        allowedSenders: allowedSendersToSave,
+        requireSenderVerification: requireSenderVerification ?? true,
+        senderVerificationMode: senderVerificationMode || 'STRICT',
+        maxAmountThreshold: maxAmountThreshold || null,
+        requireContactCheck: requireContactCheck ?? true,
+      },
+    });
+    
+    console.log('[Pattern Create] Pattern created with security fields:', {
+      id: pattern.id,
+      name: pattern.name,
+      allowedSenders: pattern.allowedSenders,
+      allowedSendersType: typeof pattern.allowedSenders,
+      allowedSendersIsArray: Array.isArray(pattern.allowedSenders),
+      allowedSendersJSON: JSON.stringify(pattern.allowedSenders),
+      requireSenderVerification: pattern.requireSenderVerification,
+    });
+
+    // Return all extracted values
+    const allExtracted = patternResults.map(result => result.extractedValues);
+
+    res.status(201).json({
+      success: true,
+      data: pattern,
+      extracted: allExtracted.length === 1 ? allExtracted[0] : allExtracted,
+      method: primaryResult.method,
+      confidence: primaryResult.confidence,
+      canUseAI: primaryResult.confidence < 0.8, // Suggest AI if confidence is below 80%
+    });
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    // Pattern creation error - will throw AppError
+    throw new AppError(500, `Failed to create pattern: ${error.message}`);
+  }
+}
+
+/**
+ * Update pattern
+ */
+async function updatePattern(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const { id } = req.params;
+  
+  // Parse update data
+  const { name, description, bank, currency, allowedSenders, requireSenderVerification, requireContactCheck } = z.object({
+    name: z.string().min(1).optional(),
+    description: z.string().optional(),
+    bank: z.string().optional(),
+    currency: z.string().optional(),
+    allowedSenders: z.array(z.string()).optional(),
+    requireSenderVerification: z.boolean().optional(),
+    requireContactCheck: z.boolean().optional(),
+  }).parse(req.body);
+
+  const pattern = await prisma.pattern.findUnique({
+    where: { id },
+  });
+
+  if (!pattern) {
+    throw new AppError(404, 'Pattern not found');
+  }
+
+  // CRITICAL: Only allow updating user's own copy, not original templates
+  // Regular users can only update patterns they own (userId matches)
+  // Admins can update any pattern
+  const isAdmin = req.user.role === 'ADMIN' || req.user.role === 'SUPER_ADMIN';
+  const isOwner = pattern.userId === req.user.id;
+
+  if (!isAdmin && !isOwner) {
+    throw new AppError(403, 'Access denied. You can only update your own patterns.');
+  }
+
+  // Prevent regular users from updating templates (they should clone first)
+  if (!isAdmin && pattern.isTemplate) {
+    throw new AppError(403, 'Cannot update template patterns. Please clone the pattern first to create your own copy.');
+  }
+
+  // Build update data - only allow updating editable fields
+  // DO NOT update: regex, extractFields (these come from original)
+  const updateData: any = {};
+  
+  if (name !== undefined) updateData.name = name;
+  if (description !== undefined) updateData.description = description || null;
+  if (bank !== undefined) updateData.bank = bank || null;
+  if (currency !== undefined) updateData.currency = currency || null;
+  
+  // Security fields
+  if (allowedSenders !== undefined) {
+    updateData.allowedSenders = allowedSenders.length > 0 ? allowedSenders : null;
+  }
+  if (requireSenderVerification !== undefined) {
+    updateData.requireSenderVerification = requireSenderVerification;
+  }
+  if (requireContactCheck !== undefined) {
+    updateData.requireContactCheck = requireContactCheck;
+  }
+
+  const updatedPattern = await prisma.pattern.update({
+    where: { id },
+    data: updateData,
+  });
+
+  res.json({
+    success: true,
+    data: updatedPattern,
+    message: 'Pattern updated successfully',
+  });
+}
+
+/**
+ * Delete pattern
+ */
+async function deletePattern(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const { id } = req.params;
+  const pattern = await prisma.pattern.findUnique({
+    where: { id },
+  });
+
+  if (!pattern) {
+    throw new AppError(404, 'Pattern not found');
+  }
+
+  if (pattern.userId !== req.user.id && req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+    throw new AppError(403, 'Access denied');
+  }
+
+  await prisma.pattern.delete({
+    where: { id },
+  });
+
+  res.json({
+    success: true,
+    message: 'Pattern deleted successfully',
+  });
+}
+
+/**
+ * Validate pattern by analyzing SMS text
+ */
+async function validatePattern(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const { smsText, name, testAgainstRegex } = z.object({
+    smsText: z.string().min(1),
+    name: z.string().min(1),
+    testAgainstRegex: z.string().optional(),
+  }).parse(req.body);
+
+  try {
+    // If a regex is provided, test the SMS against it
+    if (testAgainstRegex) {
+      try {
+        const re = new RegExp(testAgainstRegex, 'is');
+        const match = smsText.match(re);
+        
+        return res.json({
+          success: true,
+          data: {
+            matched: !!match,
+            groups: match ? match.slice(1) : [],
+            fullMatch: match ? match[0] : null,
+          },
+        });
+      } catch (regexError: any) {
+        throw new AppError(400, `Invalid regex: ${regexError.message}`);
+      }
+    }
+    
+    const { generateSmartPattern, detectBank, detectCurrency } = await import('../utils/smartPatternGenerator');
+    
+    // Generate pattern using smart generator
+    const result = generateSmartPattern(smsText);
+
+    // Validate the extracted data
+    const validationErrors: string[] = [];
+    if (!result.extractedValues.txnId) {
+      validationErrors.push('No transaction ID detected');
+    }
+    if (!result.extractedValues.amount) {
+      validationErrors.push('No amount detected');
+    }
+    // Sender is optional if we have bank
+    if (!result.extractedValues.sender && !result.bank) {
+      validationErrors.push('No sender name or bank detected');
+    }
+
+    // Verify the generated regex works against the SMS
+    let regexValid = false;
+    try {
+      const re = new RegExp(result.regex, 'is');
+      const match = smsText.match(re);
+      regexValid = !!match;
+      
+      if (!regexValid) {
+        validationErrors.push('Generated regex does not match the SMS (internal error)');
+      }
+    } catch (e: any) {
+      validationErrors.push(`Generated regex is invalid: ${e.message}`);
+    }
+
+    // Structure response to match frontend expectations
+    res.json({
+      success: true,
+      data: {
+        pattern: {
+          name,
+          regex: result.regex,
+          extractFields: result.extractFields,
+          bank: result.bank || null,
+          currency: result.currency || null,
+          description: `Pattern for ${name}`,
+        },
+        validation: {
+          valid: validationErrors.length === 0,
+          errors: validationErrors,
+          regexValid,
+        },
+        extractedValues: result.extractedValues,
+        method: result.method,
+        aiSuggested: result.confidence < 0.8, // Suggest AI if confidence is below 80%
+        canUseAI: true, // Always allow AI as fallback
+        confidence: result.confidence,
+      },
+    });
+  } catch (error: any) {
+    // Pattern validation error - will throw AppError
+    if (error instanceof AppError) throw error;
+    throw new AppError(500, `Failed to validate pattern: ${error.message}`);
+  }
+}
+
+/**
+ * Get patterns by country code
+ */
+async function getCountryPatterns(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const countryCode = (req.params.countryCode || '').toUpperCase();
+  if (!countryCode || countryCode.length !== 2) {
+    throw new AppError(400, 'Invalid country code');
+  }
+
+  // Get patterns for the country (ONLY templates - no user-created patterns)
+  // This matches the marketplace behavior - only show templates
+  const patterns = await prisma.pattern.findMany({
+    where: {
+      isFlagged: false, // Don't show blocked patterns
+      isTemplate: true, // ONLY templates in marketplace
+      OR: [
+        { countryCode },
+        { countryCode: null }, // Global admin templates are available to every user
+      ],
+    },
+    orderBy: [
+      { usageCount: 'desc' },
+      { createdAt: 'desc' },
+    ],
+  });
+
+  res.json({
+    success: true,
+    data: patterns,
+  });
+}
+
+/**
+ * Browse all patterns with search by bank and country
+ */
+async function browsePatterns(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const { bank, countryCode, search } = z.object({
+    bank: z.string().optional(),
+    countryCode: z.string().optional(),
+    search: z.string().optional(),
+  }).parse(req.query);
+
+  // Build where clause - MUST include isTemplate: true
+  const where: any = {
+    isTemplate: true, // CRITICAL: Only show templates in marketplace
+    isFlagged: false, // Don't show blocked patterns
+  };
+
+  if (bank) {
+    where.bank = { contains: bank, mode: 'insensitive' };
+  }
+
+  if (countryCode) {
+    const normalizedCountryCode = countryCode.toUpperCase();
+    where.OR = [
+      { countryCode: normalizedCountryCode },
+      { countryCode: null }, // Global admin templates are available to every user
+    ];
+  }
+
+  if (search) {
+    // Add search conditions to existing where clause
+    where.AND = [
+      {
+        OR: [
+      { name: { contains: search, mode: 'insensitive' } },
+      { bank: { contains: search, mode: 'insensitive' } },
+      { description: { contains: search, mode: 'insensitive' } },
+        ],
+      },
+    ];
+  }
+
+  try {
+    // Get patterns user already has (to filter out duplicates)
+    // Check both userId (legacy) and UserPattern junction table
+    const [userPatternsByUserId, userPatternsByJunction] = await Promise.all([
+      prisma.pattern.findMany({
+      where: {
+          userId: req.user.id,
+        },
+        select: {
+          id: true,
+        },
+      }),
+      prisma.userPattern.findMany({
+        where: {
+          userId: req.user.id,
+          isActive: true,
+        },
+        select: {
+          patternId: true,
+        },
+      }),
+    ]);
+    
+    const userPatternIdSet = new Set([
+      ...userPatternsByUserId.map(p => p.id),
+      ...userPatternsByJunction.map(up => up.patternId),
+    ]);
+
+    // ONLY show templates in marketplace (isTemplate: true)
+    // This includes:
+    // - Admin-created templates (creatorId: null, isTemplate: true)
+    // - User-created NEW patterns that became templates (userId set, isTemplate: true)
+    // This EXCLUDES:
+    // - Cloned patterns (isTemplate: false) - those are just for user's library
+    // The deduplication by regex below will handle any duplicates
+    const allPatterns = await prisma.pattern.findMany({
+      where: where, // Already includes isTemplate: true and isFlagged: false
+      orderBy: [
+        { usageCount: 'desc' },
+        { createdAt: 'desc' },
+      ],
+      select: {
+        id: true,
+        name: true,
+        bank: true,
+        currency: true,
+        description: true,
+        usageCount: true,
+        createdAt: true,
+        regex: true, // Include regex for deduplication
+      },
+    });
+
+    // Filter out patterns user already has
+    let filteredPatterns = allPatterns.filter(p => !userPatternIdSet.has(p.id));
+
+    // Additional deduplication: Remove patterns with duplicate regex (keep the oldest one)
+    const regexMap = new Map<string, typeof filteredPatterns[0]>();
+    for (const pattern of filteredPatterns) {
+      const regexKey = pattern.regex;
+      if (!regexMap.has(regexKey)) {
+        regexMap.set(regexKey, pattern);
+      } else {
+        // If we already have this regex, keep the one with earlier createdAt
+        const existing = regexMap.get(regexKey)!;
+        const existingDate = new Date(existing.createdAt);
+        const currentDate = new Date(pattern.createdAt);
+        if (currentDate < existingDate) {
+          regexMap.set(regexKey, pattern);
+        }
+      }
+    }
+
+    // Convert back to array and remove regex from select (don't expose it)
+    const patterns = Array.from(regexMap.values()).map(({ regex, ...rest }) => rest);
+
+    res.json({
+      success: true,
+      data: patterns || [],
+      count: patterns.length,
+    });
+  } catch (error: any) {
+    // Error browsing patterns - return empty array
+    res.json({
+      success: true,
+      data: [],
+      count: 0,
+    });
+  }
+}
+
+/**
+ * Create pattern using AI - Supports multi-language SMS texts
+ */
+async function createPatternWithAI(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  // Support both single SMS and array of SMS texts (multi-language)
+  const { 
+    smsText, 
+    smsTexts, 
+    name, 
+    description,
+    countryCode: requestedCountryCode, // Country code from request (optional)
+    // Security fields
+    allowedSenders,
+    requireSenderVerification,
+    senderVerificationMode,
+    maxAmountThreshold,
+    requireContactCheck,
+  } = z.object({
+    smsText: z.string().min(1).optional(),
+    smsTexts: z.array(z.string().min(1)).optional(),
+    name: z.string().min(1),
+    description: z.string().optional(),
+    countryCode: z.string().length(2).optional(), // ISO country code (e.g., "ET", "KE")
+    // Security fields - accept array of strings (we'll filter empty ones later)
+    allowedSenders: z.array(z.string()).optional(),
+    requireSenderVerification: z.boolean().optional().default(true),
+    senderVerificationMode: z.enum(['STRICT', 'WARN', 'NONE']).optional().default('STRICT'),
+    maxAmountThreshold: z.number().positive().optional(),
+    requireContactCheck: z.boolean().optional().default(true),
+  }).parse(req.body);
+
+  // Filter out empty strings from allowedSenders if provided
+  let filteredAllowedSenders: string[] | undefined = undefined;
+  if (allowedSenders !== undefined) {
+    if (Array.isArray(allowedSenders)) {
+      filteredAllowedSenders = allowedSenders.filter(s => s && typeof s === 'string' && s.trim().length > 0);
+      if (filteredAllowedSenders.length === 0) {
+        filteredAllowedSenders = undefined; // Empty after filtering = not provided
+      }
+    }
+  }
+  const finalAllowedSenders = filteredAllowedSenders;
+  
+  console.log('[Pattern Create AI] Parsed security fields:', {
+    allowedSendersRaw: allowedSenders,
+    allowedSendersFiltered: finalAllowedSenders,
+    allowedSendersType: typeof allowedSenders,
+    allowedSendersIsArray: Array.isArray(allowedSenders),
+  });
+
+  // Normalize to array - use smsTexts if provided, otherwise use single smsText
+  const texts = smsTexts && smsTexts.length > 0 ? smsTexts : (smsText ? [smsText] : []);
+  
+  if (texts.length === 0) {
+    throw new AppError(400, 'At least one SMS text is required');
+  }
+
+  try {
+    // Get user's country code - use requested countryCode if provided, otherwise use user's country, fallback to ET
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { country: true },
+    });
+    const countryCode = requestedCountryCode?.toUpperCase() || user?.country || 'ET';
+
+    // Import AI utility
+    const { extractPatternsMultiLanguage } = await import('../utils/geminiAI');
+    
+    // Extract patterns for all SMS texts
+    let aiResults;
+    try {
+      aiResults = await extractPatternsMultiLanguage(texts);
+      // AI extraction successful
+    } catch (aiError: any) {
+      // AI extraction failed - will throw error
+      throw new AppError(500, `AI extraction failed: ${aiError.message}. Please try again or check if Gemini API is configured correctly.`);
+    }
+
+    // Check if we got any valid results
+    if (!aiResults || aiResults.length === 0 || aiResults.every(r => !r.regex || r.regex.trim() === '')) {
+      // No valid regex patterns extracted - will throw error
+      throw new AppError(400, 'Failed to extract pattern from SMS. Please ensure the SMS contains a valid transaction message with transaction ID, amount, and sender information.');
+    }
+
+    // Validate that at least one result has required fields
+    // Required: txnId and amount (sender is optional if we have bank)
+    const validResults = aiResults.filter(result => {
+      const hasTxnId = result.extractedValues.txnId && result.extractedValues.txnId.trim() !== '';
+      const hasAmount = result.extractedValues.amount !== null && result.extractedValues.amount > 0;
+      const hasBank = result.bank && result.bank.trim() !== '';
+      const hasSender = result.extractedValues.sender && result.extractedValues.sender.trim() !== '';
+      
+      // Require txnId and amount. Sender is optional if we have bank.
+      return hasTxnId && hasAmount && (hasSender || hasBank) && result.regex && result.regex.trim() !== '';
+    });
+
+    if (validResults.length === 0) {
+      // Provide helpful error message
+      const sampleResult = aiResults[0];
+      const missingFields = [];
+      if (!sampleResult.extractedValues.txnId) missingFields.push('transaction ID');
+      if (!sampleResult.extractedValues.amount) missingFields.push('amount');
+      if (!sampleResult.extractedValues.sender && !sampleResult.bank) {
+        missingFields.push('sender name or bank');
+      }
+      
+      throw new AppError(400, `Cannot create pattern: The SMS message is missing required information: ${missingFields.join(', ')}. Please provide a transaction SMS message with transaction ID, amount, and either sender name or bank information.`);
+    }
+
+    // Use the first valid result as primary pattern
+    const primaryResult = validResults[0];
+
+    // Build extractFields from the primary pattern
+    // We need to analyze the regex to determine capture groups
+    const extractFields: any = {};
+    let groupIndex = 1;
+    
+    // Simple extraction - look for common patterns in regex
+    // This is a simplified version - AI should provide better structure
+    if (primaryResult.extractedValues.txnId) {
+      extractFields.txnId = { group: groupIndex++, type: 'string' };
+    }
+    if (primaryResult.extractedValues.amount !== null) {
+      extractFields.amount = { group: groupIndex++, type: 'number' };
+    }
+    if (primaryResult.extractedValues.sender) {
+      extractFields.sender = { group: groupIndex++, type: 'string' };
+    }
+
+    // Note: Currently using primary regex only
+    // If user sent 1 SMS → use that regex
+    // If user sent multiple SMS → use the first valid one's regex
+    // TODO: Once regexPatterns column is added via migration, store all regex patterns
+
+    // Check for duplicate patterns in ENTIRE SYSTEM (not just user's patterns)
+    // Check ALL patterns (templates and non-templates) to prevent duplicates
+    // If pattern exists, tell user it exists - they should use marketplace instead
+    const existingPatterns = await prisma.pattern.findMany({
+      where: {
+        isFlagged: false,
+        // Check by bank if available, otherwise check all
+        ...(primaryResult.bank ? { bank: primaryResult.bank } : {}),
+      },
+      select: { id: true, name: true, regex: true, isTemplate: true },
+    });
+
+    // Check if any existing pattern has the same or very similar regex
+    const newPrimaryRegex = primaryResult.regex;
+    for (const existing of existingPatterns) {
+      // Exact match
+      if (existing.regex === newPrimaryRegex) {
+        throw new AppError(409, `A pattern "${existing.name}" with the same format already exists in the system. Please browse the marketplace to add it to your library instead of creating a new one.`);
+      }
+      
+      // Normalized match (ignore capture groups)
+      const normalizedExisting = existing.regex.replace(/\([^)]+\)/g, '()');
+      const normalizedNew = newPrimaryRegex.replace(/\([^)]+\)/g, '()');
+      if (normalizedExisting === normalizedNew) {
+        throw new AppError(409, `A pattern "${existing.name}" with a similar format already exists in the system. Please browse the marketplace to add it to your library instead of creating a new one.`);
+      }
+      
+      // Length-based similarity check (very similar patterns)
+      if (Math.abs(existing.regex.length - newPrimaryRegex.length) < 10 && 
+          existing.regex.length > 20 && newPrimaryRegex.length > 20) {
+        // Additional check: if more than 80% of characters match
+        const longer = existing.regex.length > newPrimaryRegex.length ? existing.regex : newPrimaryRegex;
+        const shorter = existing.regex.length <= newPrimaryRegex.length ? existing.regex : newPrimaryRegex;
+        let matches = 0;
+        for (let i = 0; i < shorter.length; i++) {
+          if (longer.includes(shorter[i])) matches++;
+        }
+        const similarity = matches / shorter.length;
+        if (similarity > 0.8) {
+          throw new AppError(409, `A very similar pattern "${existing.name}" already exists in the system. Please browse the marketplace to add it to your library instead of creating a new one.`);
+        }
+      }
+    }
+
+    // Create pattern in database - Auto-approve if no duplicates found
+    // Currently using single regex (from primary result)
+    // If user sent multiple SMS messages, we use the first valid one
+    // TODO: Once regexPatterns column is added via migration, store all patterns
+    // TODO: Add countryCode to data when column is added via migration
+    console.log('[Pattern Create AI Direct] Security fields before saving:', {
+      allowedSenders,
+      allowedSendersType: typeof allowedSenders,
+      allowedSendersIsArray: Array.isArray(allowedSenders),
+      allowedSendersLength: Array.isArray(allowedSenders) ? allowedSenders.length : 'N/A',
+      allowedSendersValue: JSON.stringify(allowedSenders),
+      requireSenderVerification,
+      senderVerificationMode,
+      maxAmountThreshold,
+      requireContactCheck,
+    });
+    
+    // Determine what to save - use filtered version
+    const allowedSendersToSave = (finalAllowedSenders !== undefined && finalAllowedSenders.length > 0) ? finalAllowedSenders : undefined;
+    console.log('[Pattern Create AI Direct] allowedSendersToSave:', JSON.stringify(allowedSendersToSave), 'type:', typeof allowedSendersToSave, 'isArray:', Array.isArray(allowedSendersToSave));
+    
+    // Create pattern as template (automatically approved) since it's new and doesn't exist in system
+    const pattern = await prisma.pattern.create({
+      data: {
+        userId: req.user.id,
+        creatorId: req.user.id, // Original creator
+        name,
+        regex: primaryResult.regex, // Primary regex (works for single or multiple SMS)
+        extractFields,
+        bank: primaryResult.bank,
+        currency: primaryResult.currency,
+        description: description || null,
+        countryCode: countryCode, // Link pattern to user's country
+        isTemplate: true, // Automatically approved - new pattern becomes template
+        isApproved: true, // Auto-approved
+        // Security fields - save array if provided and has values, otherwise undefined
+        allowedSenders: allowedSendersToSave,
+        requireSenderVerification: requireSenderVerification ?? true,
+        senderVerificationMode: senderVerificationMode || 'STRICT',
+        maxAmountThreshold: maxAmountThreshold || null,
+        requireContactCheck: requireContactCheck ?? true,
+      },
+    });
+    
+    console.log('[Pattern Create AI Direct] Pattern created with security fields:', {
+      id: pattern.id,
+      name: pattern.name,
+      allowedSenders: pattern.allowedSenders,
+      allowedSendersType: typeof pattern.allowedSenders,
+      allowedSendersIsArray: Array.isArray(pattern.allowedSenders),
+      allowedSendersJSON: JSON.stringify(pattern.allowedSenders),
+      requireSenderVerification: pattern.requireSenderVerification,
+    });
+
+    // Return extracted values from all results
+    const allExtracted = aiResults.map(result => result.extractedValues);
+
+    res.status(201).json({
+      success: true,
+      data: pattern,
+      extracted: allExtracted, // Return all extracted values
+      method: 'ai',
+    });
+  } catch (error: any) {
+    // AI pattern creation error - will throw AppError
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw new AppError(500, `Failed to create pattern with AI: ${error.message}`);
+  }
+}
+
+/**
+ * Clone/add a pattern to user's library
+ */
+async function clonePattern(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const { id } = req.params;
+  const { name } = z.object({
+    name: z.string().min(1).optional(),
+  }).parse(req.body);
+
+  // Get the pattern to clone
+  const sourcePattern = await prisma.pattern.findUnique({
+    where: { id },
+  });
+
+  if (!sourcePattern) {
+    throw new AppError(404, 'Pattern not found');
+  }
+
+  // Get user's country code (for future use when column is added)
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { country: true },
+  });
+
+  // Check if user already has this exact pattern (by ID or regex)
+  const existingPatternById = await prisma.pattern.findFirst({
+    where: {
+      userId: req.user.id,
+      id: sourcePattern.id,
+    },
+  });
+
+  if (existingPatternById) {
+    throw new AppError(409, `You already have this pattern "${sourcePattern.name}" in your library.`);
+  }
+
+  // Check if user already has a similar pattern (by regex)
+  const existingPatterns = await prisma.pattern.findMany({
+    where: {
+      userId: req.user.id,
+      bank: sourcePattern.bank || undefined,
+    },
+    select: { id: true, name: true, regex: true },
+  });
+
+  // Check if pattern already exists by regex
+  for (const existing of existingPatterns) {
+    if (existing.regex === sourcePattern.regex) {
+      throw new AppError(409, `You already have a similar pattern "${existing.name}" in your library.`);
+    }
+  }
+
+  // CRITICAL: Cloned patterns should NEVER be templates
+  // They're just copies for the user's library, not new marketplace templates
+  // This is like using an npm package - you're using what's already there, not creating new
+  // 
+  // Safety: Always set isTemplate: false for clones, regardless of source pattern
+  const clonedPattern = await prisma.pattern.create({
+    data: {
+      userId: req.user.id,
+      creatorId: sourcePattern.creatorId, // Preserve original creator (not the cloner)
+      name: name || sourcePattern.name,
+      regex: sourcePattern.regex,
+      extractFields: sourcePattern.extractFields as any,
+      bank: sourcePattern.bank,
+      currency: sourcePattern.currency,
+      description: sourcePattern.description || `Cloned from ${sourcePattern.name}`,
+      countryCode: user?.country || sourcePattern.countryCode || null,
+      isTemplate: false, // CRITICAL: NEVER true for clones - they're just for user's library
+      isApproved: false, // Not approved (it's a clone, not a new template)
+    },
+  });
+
+  // Double-check: Verify the clone was created correctly (safety check)
+  const verifyClone = await prisma.pattern.findUnique({
+    where: { id: clonedPattern.id },
+    select: { isTemplate: true },
+  });
+
+  if (verifyClone?.isTemplate === true) {
+    // This should never happen, but if it does, fix it immediately
+    console.error(`[CRITICAL] Clone was created with isTemplate: true! Fixing... Pattern ID: ${clonedPattern.id}`);
+    await prisma.pattern.update({
+      where: { id: clonedPattern.id },
+      data: { isTemplate: false },
+    });
+  }
+
+  res.json({
+    success: true,
+    data: clonedPattern,
+    message: 'Pattern added to your library successfully',
+  });
+}
+
+/**
+ * Test SMS against all patterns - useful for debugging pattern matching issues
+ */
+async function testSMSAgainstPatterns(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const { smsText } = z.object({
+    smsText: z.string().min(1),
+  }).parse(req.body);
+
+  try {
+    // Get all patterns for this user
+    const userPatterns = await prisma.userPattern.findMany({
+      where: {
+        userId: req.user.id,
+        isActive: true,
+      },
+      include: {
+        pattern: true,
+      },
+    });
+
+    // Also get patterns created by the user
+    const createdPatterns = await prisma.pattern.findMany({
+      where: {
+        OR: [
+          { userId: req.user.id },
+          { creatorId: req.user.id },
+        ],
+      },
+    });
+
+    // Combine and dedupe
+    const patternMap = new Map();
+    userPatterns.forEach(up => {
+      if (up.pattern) patternMap.set(up.pattern.id, up.pattern);
+    });
+    createdPatterns.forEach(p => {
+      if (!patternMap.has(p.id)) patternMap.set(p.id, p);
+    });
+
+    const patterns = Array.from(patternMap.values());
+    const results: Array<{
+      patternId: string;
+      patternName: string;
+      bank: string | null;
+      matched: boolean;
+      error?: string;
+      extractedData?: {
+        txnId?: string;
+        amount?: string;
+        sender?: string;
+      };
+    }> = [];
+
+    // Test each pattern
+    for (const pattern of patterns) {
+      try {
+        let cleanRegex = pattern.regex;
+        if (cleanRegex.startsWith('(?i)')) {
+          cleanRegex = cleanRegex.substring(4);
+        }
+        cleanRegex = cleanRegex.replace(/\(\?i\)/g, '');
+        
+        const re = new RegExp(cleanRegex, 'is');
+        const match = smsText.match(re);
+        
+        if (match) {
+          // Extract values
+          const extractFields = pattern.extractFields as any || {};
+          const extractedData: any = {};
+          
+          if (extractFields.txnId) {
+            const group = typeof extractFields.txnId === 'number' ? extractFields.txnId : extractFields.txnId.group;
+            extractedData.txnId = match[group] || undefined;
+          }
+          if (extractFields.amount) {
+            const group = typeof extractFields.amount === 'number' ? extractFields.amount : extractFields.amount.group;
+            extractedData.amount = match[group] || undefined;
+          }
+          if (extractFields.sender) {
+            const group = typeof extractFields.sender === 'number' ? extractFields.sender : extractFields.sender.group;
+            extractedData.sender = match[group] || undefined;
+          }
+          
+          results.push({
+            patternId: pattern.id,
+            patternName: pattern.name,
+            bank: pattern.bank,
+            matched: true,
+            extractedData,
+          });
+        } else {
+          results.push({
+            patternId: pattern.id,
+            patternName: pattern.name,
+            bank: pattern.bank,
+            matched: false,
+          });
+        }
+      } catch (error: any) {
+        results.push({
+          patternId: pattern.id,
+          patternName: pattern.name,
+          bank: pattern.bank,
+          matched: false,
+          error: error.message,
+        });
+      }
+    }
+
+    // Also try smart pattern generator
+    const { generateSmartPattern } = await import('../utils/smartPatternGenerator');
+    const smartResult = generateSmartPattern(smsText);
+
+    res.json({
+      success: true,
+      data: {
+        totalPatterns: patterns.length,
+        matchedPatterns: results.filter(r => r.matched).length,
+        results,
+        smartPatternResult: {
+          method: smartResult.method,
+          confidence: smartResult.confidence,
+          bank: smartResult.bank,
+          currency: smartResult.currency,
+          extractedValues: smartResult.extractedValues,
+        },
+      },
+    });
+  } catch (error: any) {
+    // Test SMS error - will throw AppError
+    throw new AppError(500, `Failed to test SMS: ${error.message}`);
+  }
+}
+
+router.get('/browse', asyncHandler(browsePatterns as any));
+router.get('/', asyncHandler(getAllPatterns as any));
+router.get('/country/:countryCode', asyncHandler(getCountryPatterns as any));
+router.post('/test-sms', asyncHandler(testSMSAgainstPatterns as any));
+router.get('/:id', asyncHandler(getPattern as any));
+router.post('/', asyncHandler(createPattern as any));
+router.post('/create-with-ai', asyncHandler(createPatternWithAI as any));
+router.post('/validate', asyncHandler(validatePattern as any));
+router.post('/:id/clone', asyncHandler(clonePattern as any));
+router.put('/:id', asyncHandler(updatePattern as any));
+router.delete('/:id', asyncHandler(deletePattern as any));
 
 export default router;
 
