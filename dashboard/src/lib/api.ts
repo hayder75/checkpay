@@ -147,6 +147,7 @@ export const vendorAPI = {
 // Package API (New)
 export const packageAPI = {
   getAll: (params?: { tier?: string }) => api.get('/packages', { params }),
+  getBillingMode: () => api.get('/system-config/billing-mode'),
   getOne: (id: string) => api.get(`/packages/${id}`),
   create: (data: { name: string; description?: string; transactionLimit?: number; employeeLimit?: number; businessLimit?: number; features: any; price?: number; isCustom?: boolean; billingCycle?: 'ONE_TIME' | 'MONTHLY' | 'SIX_MONTH' | 'QUARTERLY' | 'YEARLY' | null; durationDays?: number | null; isDeveloperToken?: boolean; isFreePackage?: boolean; tier?: 'FREE' | 'STARTER' | 'PROFESSIONAL' | 'BUSINESS' | 'ENTERPRISE' | null; maxPhoneTxns?: number | null; maxVerifiedTxns?: number | null }) =>
     api.post('/packages', data),
@@ -234,6 +235,11 @@ export const adminAPI = {
 
   // Analytics
   getAnalytics: () => api.get('/admin/analytics'),
+
+  // System config
+  getSystemConfig: () => api.get('/system-config'),
+  updateBillingMode: (billingMode: 'COUNT_BASED' | 'FIXED_PRICE') =>
+    api.patch('/system-config/billing-mode', { billingMode }),
 
   // Patterns
   getPatterns: (params?: { page?: number; limit?: number; search?: string; bank?: string; currency?: string; isTemplate?: string; suspicious?: string; userId?: string }) =>

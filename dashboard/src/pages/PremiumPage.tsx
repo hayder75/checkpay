@@ -37,6 +37,7 @@ const tierColors: Record<string, string> = {
 export default function PremiumPage() {
   const { toast } = useToast();
   const [packages, setPackages] = useState<Package[]>([]);
+  const [billingMode, setBillingMode] = useState<'COUNT_BASED' | 'FIXED_PRICE'>('COUNT_BASED');
   const [active, setActive] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [selectedPackage, setSelectedPackage] = useState<Package | null>(null);
@@ -45,11 +46,13 @@ export default function PremiumPage() {
 
   const loadData = async () => {
     try {
-      const [pkgRes, activeRes] = await Promise.all([
+      const [pkgRes, activeRes, modeRes] = await Promise.all([
         packageAPI.getAll(),
         userPackageAPI.getMyPackage(),
+        packageAPI.getBillingMode(),
       ]);
       setPackages(pkgRes.data.data || []);
+      setBillingMode(modeRes.data?.data?.billingMode || pkgRes.data?.meta?.billingMode || 'COUNT_BASED');
       setActive(activeRes.data.data);
     } catch (error: any) {
       toast({ title: "Error", description: "Failed to load packages", variant: "destructive" });
@@ -59,6 +62,15 @@ export default function PremiumPage() {
   };
 
   useEffect(() => { loadData(); }, []);
+
+  const isFixedPriceMode = billingMode === 'FIXED_PRICE';
+  const visiblePackages = packages.filter((pkg) => {
+    if (!pkg.isActive || pkg.isFreePackage) return false;
+    if (isFixedPriceMode) {
+      return ['MONTHLY', 'SIX_MONTH', 'YEARLY'].includes(pkg.billingCycle || '') && !!pkg.price;
+    }
+    return pkg.maxPhoneTxns !== undefined || pkg.maxVerifiedTxns !== undefined;
+  });
 
   const handlePurchase = async () => {
     if (!selectedPackage || !purchaseNumber) {
@@ -110,12 +122,18 @@ export default function PremiumPage() {
                   </p>
                 </div>
                 <div className="flex gap-3">
-                  <Badge variant="secondary" className="text-sm px-3 py-1">
-                    {active.maxPhoneTxns ? `${active.maxPhoneTxns} Phone Tokens` : 'Unlimited'}
-                  </Badge>
-                  <Badge variant="secondary" className="text-sm px-3 py-1">
-                    {active.maxVerifiedTxns ? `${active.maxVerifiedTxns} Verified` : 'Unlimited'}
-                  </Badge>
+                  {isFixedPriceMode ? (
+                    <Badge variant="secondary" className="text-sm px-3 py-1">Unlimited Transactions</Badge>
+                  ) : (
+                    <>
+                      <Badge variant="secondary" className="text-sm px-3 py-1">
+                        {active.maxPhoneTxns ? `${active.maxPhoneTxns} Phone Tokens` : 'Unlimited'}
+                      </Badge>
+                      <Badge variant="secondary" className="text-sm px-3 py-1">
+                        {active.maxVerifiedTxns ? `${active.maxVerifiedTxns} Verified` : 'Unlimited'}
+                      </Badge>
+                    </>
+                  )}
                 </div>
               </div>
             </CardContent>
@@ -124,7 +142,7 @@ export default function PremiumPage() {
 
         {/* Package Grid */}
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {packages.map((pkg) => {
+          {visiblePackages.map((pkg) => {
             const isCurrentPlan = active?.id === pkg.id;
             return (
               <Card 
@@ -159,23 +177,30 @@ export default function PremiumPage() {
                     )}
                   </div>
                   <div className="space-y-2">
-                    {[
-                      { label: 'Phone Transactions', value: pkg.maxPhoneTxns },
-                      { label: 'Verified Transactions', value: pkg.maxVerifiedTxns },
-                      { label: 'Developer API Access', value: pkg.isDeveloperToken },
-                    ].map((feature, i) => (
-                      <div key={i} className="flex items-center gap-2 text-sm">
+                    {isFixedPriceMode ? (
+                      <div className="flex items-center gap-2 text-sm">
                         <Check className="h-4 w-4 text-green-500" />
-                        <span>
-                          {feature.value === null || feature.value ? (
-                            feature.value || 'Unlimited'
-                          ) : (
-                            <span className="text-muted-foreground">Limited</span>
-                          )}{' '}
-                          {feature.label}
-                        </span>
+                        <span>Unlimited transactions while package is active</span>
                       </div>
-                    ))}
+                    ) : (
+                      [
+                        { label: 'Phone Transactions', value: pkg.maxPhoneTxns },
+                        { label: 'Verified Transactions', value: pkg.maxVerifiedTxns },
+                        { label: 'Developer API Access', value: pkg.isDeveloperToken },
+                      ].map((feature, i) => (
+                        <div key={i} className="flex items-center gap-2 text-sm">
+                          <Check className="h-4 w-4 text-green-500" />
+                          <span>
+                            {feature.value === null || feature.value ? (
+                              feature.value || 'Unlimited'
+                            ) : (
+                              <span className="text-muted-foreground">Limited</span>
+                            )}{' '}
+                            {feature.label}
+                          </span>
+                        </div>
+                      ))
+                    )}
                   </div>
                   <Button 
                     className="w-full" 

@@ -1011,6 +1011,11 @@ export const verifyTransaction = async (data: {
 
 // Package API
 export const packageAPI = {
+  // Get current billing mode selected by admin
+  getBillingMode: async () => {
+    const response = await api.get('/system-config/billing-mode');
+    return response.data;
+  },
   // Get user's active package with usage stats
   getMyPackage: async () => {
     const response = await api.get('/user-packages/me');

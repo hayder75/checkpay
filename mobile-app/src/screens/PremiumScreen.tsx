@@ -58,6 +58,7 @@ interface PurchaseRequest {
 export default function PremiumScreen({ apiKey }: Props) {
   const { colors } = useTheme();
   const [currentPackage, setCurrentPackage] = useState<UserPackage | null>(null);
+  const [billingMode, setBillingMode] = useState<'COUNT_BASED' | 'FIXED_PRICE'>('COUNT_BASED');
   const [availablePackages, setAvailablePackages] = useState<Package[]>([]);
   const [pendingPurchases, setPendingPurchases] = useState<PurchaseRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,21 +73,32 @@ export default function PremiumScreen({ apiKey }: Props) {
 
   const loadData = async () => {
     try {
-      const [myPackageRes, packagesRes, purchasesRes] = await Promise.all([
+      const [myPackageRes, packagesRes, purchasesRes, billingModeRes] = await Promise.all([
         packageAPI.getMyPackage(),
         packageAPI.getPackages(),
         packageAPI.getMyPurchases(),
+        packageAPI.getBillingMode().catch(() => ({ success: true, data: { billingMode: 'COUNT_BASED' } })),
       ]);
+
+      const mode = billingModeRes?.data?.billingMode || packagesRes?.meta?.billingMode || 'COUNT_BASED';
+      setBillingMode(mode);
 
       if (myPackageRes.success) {
         setCurrentPackage(myPackageRes.data);
       }
 
       if (packagesRes.success) {
-        // Only show BUSINESS tier packages
-        const businessPackages = packagesRes.data.filter((p: Package) => 
-          p.tier === 'BUSINESS' && p.price && p.price > 0
-        );
+        const businessPackages = packagesRes.data.filter((p: Package) => {
+          if (!(p.tier === 'BUSINESS' && p.price && p.price > 0)) {
+            return false;
+          }
+
+          if (mode === 'FIXED_PRICE') {
+            return ['MONTHLY', 'SIX_MONTH', 'YEARLY'].includes(p.billingCycle || '');
+          }
+
+          return p.maxPhoneTxns !== undefined || p.maxVerifiedTxns !== undefined;
+        });
         setAvailablePackages(businessPackages);
       }
 
@@ -164,6 +176,7 @@ export default function PremiumScreen({ apiKey }: Props) {
   }
 
   const isPremium = currentPackage?.package?.tier !== 'FREE';
+  const isFixedPriceMode = billingMode === 'FIXED_PRICE';
 
   return (
     <View style={[styles.container, { backgroundColor: '#f7f7f7' }]}>
@@ -225,18 +238,27 @@ export default function PremiumScreen({ apiKey }: Props) {
                 {isSelected && (
                   <View style={styles.expandedContent}>
                     <View style={styles.featuresList}>
-                      <View style={styles.featureItem}>
-                        <Check size={16} color="#000" />
-                        <Text style={styles.featureText}>
-                          {pkg.maxPhoneTxns === null ? 'Unlimited' : pkg.maxPhoneTxns} Phone transactions
-                        </Text>
-                      </View>
-                      <View style={styles.featureItem}>
-                        <Check size={16} color="#000" />
-                        <Text style={styles.featureText}>
-                          {pkg.maxVerifiedTxns === null ? 'Unlimited' : pkg.maxVerifiedTxns} Verified transactions
-                        </Text>
-                      </View>
+                      {isFixedPriceMode ? (
+                        <View style={styles.featureItem}>
+                          <Check size={16} color="#000" />
+                          <Text style={styles.featureText}>Unlimited transactions while package is active</Text>
+                        </View>
+                      ) : (
+                        <>
+                          <View style={styles.featureItem}>
+                            <Check size={16} color="#000" />
+                            <Text style={styles.featureText}>
+                              {pkg.maxPhoneTxns === null ? 'Unlimited' : pkg.maxPhoneTxns} Phone transactions
+                            </Text>
+                          </View>
+                          <View style={styles.featureItem}>
+                            <Check size={16} color="#000" />
+                            <Text style={styles.featureText}>
+                              {pkg.maxVerifiedTxns === null ? 'Unlimited' : pkg.maxVerifiedTxns} Verified transactions
+                            </Text>
+                          </View>
+                        </>
+                      )}
                       <View style={styles.featureItem}>
                         <Check size={16} color="#000" />
                         <Text style={styles.featureText}>

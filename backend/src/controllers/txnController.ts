@@ -4,6 +4,7 @@ import prisma from '../utils/prisma';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../middleware/auth';
 import { trackUsage, getUsageStats } from '../utils/usageTracker';
+import { resolveIngestEntitlement, consumePhoneQuota } from '../utils/entitlement';
 
 // Validation schemas
 const ingestSchema = z.object({
@@ -42,17 +43,8 @@ export async function ingestTransaction(req: AuthRequest, res: Response) {
     }
   }
 
-  // Check usage limits
-  const usageStats = await getUsageStats(req.user.id);
-  const user = await prisma.user.findUnique({
-    where: { id: req.user.id },
-    select: { plan: true },
-  });
-
-  // Free plan: 100 transactions/month
-  if (user?.plan === 'FREE' && usageStats.appRequestsMonth >= 100) {
-    throw new AppError(403, 'Free plan limit reached (100/100 transactions). Upgrade to Premium for unlimited transactions or wait until next month.');
-  }
+  // Mode-aware entitlement: trial, fixed-price unlimited, or count-based quotas.
+  const entitlement = await resolveIngestEntitlement(req.user.id);
 
   // Check if transaction already exists
   const existing = await prisma.transaction.findUnique({
@@ -110,6 +102,10 @@ export async function ingestTransaction(req: AuthRequest, res: Response) {
 
     // Track usage for app requests (ingest)
     await trackUsage(req.user.id, 'app');
+
+    if (entitlement.shouldDecrementPhoneQuota && entitlement.userPackageId) {
+      await consumePhoneQuota(entitlement.userPackageId);
+    }
 
     res.status(201).json({
       success: true,

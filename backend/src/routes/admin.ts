@@ -27,6 +27,11 @@ router.get('/patterns', asyncHandler(adminController.getPatterns));
 // Transaction monitoring
 router.get('/transactions', asyncHandler(adminController.getTransactions));
 
+// Package purchase moderation
+router.get('/package-purchases', asyncHandler(adminController.getPackagePurchases));
+router.post('/package-purchases/:id/verify', asyncHandler(adminController.verifyPackagePurchase));
+router.post('/package-purchases/:id/reject', asyncHandler(adminController.rejectPackagePurchase));
+
 // Country management
 router.get('/countries', asyncHandler(adminController.getCountries));
 router.get('/countries/:code', asyncHandler(adminController.getCountry));

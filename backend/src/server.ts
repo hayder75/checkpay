@@ -17,6 +17,9 @@ import adminRoutes from './routes/admin';
 import countriesRoutes from './routes/countries';
 import templateRoutes from './routes/templates';
 import testRoutes from './routes/test';
+import packageRoutes from './routes/packages';
+import userPackageRoutes from './routes/user-packages';
+import systemConfigRoutes from './routes/system-config';
 
 // Load environment variables
 dotenv.config();
@@ -85,6 +88,9 @@ app.use('/api/config', configRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/countries', countriesRoutes);
 app.use('/api/test', testRoutes);
+app.use('/api/packages', packageRoutes);
+app.use('/api/user-packages', userPackageRoutes);
+app.use('/api/system-config', systemConfigRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response, next: NextFunction) => {

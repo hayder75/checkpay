@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import { AuthRequest } from './auth';
 import prisma from '../utils/prisma';
 import { getUsageStats } from '../utils/usageTracker';
+import { getSystemConfig } from '../utils/systemConfigStore';
 
 /**
  * Custom rate limiter that checks user's plan and usage stats
@@ -16,7 +17,10 @@ export async function customRateLimiter(req: AuthRequest, res: Response, next: a
   const apiKeyType = req.apiKeyType || 'app'; // Default to app for ingest endpoint
   const freeMax = parseInt(process.env.RATE_LIMIT_FREE_MAX || '100');
   const premiumMax = parseInt(process.env.RATE_LIMIT_PREMIUM_MAX || '1000000');
-  const maxRequests = req.user.plan === 'PREMIUM' ? premiumMax : freeMax;
+  const config = await getSystemConfig();
+  const maxRequests = config.billingMode === 'FIXED_PRICE'
+    ? Number.MAX_SAFE_INTEGER
+    : (req.user.plan === 'PREMIUM' ? premiumMax : freeMax);
 
   // Get usage stats
   const usageStats = await getUsageStats(req.user.id);
@@ -24,7 +28,7 @@ export async function customRateLimiter(req: AuthRequest, res: Response, next: a
   // Check monthly limit (both app and dev requests count towards total)
   const totalMonthlyRequests = usageStats.appRequestsMonth + usageStats.devRequestsMonth;
   
-  if (totalMonthlyRequests >= maxRequests) {
+  if (maxRequests !== Number.MAX_SAFE_INTEGER && totalMonthlyRequests >= maxRequests) {
     return res.status(429).json({
       success: false,
       error: `Rate limit exceeded. ${maxRequests} requests per month.`,
@@ -45,9 +49,11 @@ export async function customRateLimiter(req: AuthRequest, res: Response, next: a
   }
 
   // Add rate limit info to response headers
-  const remaining = maxRequests - totalMonthlyRequests;
-  res.setHeader('X-RateLimit-Limit', maxRequests.toString());
-  res.setHeader('X-RateLimit-Remaining', remaining.toString());
+  const remaining = maxRequests === Number.MAX_SAFE_INTEGER
+    ? Number.MAX_SAFE_INTEGER
+    : maxRequests - totalMonthlyRequests;
+  res.setHeader('X-RateLimit-Limit', maxRequests === Number.MAX_SAFE_INTEGER ? 'unlimited' : maxRequests.toString());
+  res.setHeader('X-RateLimit-Remaining', remaining === Number.MAX_SAFE_INTEGER ? 'unlimited' : remaining.toString());
   res.setHeader('X-RateLimit-Usage-App', usageStats.appRequestsMonth.toString());
   res.setHeader('X-RateLimit-Usage-Dev', usageStats.devRequestsMonth.toString());
 

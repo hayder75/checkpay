@@ -625,3 +625,206 @@ export async function getSystemHealth(req: AuthRequest, res: Response) {
   });
 }
 
+async function assertAdmin(userId?: string) {
+  if (!userId) {
+    throw new AppError(401, 'Authentication required');
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true },
+  });
+
+  if (!user || (user.role !== 'ADMIN' && user.role !== 'SUPER_ADMIN')) {
+    throw new AppError(403, 'Admin access required');
+  }
+}
+
+const moderationSchema = z.object({
+  adminNotes: z.string().optional(),
+});
+
+export async function getPackagePurchases(req: AuthRequest, res: Response) {
+  await assertAdmin(req.user?.id);
+
+  const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+
+  const purchases = await prisma.packagePurchase.findMany({
+    where: status ? { status } : {},
+    include: {
+      user: {
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          phone: true,
+        },
+      },
+      package: {
+        select: {
+          id: true,
+          name: true,
+          price: true,
+          billingCycle: true,
+          tier: true,
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  res.json({ success: true, data: purchases });
+}
+
+export async function verifyPackagePurchase(req: AuthRequest, res: Response) {
+  await assertAdmin(req.user?.id);
+
+  const { adminNotes } = moderationSchema.parse(req.body || {});
+  const { id } = req.params;
+
+  const purchase = await prisma.packagePurchase.findUnique({
+    where: { id },
+    include: {
+      package: true,
+    },
+  });
+
+  if (!purchase) {
+    throw new AppError(404, 'Package purchase not found');
+  }
+
+  if (purchase.status === 'VERIFIED') {
+    return res.json({ success: true, data: purchase, message: 'Purchase already verified' });
+  }
+
+  const now = new Date();
+  const MILLIS_IN_DAY = 24 * 60 * 60 * 1000;
+  const endsAt = purchase.package.billingCycle === 'MONTHLY'
+    ? new Date(now.getTime() + 30 * MILLIS_IN_DAY)
+    : purchase.package.billingCycle === 'SIX_MONTH'
+      ? new Date(now.getTime() + 180 * MILLIS_IN_DAY)
+      : purchase.package.billingCycle === 'YEARLY'
+        ? new Date(now.getTime() + 365 * MILLIS_IN_DAY)
+        : purchase.package.durationDays
+          ? new Date(now.getTime() + purchase.package.durationDays * MILLIS_IN_DAY)
+          : null;
+
+  const [updatedPurchase, activatedPackage] = await prisma.$transaction(async (tx) => {
+    await tx.userPackage.updateMany({
+      where: {
+        userId: purchase.userId,
+        status: 'ACTIVE',
+      },
+      data: {
+        status: 'EXPIRED',
+        endsAt: now,
+      },
+    });
+
+    const nextUserPackage = await tx.userPackage.create({
+      data: {
+        userId: purchase.userId,
+        packageId: purchase.packageId,
+        status: 'ACTIVE',
+        startsAt: now,
+        endsAt,
+        phoneTxnsRemaining: purchase.package.maxPhoneTxns,
+        verifiedTxnsRemaining: purchase.package.maxVerifiedTxns,
+        notes: `Activated from purchase ${purchase.id}`,
+      },
+      include: {
+        package: true,
+      },
+    });
+
+    const nextPurchase = await tx.packagePurchase.update({
+      where: { id },
+      data: {
+        status: 'VERIFIED',
+        verifiedAt: now,
+        verifiedBy: req.user!.id,
+        adminNotes: adminNotes || null,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            email: true,
+            phone: true,
+          },
+        },
+        package: {
+          select: {
+            id: true,
+            name: true,
+            price: true,
+            billingCycle: true,
+            tier: true,
+          },
+        },
+      },
+    });
+
+    return [nextPurchase, nextUserPackage] as const;
+  });
+
+  res.json({
+    success: true,
+    data: {
+      purchase: updatedPurchase,
+      userPackage: activatedPackage,
+    },
+    message: 'Purchase verified and package activated',
+  });
+}
+
+export async function rejectPackagePurchase(req: AuthRequest, res: Response) {
+  await assertAdmin(req.user?.id);
+
+  const { adminNotes } = z.object({
+    adminNotes: z.string().min(1, 'adminNotes is required for rejection'),
+  }).parse(req.body || {});
+
+  const { id } = req.params;
+  const purchase = await prisma.packagePurchase.findUnique({ where: { id } });
+
+  if (!purchase) {
+    throw new AppError(404, 'Package purchase not found');
+  }
+
+  const updated = await prisma.packagePurchase.update({
+    where: { id },
+    data: {
+      status: 'REJECTED',
+      verifiedBy: req.user!.id,
+      adminNotes,
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          phone: true,
+        },
+      },
+      package: {
+        select: {
+          id: true,
+          name: true,
+          price: true,
+          billingCycle: true,
+          tier: true,
+        },
+      },
+    },
+  });
+
+  res.json({
+    success: true,
+    data: updated,
+    message: 'Purchase rejected',
+  });
+}
+

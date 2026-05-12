@@ -89,6 +89,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
   const [businessId, setBusinessId] = useState<string | null>(null);
   const [generatingOTP, setGeneratingOTP] = useState(false);
   const [currentPackage, setCurrentPackage] = useState<UserPackage | null>(null);
+  const [billingMode, setBillingMode] = useState<'COUNT_BASED' | 'FIXED_PRICE'>('COUNT_BASED');
   const [availablePackages, setAvailablePackages] = useState<Package[]>([]);
   const [pendingPurchases, setPendingPurchases] = useState<PurchaseRequest[]>([]);
   const [loadingPackage, setLoadingPackage] = useState(true);
@@ -271,11 +272,15 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
         return;
       }
 
-      const [myPackageRes, packagesRes, purchasesRes] = await Promise.all([
+      const [myPackageRes, packagesRes, purchasesRes, billingModeRes] = await Promise.all([
         packageAPI.getMyPackage().catch(() => ({ success: false, data: null })),
         packageAPI.getPackages(),
         packageAPI.getMyPurchases().catch(() => ({ success: false, data: [] })),
+        packageAPI.getBillingMode().catch(() => ({ success: true, data: { billingMode: 'COUNT_BASED' } })),
       ]);
+
+      const mode = billingModeRes?.data?.billingMode || packagesRes?.meta?.billingMode || 'COUNT_BASED';
+      setBillingMode(mode);
 
       let nextCurrentPackage: UserPackage | null = null;
       let nextAvailablePackages: Package[] = [];
@@ -287,10 +292,17 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
       }
 
       if (packagesRes.success) {
-        // Only show BUSINESS tier packages
-        const businessPackages = packagesRes.data.filter((p: Package) => 
-          p.tier === 'BUSINESS' && p.price && p.price > 0
-        );
+        const businessPackages = packagesRes.data.filter((p: Package) => {
+          if (!(p.tier === 'BUSINESS' && p.price && p.price > 0)) {
+            return false;
+          }
+
+          if (mode === 'FIXED_PRICE') {
+            return ['MONTHLY', 'SIX_MONTH', 'YEARLY'].includes(p.billingCycle || '');
+          }
+
+          return p.maxPhoneTxns !== undefined || p.maxVerifiedTxns !== undefined;
+        });
         nextAvailablePackages = businessPackages;
         setAvailablePackages(nextAvailablePackages);
       }
@@ -378,6 +390,8 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
     if (remaining === null || max === null || max === 0) return 100;
     return Math.round((remaining / max) * 100);
   };
+
+  const isFixedPriceMode = billingMode === 'FIXED_PRICE';
 
   const loadProfile = async () => {
     try {
@@ -668,61 +682,72 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
                 </View>
               )}
 
-              {/* Phone Transactions Usage */}
-              <View style={[styles.usageItem, { borderTopColor: colors.border }]}>
-                <View style={styles.usageHeader}>
-                  <Text style={[styles.usageLabel, { color: colors.text }]}>Phone Transactions</Text>
-                  <Text style={[styles.usageStats, { color: colors.textSecondary }]}>
-                    {currentPackage.phoneTxnsRemaining === null
-                      ? 'Unlimited'
-                      : `${currentPackage.phoneTxnsRemaining} / ${currentPackage.package.maxPhoneTxns || 0}`}
-                  </Text>
-                </View>
-                {currentPackage.phoneTxnsRemaining !== null && currentPackage.package.maxPhoneTxns && (
-                  <View style={[styles.progressBar, { backgroundColor: colors.border }]}>
-                    <View
-                      style={[
-                        styles.progressFill,
-                        {
-                          width: `${getRemainingPercentage(
-                            currentPackage.phoneTxnsRemaining,
-                            currentPackage.package.maxPhoneTxns
-                          )}%`,
-                          backgroundColor: colors.primary,
-                        },
-                      ]}
-                    />
+              {isFixedPriceMode ? (
+                <View style={[styles.usageItem, { borderTopColor: colors.border }]}> 
+                  <View style={styles.usageHeader}>
+                    <Text style={[styles.usageLabel, { color: colors.text }]}>Usage</Text>
+                    <Text style={[styles.usageStats, { color: colors.textSecondary }]}>Unlimited while active</Text>
                   </View>
-                )}
-              </View>
+                </View>
+              ) : (
+                <>
+                  {/* Phone Transactions Usage */}
+                  <View style={[styles.usageItem, { borderTopColor: colors.border }]}> 
+                    <View style={styles.usageHeader}>
+                      <Text style={[styles.usageLabel, { color: colors.text }]}>Phone Transactions</Text>
+                      <Text style={[styles.usageStats, { color: colors.textSecondary }]}> 
+                        {currentPackage.phoneTxnsRemaining === null
+                          ? 'Unlimited'
+                          : `${currentPackage.phoneTxnsRemaining} / ${currentPackage.package.maxPhoneTxns || 0}`}
+                      </Text>
+                    </View>
+                    {currentPackage.phoneTxnsRemaining !== null && currentPackage.package.maxPhoneTxns && (
+                      <View style={[styles.progressBar, { backgroundColor: colors.border }]}> 
+                        <View
+                          style={[
+                            styles.progressFill,
+                            {
+                              width: `${getRemainingPercentage(
+                                currentPackage.phoneTxnsRemaining,
+                                currentPackage.package.maxPhoneTxns
+                              )}%`,
+                              backgroundColor: colors.primary,
+                            },
+                          ]}
+                        />
+                      </View>
+                    )}
+                  </View>
 
-              {/* Verified Transactions Usage */}
-              <View style={[styles.usageItem, { borderTopColor: colors.border }]}>
-                <View style={styles.usageHeader}>
-                  <Text style={[styles.usageLabel, { color: colors.text }]}>Verified Transactions</Text>
-                  <Text style={[styles.usageStats, { color: colors.textSecondary }]}>
-                    {currentPackage.verifiedTxnsRemaining === null
-                      ? 'Unlimited'
-                      : `${currentPackage.verifiedTxnsRemaining} / ${currentPackage.package.maxVerifiedTxns || 0}`}
-                  </Text>
-                </View>
-                {currentPackage.verifiedTxnsRemaining !== null && currentPackage.package.maxVerifiedTxns && (
-                  <View style={[styles.progressBar, { backgroundColor: colors.border }]}>
-                    <View
-                      style={[
-                        styles.progressFill,
-                        {
-                          width: `${getRemainingPercentage(
-                            currentPackage.verifiedTxnsRemaining,
-                            currentPackage.package.maxVerifiedTxns
-                          )}%`,
-                          backgroundColor: colors.primary,
-                        },
-                      ]}
-                    />
+                  {/* Verified Transactions Usage */}
+                  <View style={[styles.usageItem, { borderTopColor: colors.border }]}> 
+                    <View style={styles.usageHeader}>
+                      <Text style={[styles.usageLabel, { color: colors.text }]}>Verified Transactions</Text>
+                      <Text style={[styles.usageStats, { color: colors.textSecondary }]}> 
+                        {currentPackage.verifiedTxnsRemaining === null
+                          ? 'Unlimited'
+                          : `${currentPackage.verifiedTxnsRemaining} / ${currentPackage.package.maxVerifiedTxns || 0}`}
+                      </Text>
+                    </View>
+                    {currentPackage.verifiedTxnsRemaining !== null && currentPackage.package.maxVerifiedTxns && (
+                      <View style={[styles.progressBar, { backgroundColor: colors.border }]}> 
+                        <View
+                          style={[
+                            styles.progressFill,
+                            {
+                              width: `${getRemainingPercentage(
+                                currentPackage.verifiedTxnsRemaining,
+                                currentPackage.package.maxVerifiedTxns
+                              )}%`,
+                              backgroundColor: colors.primary,
+                            },
+                          ]}
+                        />
+                      </View>
+                    )}
                   </View>
-                )}
-              </View>
+                </>
+              )}
             </>
           ) : (
             <View style={styles.noPackageContainer}>
@@ -830,22 +855,31 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
                     <View style={[styles.packageOptionDivider, { backgroundColor: colors.border }]} />
 
                     <View style={styles.packageOptionFeatures}>
-                      <View style={styles.featureItem}>
-                        <Check size={14} color={colors.primary} />
-                        <Text style={[styles.featureText, { color: colors.textSecondary }]}>
-                          <Text style={{ color: colors.text, fontWeight: '600' }}>
-                            {pkg.maxPhoneTxns === null ? 'Unlimited' : pkg.maxPhoneTxns}
-                          </Text> Phone Txns
-                        </Text>
-                      </View>
-                      <View style={styles.featureItem}>
-                        <Check size={14} color={colors.primary} />
-                        <Text style={[styles.featureText, { color: colors.textSecondary }]}>
-                          <Text style={{ color: colors.text, fontWeight: '600' }}>
-                            {pkg.maxVerifiedTxns === null ? 'Unlimited' : pkg.maxVerifiedTxns}
-                          </Text> Verified Txns
-                        </Text>
-                      </View>
+                      {isFixedPriceMode ? (
+                        <View style={styles.featureItem}>
+                          <Check size={14} color={colors.primary} />
+                          <Text style={[styles.featureText, { color: colors.textSecondary }]}>Unlimited transactions while active</Text>
+                        </View>
+                      ) : (
+                        <>
+                          <View style={styles.featureItem}>
+                            <Check size={14} color={colors.primary} />
+                            <Text style={[styles.featureText, { color: colors.textSecondary }]}> 
+                              <Text style={{ color: colors.text, fontWeight: '600' }}>
+                                {pkg.maxPhoneTxns === null ? 'Unlimited' : pkg.maxPhoneTxns}
+                              </Text> Phone Txns
+                            </Text>
+                          </View>
+                          <View style={styles.featureItem}>
+                            <Check size={14} color={colors.primary} />
+                            <Text style={[styles.featureText, { color: colors.textSecondary }]}> 
+                              <Text style={{ color: colors.text, fontWeight: '600' }}>
+                                {pkg.maxVerifiedTxns === null ? 'Unlimited' : pkg.maxVerifiedTxns}
+                              </Text> Verified Txns
+                            </Text>
+                          </View>
+                        </>
+                      )}
                     </View>
 
                     <View style={styles.packageOptionFooter}>

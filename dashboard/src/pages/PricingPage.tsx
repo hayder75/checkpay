@@ -29,6 +29,7 @@ interface Package {
 export default function PricingPage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [packages, setPackages] = useState<Package[]>([]);
+  const [billingMode, setBillingMode] = useState<'COUNT_BASED' | 'FIXED_PRICE'>('COUNT_BASED');
   const [loading, setLoading] = useState(true);
   const { theme } = useTheme();
   const logoPath = theme === 'dark' ? '/dark-theme-logo.png' : '/light-theme-logo.png';
@@ -39,13 +40,29 @@ export default function PricingPage() {
 
   const loadPackages = async () => {
     try {
-      const response = await packageAPI.getAll();
-      setPackages(response.data.data || []);
+      const [packageRes, modeRes] = await Promise.all([
+        packageAPI.getAll(),
+        packageAPI.getBillingMode(),
+      ]);
+      setPackages(packageRes.data.data || []);
+      setBillingMode(modeRes.data?.data?.billingMode || packageRes.data?.meta?.billingMode || 'COUNT_BASED');
     } catch (error) {
       console.error('Failed to load packages:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const isFixedPriceMode = billingMode === 'FIXED_PRICE';
+
+  const isVisibleForMode = (pkg: Package): boolean => {
+    if (!pkg.isActive || pkg.isFreePackage) return false;
+
+    if (isFixedPriceMode) {
+      return ['MONTHLY', 'SIX_MONTH', 'YEARLY'].includes(pkg.billingCycle || '') && !!pkg.price;
+    }
+
+    return pkg.maxPhoneTxns !== undefined || pkg.maxVerifiedTxns !== undefined;
   };
 
   const formatPrice = (price: number | string | null | undefined): string => {
@@ -64,7 +81,7 @@ export default function PricingPage() {
 
   // Group non-free, active packages by tier
   const groupedPackages = packages
-    .filter(pkg => !pkg.isFreePackage && pkg.isActive)
+    .filter(isVisibleForMode)
     .reduce((acc, pkg) => {
       const tier = pkg.tier || 'OTHER';
       if (!acc[tier]) acc[tier] = [];
@@ -233,22 +250,35 @@ export default function PricingPage() {
                           </div>
 
                           <div className="flex-1 space-y-2.5 mb-5">
-                            <div className="flex items-center gap-3 text-[13px]">
-                              <div className="h-4 w-4 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                                <Check className="h-2.5 w-2.5 text-primary" strokeWidth={4} />
+                            {isFixedPriceMode ? (
+                              <div className="flex items-center gap-3 text-[13px]">
+                                <div className="h-4 w-4 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                                  <Check className="h-2.5 w-2.5 text-primary" strokeWidth={4} />
+                                </div>
+                                <span className="font-semibold text-muted-foreground">
+                                  <span className="font-black text-foreground">Unlimited</span> Transactions While Active
+                                </span>
                               </div>
-                              <span className="font-semibold text-muted-foreground">
-                                <span className="font-black text-foreground">{pkg.maxPhoneTxns === -1 ? 'Unlimited' : pkg.maxPhoneTxns?.toLocaleString()}</span> Phone TXNs
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-3 text-[13px]">
-                              <div className="h-4 w-4 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                                <Check className="h-2.5 w-2.5 text-primary" strokeWidth={4} />
-                              </div>
-                              <span className="font-semibold text-muted-foreground">
-                                <span className="font-black text-foreground">{pkg.maxVerifiedTxns === -1 ? 'Unlimited' : pkg.maxVerifiedTxns?.toLocaleString()}</span> Verified TXNs
-                              </span>
-                            </div>
+                            ) : (
+                              <>
+                                <div className="flex items-center gap-3 text-[13px]">
+                                  <div className="h-4 w-4 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                                    <Check className="h-2.5 w-2.5 text-primary" strokeWidth={4} />
+                                  </div>
+                                  <span className="font-semibold text-muted-foreground">
+                                    <span className="font-black text-foreground">{pkg.maxPhoneTxns === -1 ? 'Unlimited' : pkg.maxPhoneTxns?.toLocaleString()}</span> Phone TXNs
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-3 text-[13px]">
+                                  <div className="h-4 w-4 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                                    <Check className="h-2.5 w-2.5 text-primary" strokeWidth={4} />
+                                  </div>
+                                  <span className="font-semibold text-muted-foreground">
+                                    <span className="font-black text-foreground">{pkg.maxVerifiedTxns === -1 ? 'Unlimited' : pkg.maxVerifiedTxns?.toLocaleString()}</span> Verified TXNs
+                                  </span>
+                                </div>
+                              </>
+                            )}
                             {pkg.employeeLimit !== undefined && pkg.employeeLimit !== null && (
                               <div className="flex items-center gap-3 text-[13px]">
                                 <div className="h-4 w-4 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
@@ -283,8 +313,12 @@ export default function PricingPage() {
                   <Zap className="h-5 w-5 text-muted-foreground" />
                 </div>
                 <div>
-                  <p className="font-bold">Free Plan Available</p>
-                  <p className="text-xs text-muted-foreground">Every user starts with {freePackage?.maxPhoneTxns?.toLocaleString() || '100'} free transactions.</p>
+                  <p className="font-bold">Free First Month</p>
+                  <p className="text-xs text-muted-foreground">
+                    {isFixedPriceMode
+                      ? 'Every user starts with one free month, then chooses a paid duration package.'
+                      : `Every user starts with ${freePackage?.maxPhoneTxns?.toLocaleString() || '100'} free transactions.`}
+                  </p>
                 </div>
               </div>
 
