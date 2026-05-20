@@ -21,6 +21,7 @@ import { detectCountryFromLocale } from '../utils/smsUtils';
 import { storage } from '../services/storage';
 import { securityService } from '../services/securityService';
 import PINSetupScreen from './PINSetupScreen';
+import { useTranslation } from 'react-i18next';
 
 const { width, height } = Dimensions.get('window');
 
@@ -32,29 +33,7 @@ interface OnboardingItem {
   color: string;
 }
 
-const slides: OnboardingItem[] = [
-  {
-    id: '1',
-    title: 'Universal Payments',
-    description: 'The API layer for African payments. Turn raw SMS receipts into clean, structured payment data.',
-    icon: Globe,
-    color: '#f97316', // Orange-500
-  },
-  {
-    id: '2',
-    title: 'AI-Powered Parsing',
-    description: 'No regex knowledge needed. Just paste an SMS and our AI builds the parser automatically.',
-    icon: Sparkles,
-    color: '#0ea5e9', // Sky-500
-  },
-  {
-    id: '3',
-    title: 'Bank-Grade Security',
-    description: 'Phone masking, rate limits, and full audit logging for your security. Trusted by businesses across Africa.',
-    icon: Shield,
-    color: '#10b981', // Emerald-500
-  },
-];
+
 
 interface Props {
   onComplete: (countryCode: string, selectedBanks: string[]) => void;
@@ -64,6 +43,32 @@ interface Props {
 
 export default function OnboardingScreen({ onComplete, onNavigateToRegistration }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
+
+  const slides: OnboardingItem[] = [
+    {
+      id: '1',
+      title: t('onboarding.slides.1.title'),
+      description: t('onboarding.slides.1.description'),
+      icon: Globe,
+      color: '#f97316', // Orange-500
+    },
+    {
+      id: '2',
+      title: t('onboarding.slides.2.title'),
+      description: t('onboarding.slides.2.description'),
+      icon: Sparkles,
+      color: '#0ea5e9', // Sky-500
+    },
+    {
+      id: '3',
+      title: t('onboarding.slides.3.title'),
+      description: t('onboarding.slides.3.description'),
+      icon: Shield,
+      color: '#10b981', // Emerald-500
+    },
+  ];
+
   const [currentIndex, setCurrentIndex] = useState(0);
   const scrollX = useRef(new Animated.Value(0)).current;
   const slidesRef = useRef<FlatList>(null);
@@ -181,6 +186,8 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
 
   const renderItem = ({ item }: { item: OnboardingItem }) => {
     const Icon = item.icon;
+    const localizedTitle = t(`onboarding.slides.${item.id}.title`);
+    const localizedDescription = t(`onboarding.slides.${item.id}.description`);
     return (
       <View style={[styles.slide, { width }]}>
         <View style={styles.iconContainer}>
@@ -189,9 +196,9 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
           </View>
         </View>
         <View style={styles.textContainer}>
-          <Text style={[styles.title, { color: colors.text }]}>{item.title}</Text>
+          <Text style={[styles.title, { color: colors.text }]}>{localizedTitle}</Text>
           <Text style={[styles.description, { color: colors.textSecondary }]}>
-            {item.description}
+            {localizedDescription}
           </Text>
         </View>
       </View>
@@ -253,11 +260,10 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
           </View>
           
           <Text style={[styles.securityTitle, { color: colors.text }]}>
-            Secure Your App
+            {t('onboarding.secureYourApp')}
           </Text>
           <Text style={[styles.securitySubtitle, { color: colors.textSecondary }]}>
-            Add an extra layer of security with a PIN or biometric lock. 
-            This is optional and can be changed anytime in settings.
+            {t('onboarding.securitySubtitle')}
           </Text>
 
           <View style={styles.securityOptions}>
@@ -270,10 +276,10 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
               </View>
               <View style={styles.securityOptionContent}>
                 <Text style={[styles.securityOptionTitle, { color: colors.text }]}>
-                  Set Up PIN
+                  {t('onboarding.setUpPin')}
                 </Text>
                 <Text style={[styles.securityOptionDesc, { color: colors.textSecondary }]}>
-                  Create a 4-digit PIN to lock your app
+                  {t('onboarding.pinDescription')}
                 </Text>
               </View>
               <ArrowRight size={20} color={colors.textSecondary} />
@@ -283,7 +289,7 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
               <View style={[styles.biometricInfo, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 <Fingerprint size={20} color={colors.primary} />
                 <Text style={[styles.biometricInfoText, { color: colors.textSecondary }]}>
-                  {biometricName} will be available after setting up PIN
+                  {t('onboarding.biometricAvailableAfterPin', { biometricName })}
                 </Text>
               </View>
             )}
@@ -296,14 +302,14 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
             onPress={() => setShowPINSetup(true)}
           >
             <Lock size={20} color="#fff" style={{ marginRight: 8 }} />
-            <Text style={styles.buttonText}>Set Up PIN</Text>
+            <Text style={styles.buttonText}>{t('onboarding.setUpPin')}</Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
             style={styles.skipButton} 
             onPress={handleSkipSecuritySetup}
           >
-            <Text style={[styles.skipText, { color: colors.textSecondary }]}>Skip for now</Text>
+            <Text style={[styles.skipText, { color: colors.textSecondary }]}>{t('onboarding.skipForNow')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -318,15 +324,15 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
         
         <View style={styles.bankSelectionContainer}>
           <View style={styles.bankSelectionHeader}>
-            <Text style={[styles.bankSelectionTitle, { color: colors.text }]}>Select Your Banks</Text>
+            <Text style={[styles.bankSelectionTitle, { color: colors.text }]}>{t('onboarding.selectYourBanks')}</Text>
             <Text style={[styles.bankSelectionSubtitle, { color: colors.textSecondary }]}>
-              Choose the banks you use. You can change this later.
+              {t('onboarding.selectYourBanksSubtitle')}
             </Text>
           </View>
 
           {loadingBanks ? (
             <View style={styles.loadingContainer}>
-              <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading...</Text>
+              <Text style={[styles.loadingText, { color: colors.textSecondary }]}>{t('common.loading')}</Text>
             </View>
           ) : (
             <>
@@ -340,8 +346,8 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
               >
                 <Text style={[styles.dropdownTriggerText, { color: selectedBanks.length > 0 ? colors.text : colors.textSecondary }]}>
                   {selectedBanks.length > 0 
-                    ? `${selectedBanks.length} bank${selectedBanks.length > 1 ? 's' : ''} selected`
-                    : 'Tap to select banks'}
+                    ? t('onboarding.bankSelectedCount', { count: selectedBanks.length })
+                    : t('onboarding.tapToSelectBanks')}
                 </Text>
                 <ChevronDown size={20} color={colors.textSecondary} />
               </TouchableOpacity>
@@ -350,7 +356,7 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
               {selectedBanks.length > 0 && (
                 <View style={styles.selectedBanksContainer}>
                   <Text style={[styles.selectedBanksLabel, { color: colors.textSecondary }]}>
-                    Selected:
+                    {t('onboarding.selectedLabel')}
                   </Text>
                   <View style={styles.selectedBanksList}>
                     {selectedBanks.map((bank) => (
@@ -381,7 +387,7 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
             style={[styles.button, { backgroundColor: colors.primary }]}
             onPress={handleContinueFromBankSelection}
           >
-            <Text style={styles.buttonText}>Continue</Text>
+            <Text style={styles.buttonText}>{t('onboarding.continue')}</Text>
             <ArrowRight size={20} color="#fff" style={{ marginLeft: 8 }} />
           </TouchableOpacity>
           
@@ -389,7 +395,7 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
             style={styles.skipButton} 
             onPress={() => handleContinueFromBankSelection()}
           >
-            <Text style={[styles.skipText, { color: colors.textSecondary }]}>Skip</Text>
+            <Text style={[styles.skipText, { color: colors.textSecondary }]}>{t('onboarding.skip')}</Text>
           </TouchableOpacity>
         </View>
 
@@ -406,7 +412,7 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
           <View style={styles.modalOverlay}>
             <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
               <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
-                <Text style={[styles.modalTitle, { color: colors.text }]}>Select Banks</Text>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>{t('onboarding.selectBanks')}</Text>
                 <TouchableOpacity
                   onPress={() => {
                     setShowBankDropdown(false);
@@ -422,7 +428,7 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
                 <Search size={20} color={colors.textSecondary} />
                 <TextInput
                   style={[styles.searchInput, { color: colors.text }]}
-                  placeholder="Search banks..."
+                  placeholder={t('onboarding.searchBanks')}
                   placeholderTextColor={colors.textSecondary}
                   value={searchQuery}
                   onChangeText={setSearchQuery}
@@ -504,7 +510,7 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
             onPress={scrollToNext}
           >
             <Text style={styles.buttonText}>
-              {currentIndex === slides.length - 1 ? 'Get Started' : 'Next'}
+              {currentIndex === slides.length - 1 ? t('onboarding.getStarted') : t('onboarding.next')}
             </Text>
             {currentIndex !== slides.length - 1 && (
                <ArrowRight size={20} color="#fff" style={{ marginLeft: 8 }} />
@@ -516,7 +522,7 @@ export default function OnboardingScreen({ onComplete, onNavigateToRegistration 
                 style={styles.skipButton} 
                 onPress={onNavigateToRegistration}
              >
-                <Text style={[styles.skipText, { color: colors.textSecondary }]}>Skip</Text>
+               <Text style={[styles.skipText, { color: colors.textSecondary }]}>{t('onboarding.skip')}</Text>
              </TouchableOpacity>
           )}
         </View>

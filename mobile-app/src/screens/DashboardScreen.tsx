@@ -14,8 +14,8 @@ import { X } from 'lucide-react-native';
 import { storage } from '../services/storage';
 import { smsService, LocalTransaction } from '../services/smsService';
 import { Pattern } from '../types';
-import { useTheme } from '../contexts/ThemeContext';
 import { dedupeTransactionsByIdentity } from '../utils/transactionDedup';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   apiKey?: string | null;
@@ -25,6 +25,7 @@ interface Props {
 
 export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const [refreshing, setRefreshing] = useState(false);
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [transactions, setTransactions] = useState<LocalTransaction[]>([]);
@@ -186,7 +187,7 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
   const syncUnsyncedTransactions = async (showSuccessAlert: boolean = true) => {
     const token = await storage.getToken();
     if (!token) {
-      Alert.alert('Not Signed In', 'Please sign in to sync transactions');
+      Alert.alert(t('dashboard.notSignedIn'), t('dashboard.pleaseSignInToSync'));
       return;
     }
 
@@ -205,13 +206,13 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
       await loadTransactions();
       
       if (showSuccessAlert) {
-        Alert.alert('Success', `Successfully synced ${unsyncedCount} transaction(s) to the backend!`);
+        Alert.alert(t('dashboard.success'), t('dashboard.syncSuccessCount', { count: unsyncedCount }));
       }
     } catch (error: any) {
       console.error('Error syncing transactions:', error);
       Alert.alert(
-        'Sync Failed',
-        error.response?.data?.error || error.message || 'Failed to sync transactions. Please check your connection and try again.'
+        t('dashboard.syncFailed'),
+        error.response?.data?.error || error.message || t('dashboard.syncFailedMessage', { error: '' })
       );
     }
   };
@@ -224,8 +225,8 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffMins < 1) return t('dashboard.justNow');
+    if (diffMins < 60) return t('dashboard.minsAgo', { count: diffMins });
     if (diffHours < 24) {
       let hours = date.getHours();
       const minutes = date.getMinutes();
@@ -233,10 +234,10 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
       hours = hours % 12;
       hours = hours ? hours : 12; // the hour '0' should be '12'
       const minutesStr = minutes.toString().padStart(2, '0');
-      return `Today, ${hours}:${minutesStr} ${ampm}`;
+      return t('dashboard.today', { time: `${hours}:${minutesStr} ${ampm}` });
     }
-    if (diffDays === 1) return 'Yesterday';
-    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffDays === 1) return t('dashboard.yesterday');
+    if (diffDays < 7) return t('dashboard.daysAgo', { count: diffDays });
     return date.toLocaleDateString();
   };
 
@@ -298,7 +299,7 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
           </View>
           {item.synced && (
             <View style={[styles.syncedBadge, { backgroundColor: colors.primary + '20' }]}>
-              <Text style={[styles.syncedText, { color: colors.primary }]}>✓ Synced</Text>
+              <Text style={[styles.syncedText, { color: colors.primary }]}>✓ {t('dashboard.synced')}</Text>
             </View>
           )}
         </View>
@@ -316,19 +317,19 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
           <View style={styles.transactionDetails}>
             {item.sendFrom && (
               <View style={styles.detailRow}>
-                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>From:</Text>
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('dashboard.from')}</Text>
                 <Text style={[styles.detailValue, { color: colors.text }]}>{item.sendFrom}</Text>
               </View>
             )}
             {item.sendTo && (
               <View style={styles.detailRow}>
-                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>To:</Text>
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('dashboard.to')}</Text>
                 <Text style={[styles.detailValue, { color: colors.text }]}>{item.sendTo}</Text>
               </View>
             )}
             {item.sender && (
               <View style={styles.detailRow}>
-                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Sender:</Text>
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('dashboard.sender')}</Text>
                 <Text style={[styles.detailValue, { color: colors.text }]}>{item.sender}</Text>
               </View>
             )}
@@ -344,10 +345,10 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Text style={[styles.title, { color: colors.text }]}>Transactions</Text>
+          <Text style={[styles.title, { color: colors.text }]}>{t('dashboard.title')}</Text>
           {unsyncedCount > 0 && (
             <Text style={[styles.unsyncedText, { color: colors.textSecondary }]}>
-              {unsyncedCount} unsynced
+              {t('dashboard.unsynced', { count: unsyncedCount })}
             </Text>
           )}
         </View>
@@ -357,7 +358,7 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
               onPress={syncUnsyncedTransactions}
               style={[styles.syncButtonHeader, { backgroundColor: colors.primary }]}
             >
-              <Text style={styles.syncButtonHeaderText}>Sync</Text>
+              <Text style={styles.syncButtonHeaderText}>{t('dashboard.sync')}</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity
@@ -370,7 +371,7 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
             <Text style={styles.statusDot}>{isMonitoring ? '●' : '○'}</Text>
           </View>
           <Text style={[styles.statusLabel, { color: colors.textSecondary, marginLeft: 6 }]}>
-            {isMonitoring ? 'Active' : 'Inactive'}
+            {isMonitoring ? t('dashboard.active') : t('dashboard.inactive')}
           </Text>
         </View>
       </View>
@@ -378,15 +379,15 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
       {transactions.length === 0 ? (
         <View style={styles.emptyState}>
           <Text style={[styles.emptyIcon]}>📱</Text>
-          <Text style={[styles.emptyTitle, { color: colors.text }]}>No transactions yet</Text>
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>{t('dashboard.noTransactions')}</Text>
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
             {isMonitoring
-              ? 'Waiting for SMS messages...'
-              : 'Complete onboarding to start monitoring SMS'}
+              ? t('dashboard.waitingSms')
+              : t('dashboard.completeOnboarding')}
           </Text>
           {!isAuthenticated && (
             <Text style={[styles.emptyHint, { color: colors.textSecondary, marginTop: 12 }]}>
-              Sign in to sync transactions to the cloud
+              {t('dashboard.signInToSync')}
             </Text>
           )}
           {isAuthenticated && (
@@ -396,7 +397,7 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
                 try {
                   const token = await storage.getToken();
                   if (!token) {
-                    Alert.alert('Not Signed In', 'Please sign in to sync transactions');
+                    Alert.alert(t('dashboard.notSignedIn'), t('dashboard.pleaseSignInToSync'));
                     return;
                   }
                   
@@ -405,28 +406,28 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
                   const connectionTest = await testAPIConnection();
                   if (!connectionTest.success) {
                     Alert.alert(
-                      'Connection Error',
-                      connectionTest.message + '\n\nPlease check:\n- Backend is running\n- Correct API URL in config\n- Network connection'
+                      t('dashboard.connectionError'),
+                      t('dashboard.connectionErrorMessage', { message: connectionTest.message })
                     );
                     return;
                   }
                   
-                  Alert.alert('Syncing', 'Syncing unsynced transactions to backend...');
+                  Alert.alert(t('dashboard.syncing'), t('dashboard.syncingMessage'));
                   await smsService.syncAllUnsyncedTransactions();
                   await loadTransactions();
-                  Alert.alert('Success', 'Transactions synced to backend!');
+                  Alert.alert(t('common.success'), t('dashboard.syncSuccess'));
                 } catch (error: any) {
                   console.error('Error syncing transactions:', error);
-                  const errorMsg = error.response?.data?.error || error.message || 'Failed to sync transactions';
+                  const errorMsg = error.response?.data?.error || error.message || t('dashboard.syncFailed');
                   Alert.alert(
-                    'Sync Failed',
-                    errorMsg + '\n\nCheck console logs for details.'
+                    t('dashboard.syncFailed'),
+                    t('dashboard.syncFailedMessage', { error: errorMsg })
                   );
                 }
               }}
             >
               <Text style={[styles.startButtonText, { color: colors.primaryText }]}>
-                Sync Transactions
+                {t('dashboard.syncTransactions')}
               </Text>
             </TouchableOpacity>
           )}
@@ -440,16 +441,16 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
                     await smsService.startMonitoring();
                     setIsMonitoring(true);
                   } else {
-                    Alert.alert('Onboarding Required', 'Please complete onboarding first');
+                    Alert.alert(t('dashboard.onboardingRequired'), t('dashboard.onboardingRequiredMessage'));
                   }
                 } catch (error) {
                   console.error('Error starting monitoring:', error);
-                  Alert.alert('Error', 'Failed to start SMS monitoring');
+                  Alert.alert(t('common.error'), t('dashboard.failedStartMonitoring', { defaultValue: 'Failed to start SMS monitoring' }));
                 }
               }}
             >
               <Text style={[styles.startButtonText, { color: colors.primaryText }]}>
-                Start Monitoring
+                {t('dashboard.startMonitoring')}
               </Text>
             </TouchableOpacity>
           )}
@@ -476,7 +477,7 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Transaction Details</Text>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>{t('dashboard.transactionDetails')}</Text>
               <TouchableOpacity
                 onPress={() => setSelectedTransaction(null)}
                 style={styles.closeButton}
@@ -502,7 +503,7 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
               return (
               <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
                 <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Amount</Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('common.amount')}</Text>
                   <Text style={[styles.detailValue, { color: colors.text }]}>
                     ${selectedTransaction.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </Text>
@@ -510,41 +511,41 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
 
                 {selectedTransaction.bank && (
                   <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Bank/Institution</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('dashboard.bankInstitution')}</Text>
                     <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.bank}</Text>
                   </View>
                 )}
 
                 {displaySender && (
                   <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Sender</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('dashboard.sender')}</Text>
                     <Text style={[styles.detailValue, { color: colors.text }]}>{displaySender}</Text>
                   </View>
                 )}
 
                 {selectedTransaction.sendFrom && (
                   <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>From (Phone)</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('common.phone')}</Text>
                     <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.sendFrom}</Text>
                   </View>
                 )}
 
                 {selectedTransaction.sendTo && (
                   <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>To</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('dashboard.to')}</Text>
                     <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.sendTo}</Text>
                   </View>
                 )}
 
                 <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Transaction ID</Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('common.transactionId')}</Text>
                   <Text style={[styles.detailValue, { color: colors.text, fontFamily: 'monospace' }]}>
                     {selectedTransaction.txnId}
                   </Text>
                 </View>
 
                 <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Date & Time</Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('dashboard.dateTime')}</Text>
                   <Text style={[styles.detailValue, { color: colors.text }]}>
                     {new Date(selectedTransaction.receivedAt).toLocaleString()}
                   </Text>
@@ -552,21 +553,21 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
 
                 {selectedTransaction.pattern && (
                   <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Pattern</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('dashboard.pattern')}</Text>
                     <Text style={[styles.detailValue, { color: colors.text }]}>{selectedTransaction.pattern}</Text>
                   </View>
                 )}
 
                 <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Status</Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('common.status')}</Text>
                   <Text style={[styles.detailValue, { color: selectedTransaction.synced ? colors.primary : '#ef4444' }]}>
-                    {selectedTransaction.synced ? 'Synced' : 'Not Synced'}
+                    {selectedTransaction.synced ? t('dashboard.synced') : t('dashboard.notSynced')}
                   </Text>
                 </View>
 
                 {selectedTransaction.smsText && (
                   <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Original SMS</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('dashboard.originalSms')}</Text>
                     <View style={[styles.smsTextContainer, { backgroundColor: colors.background }]}>
                       <Text style={[styles.smsText, { color: colors.text }]}>{selectedTransaction.smsText}</Text>
                     </View>

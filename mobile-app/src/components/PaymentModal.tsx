@@ -26,7 +26,7 @@ interface Package {
 interface PaymentModalProps {
   visible: boolean;
   selectedPackage: Package | null;
-  onSubmit: (transactionNumber: string) => Promise<void>;
+  onSubmit: (payload: { transactionNumber: string; channel: string; screenshotUrl?: string }) => Promise<void>;
   onClose: () => void;
   isSubmitting: boolean;
 }
@@ -62,6 +62,8 @@ export default function PaymentModal({
 }: PaymentModalProps) {
   const { colors } = useTheme();
   const [transactionNumber, setTransactionNumber] = useState('');
+  const [channel, setChannel] = useState('');
+  const [screenshotUrl, setScreenshotUrl] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,10 +78,20 @@ export default function PaymentModal({
       setError('Please enter the transaction number');
       return;
     }
+    if (!channel.trim()) {
+      setError('Please enter payment channel (for example: CBE or Telebirr)');
+      return;
+    }
     setError(null);
     try {
-      await onSubmit(transactionNumber.trim());
+      await onSubmit({
+        transactionNumber: transactionNumber.trim(),
+        channel: channel.trim(),
+        screenshotUrl: screenshotUrl.trim() || undefined,
+      });
       setTransactionNumber('');
+      setChannel('');
+      setScreenshotUrl('');
     } catch (err: any) {
       setError(err.message || 'Failed to submit purchase request');
     }
@@ -87,6 +99,8 @@ export default function PaymentModal({
 
   const handleClose = () => {
     setTransactionNumber('');
+    setChannel('');
+    setScreenshotUrl('');
     setError(null);
     onClose();
   };
@@ -258,6 +272,42 @@ export default function PaymentModal({
                     <Text style={styles.errorText}>{error}</Text>
                   </View>
                 )}
+
+                <TextInput
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: colors.background,
+                      color: colors.text,
+                      borderColor: colors.border,
+                      marginTop: 10,
+                    }
+                  ]}
+                  placeholder="Payment channel (e.g. CBE, Telebirr)"
+                  placeholderTextColor={colors.textSecondary + '60'}
+                  value={channel}
+                  onChangeText={setChannel}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                />
+
+                <TextInput
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: colors.background,
+                      color: colors.text,
+                      borderColor: colors.border,
+                      marginTop: 10,
+                    }
+                  ]}
+                  placeholder="Screenshot URL (optional)"
+                  placeholderTextColor={colors.textSecondary + '60'}
+                  value={screenshotUrl}
+                  onChangeText={setScreenshotUrl}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
               </View>
 
               <TouchableOpacity

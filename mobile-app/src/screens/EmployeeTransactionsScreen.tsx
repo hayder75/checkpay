@@ -15,6 +15,8 @@ import { useTheme } from '../contexts/ThemeContext';
 import { dashboardAPI } from '../services/api';
 import { LocalTransaction } from '../services/smsService';
 import { dedupeTransactionsByIdentity } from '../utils/transactionDedup';
+import { useTranslation } from 'react-i18next';
+import { getCurrentAppLanguage } from '../i18n';
 
 interface Props {
   employeeId: string;
@@ -24,6 +26,7 @@ interface Props {
 
 export default function EmployeeTransactionsScreen({ employeeId, employeeName, onBack }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const [transactions, setTransactions] = useState<LocalTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -106,14 +109,7 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    let hours = date.getHours();
-    const minutes = date.getMinutes();
-    const ampm = hours >= 12 ? 'PM' : 'AM';
-    hours = hours % 12;
-    hours = hours ? hours : 12; // the hour '0' should be '12'
-    const minutesStr = minutes.toString().padStart(2, '0');
-    return `${months[date.getMonth()]} ${date.getDate()}, ${hours}:${minutesStr} ${ampm}`;
+    return date.toLocaleString(getCurrentAppLanguage());
   };
 
   const renderTransaction = ({ item }: { item: LocalTransaction }) => {
@@ -135,7 +131,7 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
           </View>
           <View style={styles.transactionInfo}>
             <Text style={[styles.transactionSender, { color: colors.text }]} numberOfLines={1}>
-              {item.sender || item.bank || 'Transaction'}
+              {item.sender || item.bank || t('transactions.transactionFallback')}
             </Text>
             <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>
               {formatDate(item.receivedAt)}
@@ -158,7 +154,7 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
               styles.statusTagText, 
               { color: item.isValidated ? colors.darkGreen : '#c2410c' }
             ]}>
-              {item.isValidated ? 'Verified' : 'Pending'}
+              {item.isValidated ? t('transactions.verified') : t('transactions.pending')}
             </Text>
           </View>
         </View>
@@ -179,7 +175,7 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
           </TouchableOpacity>
           <View>
             <Text style={[styles.headerTitle, { color: colors.text }]}>{employeeName}</Text>
-            <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>Transaction History</Text>
+            <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>{t('employee.transactionHistory')}</Text>
           </View>
         </View>
       </View>
@@ -200,7 +196,7 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <CreditCard size={48} color={colors.textSecondary} opacity={0.3} />
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No transactions found for this employee</Text>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('employee.noTransactions')}</Text>
             </View>
           }
         />
@@ -216,7 +212,7 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Transaction Details</Text>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>{t('employee.transactionDetails')}</Text>
               <TouchableOpacity
                 onPress={() => setSelectedTransaction(null)}
                 style={styles.closeButton}
@@ -228,7 +224,7 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
             {selectedTransaction && (
               <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
                 <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Amount</Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('employee.amount')}</Text>
                   <Text style={[styles.detailValue, { color: colors.text, fontSize: 28, fontWeight: '700' }]}>
                     {selectedTransaction.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     <Text style={{ fontSize: 16, fontWeight: '600', opacity: 0.6 }}> Br</Text>
@@ -237,7 +233,7 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
 
                 <View style={styles.detailGrid}>
                   <View style={styles.detailItem}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Status</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('employee.status')}</Text>
                     <View style={[
                       styles.statusTag, 
                       { 
@@ -250,15 +246,15 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
                         styles.statusTagText, 
                         { color: selectedTransaction.isValidated ? colors.darkGreen : '#c2410c' }
                       ]}>
-                        {selectedTransaction.isValidated ? 'Verified' : 'Pending'}
+                        {selectedTransaction.isValidated ? t('transactions.verified') : t('transactions.pending')}
                       </Text>
                     </View>
                   </View>
 
                   <View style={styles.detailItem}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Source</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('employee.source')}</Text>
                     <Text style={[styles.detailValue, { color: colors.text }]}>
-                      {selectedTransaction.pattern || 'SMS'}
+                      {selectedTransaction.pattern || t('employee.sms')}
                     </Text>
                   </View>
                 </View>
@@ -266,21 +262,21 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
                 <View style={styles.divider} />
 
                 <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Sender / Bank</Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('employee.senderBank')}</Text>
                   <Text style={[styles.detailValue, { color: colors.text }]}>
-                    {selectedTransaction.sender || selectedTransaction.bank || 'Unknown'}
+                    {selectedTransaction.sender || selectedTransaction.bank || t('employee.unknown')}
                   </Text>
                 </View>
 
                 <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Date & Time</Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('employee.dateTime')}</Text>
                   <Text style={[styles.detailValue, { color: colors.text }]}>
                     {new Date(selectedTransaction.receivedAt).toLocaleString()}
                   </Text>
                 </View>
 
                 <View style={styles.detailSection}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Transaction ID</Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('employee.transactionId')}</Text>
                   <Text style={[styles.detailValue, { color: colors.text, fontFamily: 'monospace' }]}>
                     {selectedTransaction.txnId}
                   </Text>
@@ -288,7 +284,7 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
 
                 {selectedTransaction.smsText && (
                   <View style={styles.detailSection}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Original Message</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('employee.originalMessage')}</Text>
                     <View style={[styles.smsContainer, { backgroundColor: colors.background }]}>
                       <Text style={[styles.smsText, { color: colors.textSecondary }]}>
                         {selectedTransaction.smsText}

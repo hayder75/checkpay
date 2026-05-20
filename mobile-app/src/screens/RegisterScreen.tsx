@@ -24,6 +24,7 @@ import { Pattern } from '../types';
 import { storage } from '../services/storage';
 import { signInWithGoogle, completeGoogleAuth } from '../services/googleAuth';
 import Svg, { Path } from 'react-native-svg';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   onRegisterSuccess: (user: any, apiKey: string, patterns: Pattern[]) => void;
@@ -37,9 +38,24 @@ type AccountType = 'BUSINESS_OWNER' | 'DEVELOPER';
 type RegisterStep = 0 | 1 | 2;
 
 const REGISTER_STEPS = [
-  { title: 'Phone', subtitle: 'Use your phone number to create the account.' },
-  { title: 'Security', subtitle: 'Set an optional password (you can change it later).' },
-  { title: 'Banks', subtitle: 'Select the banks you want to monitor.' },
+  {
+    titleKey: 'register.steps.phone.title',
+    subtitleKey: 'register.steps.phone.subtitle',
+    fallbackTitle: 'Phone',
+    fallbackSubtitle: 'Use your phone number to create the account.',
+  },
+  {
+    titleKey: 'register.steps.security.title',
+    subtitleKey: 'register.steps.security.subtitle',
+    fallbackTitle: 'Security',
+    fallbackSubtitle: 'Set an optional password (you can change it later).',
+  },
+  {
+    titleKey: 'register.steps.banks.title',
+    subtitleKey: 'register.steps.banks.subtitle',
+    fallbackTitle: 'Banks',
+    fallbackSubtitle: 'Select the banks you want to monitor.',
+  },
 ] as const;
 
 const GLOBAL_BANK_FALLBACK = [
@@ -72,6 +88,7 @@ const GLOBAL_BANK_FALLBACK = [
 
 export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onSwitchToEmployeeRegister }: Props) {
   const { theme, colors } = useTheme();
+  const { t } = useTranslation();
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [accountType, setAccountType] = useState<AccountType>('BUSINESS_OWNER');
@@ -132,7 +149,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
     } catch (error) {
       console.error('Error loading banks for registration:', error);
       setAvailableBanks(GLOBAL_BANK_FALLBACK);
-      setBanksError('Showing a built-in bank list. You can continue and edit banks later in My Banks.');
+      setBanksError(t('register.builtinBanksNotice'));
     } finally {
       setBanksLoading(false);
     }
@@ -186,14 +203,14 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
         onRegisterSuccess(user, apiKey, []);
       }
     } else {
-      Alert.alert('Error', 'No API key found for this account.');
+      Alert.alert(t('common.error'), t('auth.noApiKeyFound'));
     }
   };
 
   // Handle Telegram deep link authentication
   const handleTelegramAuth = async () => {
     if (!botUsername) {
-      Alert.alert('Error', 'Telegram registration is not configured');
+      Alert.alert(t('common.error'), t('register.telegramRegistrationNotConfigured'));
       return;
     }
 
@@ -202,7 +219,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
       // Get auth token from backend
       const initResponse = await telegramAuthAPI.init();
       if (!initResponse?.success || !initResponse?.data?.token) {
-        Alert.alert('Error', 'Failed to initialize Telegram authentication');
+        Alert.alert(t('common.error'), t('register.failedInitTelegramAuth'));
         return;
       }
 
@@ -242,7 +259,10 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
             await storage.removeItem(PENDING_TELEGRAM_AUTH_TOKEN_KEY);
             setTelegramLoading(false);
             if (attempts >= maxAttempts) {
-              Alert.alert('Timeout', 'Telegram authentication timed out. Please try again.');
+              Alert.alert(
+                t('register.timeoutTitle'),
+                t('register.telegramAuthTimeout')
+              );
             }
           }
         } catch (error) {
@@ -253,18 +273,18 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
     } catch (error: any) {
       await storage.removeItem(PENDING_TELEGRAM_AUTH_TOKEN_KEY);
       setTelegramLoading(false);
-      Alert.alert('Error', error.message || 'Failed to start Telegram authentication');
+      Alert.alert(t('common.error'), error.message || t('register.failedStartTelegramAuth'));
     }
   };
 
   const handleRegister = async () => {
     if (!phone.trim()) {
-      Alert.alert('Error', 'Please enter your phone number');
+      Alert.alert(t('common.error'), t('auth.enterPhoneNumber'));
       return;
     }
 
     if (!selectedCountry?.code) {
-      Alert.alert('Error', 'Please select your country from the phone field');
+      Alert.alert(t('common.error'), t('register.selectCountryFromPhoneField'));
       return;
     }
 
@@ -285,7 +305,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
       const cleanedPhone = phone.trim();
       const phoneWithoutCode = cleanedPhone.replace(/^\+\d{1,4}/, '');
       if (phoneWithoutCode.length < 7 && cleanedPhone.length < 10) {
-        Alert.alert('Error', 'Phone number looks too short');
+        Alert.alert(t('common.error'), t('register.phoneTooShort'));
         setLoading(false);
         return;
       }
@@ -297,7 +317,10 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
         const { token, user } = response.data;
         
         if (!token || !user) {
-          Alert.alert('Error', 'Registration successful but failed to get authentication data. Please try logging in.');
+          Alert.alert(
+            t('common.error'),
+            t('register.registrationAuthDataMissing')
+          );
           return;
         }
         
@@ -325,7 +348,10 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
                 console.log('✅ Created bank pattern from registration sample SMS');
               } catch (patternError: any) {
                 console.error('Pattern creation during registration failed:', patternError);
-                Alert.alert('Pattern Not Saved', 'Account created successfully, but we could not save the new bank pattern. You can add it later from the app.');
+                Alert.alert(
+                  t('register.patternNotSavedTitle'),
+                  t('register.patternNotSavedMessage')
+                );
               }
             }
           }
@@ -346,10 +372,10 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
             onRegisterSuccess(user, apiKey, []);
           }
         } else {
-          Alert.alert('Error', 'No API key found for this account. Please contact support.');
+          Alert.alert(t('common.error'), t('register.noApiKeySupport'));
         }
       } else {
-        Alert.alert('Error', response.message || 'Registration failed');
+        Alert.alert(t('common.error'), response.message || t('auth.registrationFailed'));
       }
     } catch (error: any) {
       console.error('Registration error:', error);
@@ -360,7 +386,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
       }
       
       // Extract error message
-      let errorMessage = error.response?.data?.error || error.message || 'Registration failed';
+      let errorMessage = error.response?.data?.error || error.message || t('auth.registrationFailed');
       
       // Add validation details if available
       if (error.response?.data?.details && Array.isArray(error.response.data.details)) {
@@ -370,7 +396,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
         }
       }
       
-      Alert.alert('Registration Failed', errorMessage);
+      Alert.alert(t('auth.registrationFailed'), errorMessage);
     } finally {
       setLoading(false);
     }
@@ -385,11 +411,11 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
         // Complete authentication
         await completeGoogleAuth(result.token, result.user, onRegisterSuccess);
       } else {
-        Alert.alert('Error', result.error || 'Google sign-in failed');
+        Alert.alert(t('common.error'), result.error || t('register.googleSignInFailed'));
       }
     } catch (error: any) {
       console.error('Google sign-in error:', error);
-      Alert.alert('Error', error.message || 'Google sign-in failed');
+      Alert.alert(t('common.error'), error.message || t('register.googleSignInFailed'));
     } finally {
       setGoogleLoading(false);
     }
@@ -398,18 +424,18 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
   const validateStep = (step: RegisterStep) => {
     if (step === 0) {
       if (!phone.trim()) {
-        Alert.alert('Error', 'Phone number is required');
+        Alert.alert(t('common.error'), t('register.phoneRequired'));
         return false;
       }
 
       const cleanedPhone = phone.trim().replace(/^\+\d{1,4}/, '');
       if (cleanedPhone.length < 7) {
-        Alert.alert('Error', 'Enter a valid phone number');
+        Alert.alert(t('common.error'), t('register.enterValidPhone'));
         return false;
       }
 
       if (!selectedCountry?.code) {
-        Alert.alert('Error', 'Please select your country from the phone field');
+        Alert.alert(t('common.error'), t('register.selectCountryFromPhoneField'));
         return false;
       }
 
@@ -438,17 +464,26 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
 
   const handleSavePatternDraft = () => {
     if (!patternInstitution.trim()) {
-      Alert.alert('Bank Name Required', 'Please enter the bank/institution name.');
+      Alert.alert(
+        t('register.bankNameRequiredTitle'),
+        t('register.bankNameRequiredMessage')
+      );
       return;
     }
 
     if (!patternSMS.trim()) {
-      Alert.alert('Sample SMS Required', 'Please paste a sample SMS to continue.');
+      Alert.alert(
+        t('register.sampleSmsRequiredTitle'),
+        t('register.sampleSmsRequiredMessage')
+      );
       return;
     }
 
     if (!patternTxnId.trim()) {
-      Alert.alert('Transaction ID Required', 'Please enter the transaction ID found in the sample SMS.');
+      Alert.alert(
+        t('register.transactionIdRequiredTitle'),
+        t('register.transactionIdRequiredMessage')
+      );
       return;
     }
 
@@ -468,7 +503,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
     setPatternSMS('');
     setPatternTxnId('');
     setShowPatternModal(false);
-    Alert.alert('Saved', 'Sample SMS noted. We will create the bank pattern right after account creation.');
+    Alert.alert(t('common.success'), t('register.sampleSmsSaved'));
   };
 
   const handleNextStep = () => {
@@ -498,15 +533,15 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
             style={styles.logo} 
             resizeMode="contain"
           />
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            Create your account
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}> 
+            {t('register.subtitle')}
           </Text>
           {onSwitchToEmployeeRegister && (
             <TouchableOpacity
               style={styles.switchButton}
               onPress={onSwitchToEmployeeRegister}
             >
-              <Text style={[styles.switchText, { color: colors.textSecondary }]}>Developer Mode: Employee Access with QR/Code</Text>
+              <Text style={[styles.switchText, { color: colors.textSecondary }]}>{t('login.devMode')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -518,7 +553,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
               const isCompleted = index < currentStep;
 
               return (
-                <View key={step.title} style={styles.stepperItem}>
+                <View key={step.titleKey} style={styles.stepperItem}>
                   <View
                     style={[
                       styles.stepBadge,
@@ -532,33 +567,35 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
                       {index + 1}
                     </Text>
                   </View>
-                  <Text style={[styles.stepTitle, { color: isActive ? colors.text : colors.textSecondary }]}>
-                    {step.title}
-                  </Text>
+                    <Text style={[styles.stepTitle, { color: isActive ? colors.text : colors.textSecondary }]}>
+                      {t(step.titleKey)}
+                    </Text>
                 </View>
               );
             })}
           </View>
 
           <View style={[styles.stepCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={[styles.stepCardTitle, { color: colors.text }]}>{REGISTER_STEPS[currentStep].title}</Text>
+            <Text style={[styles.stepCardTitle, { color: colors.text }]}>
+              {t(REGISTER_STEPS[currentStep].titleKey)}
+            </Text>
             <Text style={[styles.stepCardSubtitle, { color: colors.textSecondary }]}>
-              {REGISTER_STEPS[currentStep].subtitle}
+              {t(REGISTER_STEPS[currentStep].subtitleKey)}
             </Text>
 
             {currentStep === 0 && (
               <>
                 <View style={styles.inputGroup}>
-                  <Text style={[styles.label, { color: colors.text }]}>Phone Number</Text>
+                  <Text style={[styles.label, { color: colors.text }]}>{t('login.phoneNumber')}</Text>
                   <PhoneInput
                     value={phone}
                     onChangeText={setPhone}
-                    placeholder="712345678"
+                    placeholder={t('login.phonePlaceholder')}
                   />
                 </View>
 
                 <View style={styles.inputGroup}>
-                  <Text style={[styles.label, { color: colors.text }]}>Country</Text>
+                  <Text style={[styles.label, { color: colors.text }]}>{t('register.country')}</Text>
                   <TouchableOpacity
                     style={[styles.countrySelector, { backgroundColor: colors.background, borderColor: colors.border }]}
                     onPress={() => setShowCountryPicker(true)}
@@ -576,10 +613,10 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
             {currentStep === 1 && (
               <>
                 <View style={styles.inputGroup}>
-                  <Text style={[styles.label, { color: colors.text }]}>Password</Text>
+                  <Text style={[styles.label, { color: colors.text }]}>{t('login.password')}</Text>
                   <TextInput
                     style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
-                    placeholder="Optional password"
+                    placeholder={t('register.optionalPassword')}
                     placeholderTextColor={colors.textSecondary}
                     value={password}
                     onChangeText={setPassword}
@@ -592,17 +629,24 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
             {currentStep === 2 && (
               <>
                 <View style={[styles.summaryCard, { backgroundColor: colors.background, borderColor: colors.border, marginBottom: 20 }]}>
-                  <Text style={[styles.summaryLine, { color: colors.text }]}>Phone: {phone}</Text>
-                  <Text style={[styles.summaryLine, { color: colors.text }]}>Country: {selectedCountry.name} ({selectedCountry.code})</Text>
+                  <Text style={[styles.summaryLine, { color: colors.text }]}>
+                    {t('register.summaryPhone', { phone })}
+                  </Text>
+                  <Text style={[styles.summaryLine, { color: colors.text }]}> 
+                    {t('register.summaryCountry', {
+                      country: selectedCountry.name,
+                      code: selectedCountry.code,
+                    })}
+                  </Text>
                 </View>
 
                 {accountType === 'BUSINESS_OWNER' && (
                   <View style={styles.inputGroup}>
-                    <Text style={[styles.label, { color: colors.text }]}>Select Banks</Text>
-                    <Text style={[styles.hint, { color: colors.textSecondary }]}>Optional: choose banks to monitor now, or do it later from My Banks.</Text>
+                    <Text style={[styles.label, { color: colors.text }]}>{t('register.selectBanks')}</Text>
+                    <Text style={[styles.hint, { color: colors.textSecondary }]}>{t('register.selectBanksHint')}</Text>
 
                     {banksLoading && (
-                      <Text style={[styles.hint, { color: colors.textSecondary }]}>Loading banks...</Text>
+                      <Text style={[styles.hint, { color: colors.textSecondary }]}>{t('register.loadingBanks')}</Text>
                     )}
 
                     {!!banksError && (
@@ -612,14 +656,14 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
                           style={[styles.createPatternButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
                           onPress={loadGlobalBanks}
                         >
-                          <Text style={[styles.createPatternButtonText, { color: colors.text }]}>Retry loading banks</Text>
+                          <Text style={[styles.createPatternButtonText, { color: colors.text }]}>{t('register.retryLoadingBanks')}</Text>
                         </TouchableOpacity>
                       </View>
                     )}
 
                     <View style={styles.bankChipsContainer}>
                       {availableBanks.length === 0 ? (
-                        <Text style={[styles.hint, { color: colors.textSecondary }]}>No banks available right now.</Text>
+                        <Text style={[styles.hint, { color: colors.textSecondary }]}>{t('register.noBanksAvailable')}</Text>
                       ) : (
                         availableBanks.map((bank) => {
                           const selected = selectedBanks.some((item) => item.toLowerCase() === bank.toLowerCase());
@@ -648,11 +692,15 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
                       style={[styles.createPatternButton, { borderColor: colors.primary, backgroundColor: colors.primary + '10' }]}
                       onPress={() => setShowPatternModal(true)}
                     >
-                      <Text style={[styles.createPatternButtonText, { color: colors.primary }]}>Can't find your bank? Add with sample SMS</Text>
+                      <Text style={[styles.createPatternButtonText, { color: colors.primary }]}>{t('register.cantFindBank')}</Text>
                     </TouchableOpacity>
 
                     {patternDraft && (
-                      <Text style={[styles.hint, { color: colors.textSecondary }]}>New bank draft ready: {patternDraft.institution}</Text>
+                      <Text style={[styles.hint, { color: colors.textSecondary }]}> 
+                        {t('register.newBankDraftReady', {
+                          institution: patternDraft.institution,
+                        })}
+                      </Text>
                     )}
                   </View>
                 )}
@@ -667,7 +715,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
                 onPress={handlePreviousStep}
                 disabled={loading}
               >
-                <Text style={[styles.secondaryButtonText, { color: colors.text }]}>Back</Text>
+                <Text style={[styles.secondaryButtonText, { color: colors.text }]}>{t('login.back')}</Text>
               </TouchableOpacity>
             )}
 
@@ -677,7 +725,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
                 onPress={handleNextStep}
                 disabled={loading}
               >
-                <Text style={[styles.buttonText, { color: colors.primaryText }]}>Next</Text>
+                <Text style={[styles.buttonText, { color: colors.primaryText }]}>{t('onboarding.next')}</Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
@@ -688,7 +736,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
                 {loading ? (
                   <ActivityIndicator color={colors.primaryText} />
                 ) : (
-                  <Text style={[styles.buttonText, { color: colors.primaryText }]}>Create Account</Text>
+                  <Text style={[styles.buttonText, { color: colors.primaryText }]}>{t('register.createAccount')}</Text>
                 )}
               </TouchableOpacity>
             )}
@@ -696,7 +744,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
 
           <View style={styles.divider}>
             <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-            <Text style={[styles.dividerText, { color: colors.textSecondary }]}>OR</Text>
+            <Text style={[styles.dividerText, { color: colors.textSecondary }]}>{t('login.or')}</Text>
             <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
           </View>
 
@@ -730,7 +778,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
                   </Svg>
                 </View>
                 <Text style={[styles.googleButtonText, { color: colors.text }]}>
-                  Continue with Google
+                  {t('login.continueWithGoogle')}
                 </Text>
             </>
             )}
@@ -747,7 +795,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
                 <>
                   <ActivityIndicator color="#FFFFFF" style={{ marginRight: 8 }} />
                   <Text style={styles.telegramButtonText}>
-                    Waiting for Telegram...
+                    {t('login.waitingTelegram')}
                   </Text>
                 </>
               ) : (
@@ -761,7 +809,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
                     </Svg>
                   </View>
                   <Text style={styles.telegramButtonText}>
-                    Continue with Telegram
+                    {t('login.continueWithTelegram')}
                   </Text>
                 </>
               )}
@@ -773,7 +821,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
             onPress={onSwitchToLogin}
           >
             <Text style={[styles.switchText, { color: colors.primary }]}>
-              Already have an account? Sign in
+              {t('register.alreadyHaveAccount')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -782,12 +830,12 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
       <Modal visible={showPatternModal} animationType="slide" transparent onRequestClose={() => setShowPatternModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, { backgroundColor: colors.surface }]}> 
-            <Text style={[styles.modalTitle, { color: colors.text }]}>Create Bank Pattern</Text>
-            <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>Paste one sample SMS and confirm the transaction ID to create a simple pattern.</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{t('register.createBankPattern')}</Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>{t('register.createBankPatternSubtitle')}</Text>
 
             <TextInput
               style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
-              placeholder="Bank or institution name"
+              placeholder={t('register.bankInstitutionPlaceholder')}
               placeholderTextColor={colors.textSecondary}
               value={patternInstitution}
               onChangeText={setPatternInstitution}
@@ -795,7 +843,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
 
             <TextInput
               style={[styles.modalTextArea, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
-              placeholder="Paste sample SMS"
+              placeholder={t('register.sampleSmsPlaceholder')}
               placeholderTextColor={colors.textSecondary}
               value={patternSMS}
               onChangeText={setPatternSMS}
@@ -805,7 +853,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
 
             <TextInput
               style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
-              placeholder="Transaction ID in that SMS"
+              placeholder={t('register.txnIdPlaceholder')}
               placeholderTextColor={colors.textSecondary}
               value={patternTxnId}
               onChangeText={setPatternTxnId}
@@ -816,13 +864,13 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
                 style={[styles.secondaryButton, { borderColor: colors.border, backgroundColor: colors.background }]}
                 onPress={() => setShowPatternModal(false)}
               >
-                <Text style={[styles.secondaryButtonText, { color: colors.text }]}>Cancel</Text>
+                <Text style={[styles.secondaryButtonText, { color: colors.text }]}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.button, { backgroundColor: colors.primary }]}
                 onPress={handleSavePatternDraft}
               >
-                <Text style={[styles.buttonText, { color: colors.primaryText }]}>Confirm</Text>
+                <Text style={[styles.buttonText, { color: colors.primaryText }]}>{t('register.confirm')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -840,7 +888,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
           <View style={[styles.countryPickerContent, { backgroundColor: colors.background }]}>
             <View style={[styles.countryPickerHeader, { borderBottomColor: colors.border }]}>
               <View style={styles.countryPickerHeaderTop}>
-                <Text style={[styles.countryPickerTitle, { color: colors.text }]}>Select Country</Text>
+                <Text style={[styles.countryPickerTitle, { color: colors.text }]}>{t('profileCompletion.selectCountry')}</Text>
                 <TouchableOpacity
                   onPress={() => {
                     setShowCountryPicker(false);
@@ -853,7 +901,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
               </View>
               <TextInput
                 style={[styles.countryPickerSearch, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-                placeholder="Search country..."
+                placeholder={t('register.searchCountry')}
                 placeholderTextColor={colors.textSecondary}
                 value={countrySearch}
                 onChangeText={setCountrySearch}
@@ -888,7 +936,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
               )}
               ListEmptyComponent={
                 <View style={{ padding: 20, alignItems: 'center' }}>
-                  <Text style={{ color: colors.textSecondary }}>No countries found</Text>
+                  <Text style={{ color: colors.textSecondary }}>{t('register.noCountriesFound')}</Text>
                 </View>
               }
             />

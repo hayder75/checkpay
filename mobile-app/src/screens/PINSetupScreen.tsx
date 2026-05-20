@@ -12,6 +12,7 @@ import {
 import { useTheme } from '../contexts/ThemeContext';
 import { securityService } from '../services/securityService';
 import { Shield, Delete, Check, ArrowLeft, Fingerprint } from 'lucide-react-native';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   onComplete: () => void;
@@ -31,6 +32,7 @@ export default function PINSetupScreen({
   showBiometricOption = true,
 }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const [step, setStep] = useState<Step>('enter');
   const [pin, setPin] = useState('');
   const [firstPin, setFirstPin] = useState('');
@@ -86,7 +88,7 @@ export default function PINSetupScreen({
         if (isWeakPIN(newPin)) {
           shake();
           setPin('');
-          setError('PIN is too simple. Try a different combination.');
+          setError(t('pinSetup.tooSimple'));
           return;
         }
         setFirstPin(newPin);
@@ -108,12 +110,12 @@ export default function PINSetupScreen({
           } catch (err: any) {
             shake();
             setPin('');
-            setError(err.message || 'Failed to save PIN');
+            setError(err.message || t('pinSetup.failedSavePin'));
           }
         } else {
           shake();
           setPin('');
-          setError('PINs do not match. Please try again.');
+          setError(t('pinSetup.pinsDoNotMatch'));
           setFirstPin('');
           setStep('enter');
         }
@@ -133,12 +135,12 @@ export default function PINSetupScreen({
       await securityService.enableBiometric();
       setEnableBiometric(true);
       Alert.alert(
-        'Success',
-        `${biometricName} has been enabled for quick unlock.`,
-        [{ text: 'OK', onPress: onComplete }]
+        t('common.success'),
+        t('pinSetup.biometricEnabledMessage', { biometricName }),
+        [{ text: t('common.ok'), onPress: onComplete }]
       );
     } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to enable biometric');
+      Alert.alert(t('common.error'), err.message || t('pinSetup.failedEnableBiometric'));
     }
   };
 
@@ -241,9 +243,9 @@ export default function PINSetupScreen({
           <View style={[styles.iconContainer, { backgroundColor: colors.primary + '20' }]}>
             <Fingerprint size={48} color={colors.primary} />
           </View>
-          <Text style={[styles.title, { color: colors.text }]}>Enable {biometricName}?</Text>
+          <Text style={[styles.title, { color: colors.text }]}>{t('pinSetup.enableBiometricTitle', { biometricName })}</Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            Use {biometricName} for faster and more secure access to your app.
+            {t('pinSetup.enableBiometricSubtitle', { biometricName })}
           </Text>
         </View>
 
@@ -253,12 +255,12 @@ export default function PINSetupScreen({
             onPress={handleEnableBiometric}
           >
             <Fingerprint size={20} color="#fff" />
-            <Text style={styles.primaryButtonText}>Enable {biometricName}</Text>
+            <Text style={styles.primaryButtonText}>{t('pinSetup.enableBiometricButton', { biometricName })}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.skipButton} onPress={handleSkipBiometric}>
             <Text style={[styles.skipButtonText, { color: colors.textSecondary }]}>
-              Maybe Later
+              {t('pinSetup.maybeLater')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -285,16 +287,16 @@ export default function PINSetupScreen({
         <Text style={[styles.title, { color: colors.text }]}>
           {isChangingPIN
             ? step === 'enter'
-              ? 'Enter New PIN'
-              : 'Confirm New PIN'
+              ? t('pinSetup.newTitle')
+              : t('pinSetup.confirmNewTitle')
             : step === 'enter'
-            ? 'Create PIN'
-            : 'Confirm PIN'}
+            ? t('pinSetup.title')
+            : t('pinSetup.confirmTitle')}
         </Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
           {step === 'enter'
-            ? 'Create a 4-digit PIN to secure your app'
-            : 'Re-enter your PIN to confirm'}
+            ? t('pinSetup.subtitle')
+            : t('pinSetup.confirmSubtitle')}
         </Text>
       </View>
 

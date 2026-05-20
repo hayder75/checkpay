@@ -4,6 +4,7 @@
  */
 
 import { Platform, AppState, AppStateStatus, Alert } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { storage } from './storage';
 import { matchInstitutionPattern, InstitutionPattern } from '../utils/patternMatcher';
 import { maskPhone } from '../utils/maskPhone';
@@ -65,6 +66,12 @@ const FINANCIAL_SIGNAL_KEYWORDS = [
   'payment',
 ];
 
+const MAX_NOTIFICATION_SENDER_LENGTH = 40;
+const NOTIFICATION_MAX_AGE_MS = 5 * 60 * 1000;
+const NOTIFICATION_MAX_FUTURE_SKEW_MS = 30 * 1000;
+const NOTIFICATION_SECURITY_AUDIT_KEY = 'notification_security_audit_log';
+const MAX_NOTIFICATION_SECURITY_AUDIT_ITEMS = 500;
+
 export interface LocalTransaction {
   id: string;
   txnId: string;
@@ -95,6 +102,26 @@ class SMSService {
   private lastPackageNoticeAt: number = 0;
   private installationDate: Date | null = null; // Cache installation date
   private stateLoaded: boolean = false;
+
+  private async sendTransactionDetectedNotification(transaction: LocalTransaction): Promise<void> {
+    // Keep this best-effort only. Transaction capture should not fail because of notifications.
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: 'Transaction Detected',
+          body: `${transaction.amount.toLocaleString()} ETB from ${transaction.sender}`,
+          data: {
+            type: 'TRANSACTION_RECEIVED',
+            txnId: transaction.txnId,
+            source: transaction.source || 'SMS',
+          },
+        },
+        trigger: null,
+      });
+    } catch (error) {
+      log.warn('SMS Service', 'Failed to show local transaction notification', error);
+    }
+  }
 
   private notifyPackageLimit(errorMessage: string): void {
     const now = Date.now();
@@ -395,6 +422,64 @@ class SMSService {
     return Array.from(new Set([textOnly, withSubText, fullCombined].filter(Boolean)));
   }
 
+  private normalizeSenderValue(value: string): string {
+    return String(value || '')
+      .trim()
+      .replace(/[\s\-()]/g, '')
+      .replace(/^\+/, '')
+      .toUpperCase();
+  }
+
+  private extractNotificationSenderHint(notification: CapturedNotification, body: string): string {
+    const cleanText = (value: string): string => String(value || '').replace(/\s+/g, ' ').trim();
+    const title = cleanText(notification.title || '');
+    const subText = cleanText(notification.subText || '');
+    const content = cleanText(body || '');
+
+    const candidates = [subText, title];
+    for (const candidate of candidates) {
+      if (candidate && candidate.length <= MAX_NOTIFICATION_SENDER_LENGTH) {
+        return candidate;
+      }
+    }
+
+    const fromMatch = content.match(/\bfrom\s+([A-Za-z0-9_\-]{3,20})\b/i);
+    if (fromMatch && fromMatch[1]) {
+      return fromMatch[1];
+    }
+
+    return '';
+  }
+
+  private isAllowedSenderForNotification(pattern: InstitutionPattern, senderHint: string): boolean {
+    const allowedSenders = Array.isArray((pattern as any).allowedSenders)
+      ? ((pattern as any).allowedSenders as string[]).filter((item) => !!String(item || '').trim())
+      : [];
+
+    // For notification-origin events we require explicit sender allowlists.
+    if (!allowedSenders.length || !senderHint) {
+      return false;
+    }
+
+    const normalizedHint = this.normalizeSenderValue(senderHint);
+    if (!normalizedHint) {
+      return false;
+    }
+
+    return allowedSenders.some((allowed) => {
+      const normalizedAllowed = this.normalizeSenderValue(allowed);
+      if (!normalizedAllowed) {
+        return false;
+      }
+
+      if (normalizedHint === normalizedAllowed) {
+        return true;
+      }
+
+      return normalizedAllowed.length >= 3 && normalizedHint.includes(normalizedAllowed);
+    });
+  }
+
   private isSmsNotificationPackage(packageName: string): boolean {
     const normalized = packageName.toLowerCase();
     if (!normalized) {
@@ -409,7 +494,8 @@ class SMSService {
       return true;
     }
 
-    return /(mms|sms|messag)/.test(normalized);
+    // Avoid package-name heuristics because they are spoofable by fraudulent apps.
+    return false;
   }
 
   private isTargetNotification(notification: CapturedNotification): boolean {
@@ -418,10 +504,9 @@ class SMSService {
       return false;
     }
 
-    // Keep only actual SMS-like notifications from messaging apps.
+    // Package is trusted by allowlist. Keep notifications that include some message content.
     const haystack = `${notification.title || ''} ${notification.text || ''} ${notification.subText || ''}`.toLowerCase();
-    const smsSignals = ['sms', 'message', 'text message', 'mms'];
-    return smsSignals.some((signal) => haystack.includes(signal)) || haystack.length > 0;
+    return haystack.length > 0;
   }
 
   private hasFinancialSignals(text: string): boolean {
@@ -455,6 +540,44 @@ class SMSService {
     await storage.setItem(key, JSON.stringify(existing.slice(0, 300)));
   }
 
+  private isNotificationTimestampTrusted(timestamp: number): boolean {
+    const now = Date.now();
+    const age = now - timestamp;
+    return age >= -NOTIFICATION_MAX_FUTURE_SKEW_MS && age <= NOTIFICATION_MAX_AGE_MS;
+  }
+
+  private async storeNotificationSecurityAudit(entry: {
+    notification: CapturedNotification;
+    reason: string;
+    senderHint?: string;
+    patternName?: string;
+  }): Promise<void> {
+    try {
+      const raw = await storage.getItem(NOTIFICATION_SECURITY_AUDIT_KEY);
+      const existing = raw ? JSON.parse(raw) : [];
+
+      const nextEntry = {
+        id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        capturedId: entry.notification.id,
+        packageName: entry.notification.packageName,
+        senderHint: entry.senderHint || null,
+        patternName: entry.patternName || null,
+        reason: entry.reason,
+        postedAt: entry.notification.postedAt || 0,
+        auditedAt: new Date().toISOString(),
+        preview: String(entry.notification.text || '').slice(0, 160),
+      };
+
+      existing.unshift(nextEntry);
+      await storage.setItem(
+        NOTIFICATION_SECURITY_AUDIT_KEY,
+        JSON.stringify(existing.slice(0, MAX_NOTIFICATION_SECURITY_AUDIT_ITEMS))
+      );
+    } catch (error) {
+      log.warn('SMS Service', 'Failed to persist notification security audit', error);
+    }
+  }
+
   private async processCapturedNotifications(): Promise<void> {
     try {
       const countryCode = await storage.getCountryCode();
@@ -478,6 +601,10 @@ class SMSService {
 
       for (const notification of sorted) {
         if (!this.isTargetNotification(notification)) {
+          await this.storeNotificationSecurityAudit({
+            notification,
+            reason: 'rejected_untrusted_or_non_sms_package',
+          });
           continue;
         }
 
@@ -501,17 +628,64 @@ class SMSService {
         let attemptedFinancialParse = false;
         const notificationTimestamp = notification.postedAt || Date.now();
 
+        if (!this.isNotificationTimestampTrusted(notificationTimestamp)) {
+          await this.storeNotificationSecurityAudit({
+            notification,
+            reason: 'rejected_stale_or_invalid_timestamp',
+          });
+          this.processedSMSIds.add(notification.id);
+          continue;
+        }
+
         for (const body of financialBodies) {
           attemptedFinancialParse = true;
+
+          const senderHint = this.extractNotificationSenderHint(notification, body);
+          if (!senderHint) {
+            log.warn('SMS Service', 'Rejecting notification: no sender hint', {
+              notificationId: notification.id,
+              packageName: notification.packageName,
+            });
+            await this.storeNotificationSecurityAudit({
+              notification,
+              reason: 'rejected_missing_sender_hint',
+            });
+            continue;
+          }
+
+          const preMatch = this.findMatchingPattern(body, patterns, senderHint);
+          if (!preMatch.matched || !preMatch.pattern) {
+            await this.storeNotificationSecurityAudit({
+              notification,
+              reason: 'no_pattern_match_for_financial_body',
+              senderHint,
+            });
+            continue;
+          }
+
+          if (!this.isAllowedSenderForNotification(preMatch.pattern, senderHint)) {
+            log.warn('SMS Service', 'Rejecting notification: sender not allowlisted for pattern', {
+              notificationId: notification.id,
+              senderHint,
+              patternName: preMatch.pattern.name,
+            });
+            await this.storeNotificationSecurityAudit({
+              notification,
+              reason: 'rejected_sender_not_allowlisted',
+              senderHint,
+              patternName: preMatch.pattern.name,
+            });
+            continue;
+          }
+
           const pseudoSMS = {
             id: notification.id,
             body,
-            address: notification.title || notification.packageName || 'notification',
+            address: senderHint,
             date: notificationTimestamp,
           };
 
-          processed = await this.processSMS(pseudoSMS, patterns, {
-            skipSecurityVerification: true,
+          processed = await this.processSMS(pseudoSMS, [preMatch.pattern], {
             source: 'NOTIFICATION',
           });
 
@@ -557,7 +731,7 @@ class SMSService {
   private async processSMS(
     sms: any,
     patterns: InstitutionPattern[],
-    options?: { skipSecurityVerification?: boolean; source?: 'SMS' | 'NOTIFICATION' }
+    options?: { source?: 'SMS' | 'NOTIFICATION' }
   ): Promise<boolean> {
     try {
       // Find matching pattern
@@ -587,8 +761,8 @@ class SMSService {
         return false;
       }
 
-      // NEW: Verify SMS security for SMS-origin events only
-      if (matchResult.pattern && !options?.skipSecurityVerification) {
+      // Verify sender, contact, timestamp and amount constraints.
+      if (matchResult.pattern) {
         const { verifySMS } = await import('./smsVerification');
         const verification = await verifySMS(
           {
@@ -693,7 +867,21 @@ class SMSService {
       };
 
       // Save to local storage
+      const existingTransactions = await this.getLocalTransactions();
+      const normalizedIncomingTxnId = normalizeTxnId(transaction.txnId);
+      const isExistingTransaction = existingTransactions.some((t) => {
+        const currentTxnId = normalizeTxnId(t.txnId);
+        if (normalizedIncomingTxnId && currentTxnId) {
+          return currentTxnId === normalizedIncomingTxnId;
+        }
+        return t.txnId === transaction.txnId;
+      });
+
       await this.saveLocalTransaction(transaction);
+
+      if (!isExistingTransaction) {
+        await this.sendTransactionDetectedNotification(transaction);
+      }
 
       // Try to sync to backend if authenticated (using JWT token)
       const token = await storage.getToken();
@@ -742,7 +930,7 @@ class SMSService {
     smsText: string, 
     patterns: InstitutionPattern[], 
     senderAddress?: string
-  ): { matched: boolean; data?: any } {
+  ): { matched: boolean; data?: any; confidence?: number; pattern?: InstitutionPattern } {
     // Use findMatchingInstitutionPattern from patternMatcher which only uses backend patterns
     const { findMatchingInstitutionPattern } = require('../utils/patternMatcher');
     const result = findMatchingInstitutionPattern(smsText, patterns, senderAddress);
@@ -751,7 +939,7 @@ class SMSService {
       return result;
     }
     
-    return { matched: false };
+    return { matched: false, confidence: 0 };
   }
 
   /**

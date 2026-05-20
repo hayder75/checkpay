@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { Home, Building2, History, User, ScanLine } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
+import { useTranslation } from 'react-i18next';
 
 export type Tab = 'home' | 'banks' | 'transactions' | 'ocr' | 'profile' | 'employee-management';
 
@@ -21,6 +22,16 @@ interface Props {
 
 export default function BottomNavigation({ currentTab, onTabChange, isEmployee = false }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
+
+  const tabLabels: Record<Tab, string> = {
+    home: t('navigation.home'),
+    banks: t('navigation.banks'),
+    transactions: t('navigation.history'),
+    ocr: t('navigation.scan'),
+    profile: t('navigation.profile'),
+    'employee-management': t('navigation.profile'),
+  };
 
   // For employees, show OCR, Transactions, and Profile
   // For business owners, show all tabs except Profile
@@ -67,7 +78,7 @@ export default function BottomNavigation({ currentTab, onTabChange, isEmployee =
                   },
                 ]}
               >
-                {tab.label}
+                {tabLabels[tab.id] || tab.label}
               </Text>
             </TouchableOpacity>
           );

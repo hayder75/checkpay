@@ -14,6 +14,7 @@ import { storage } from '../services/storage';
 import { useTheme } from '../contexts/ThemeContext';
 import { dashboardAPI, verifyTransaction } from '../services/api';
 import { dedupeTransactionsByIdentity } from '../utils/transactionDedup';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   apiKey?: string | null;
@@ -87,6 +88,7 @@ const isEligibleForVerify = (tx: Transaction): boolean => {
 
 export default function VerifyPaymentsScreen({ apiKey }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -285,8 +287,8 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
   const handleVerify = async (transaction: Transaction) => {
     if (transaction.isPendingRequest) {
       Alert.alert(
-        'Manual Review Needed',
-        'This request was saved because notification parsing did not extract a complete transaction. Business owner can review and verify it manually anytime.'
+        t('verifyPayments.manualReviewNeededTitle', { defaultValue: 'Manual Review Needed' }),
+        t('verifyPayments.manualReviewNeededMessage', { defaultValue: 'This request was saved because notification parsing did not extract a complete transaction. Business owner can review and verify it manually anytime.' })
       );
       return;
     }
@@ -296,15 +298,15 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
     }
 
     Alert.alert(
-      'Verify Payment',
-      `Verify transaction number ${transaction.txnId}?`,
+      t('verifyPayments.verifyPaymentTitle', { defaultValue: 'Verify Payment' }),
+      t('verifyPayments.verifyPaymentMessage', { defaultValue: 'Verify transaction number {{txnId}}?', txnId: transaction.txnId }),
       [
         {
-          text: 'Cancel',
+          text: t('common.cancel'),
           style: 'cancel',
         },
         {
-          text: 'Verify',
+          text: t('verifyPayments.verifyButton', { defaultValue: 'Verify' }),
           onPress: async () => {
             setVerifyingIds(prev => new Set(prev).add(transaction.id));
             try {
@@ -320,21 +322,21 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
                 await markLocalTransactionVerified(transaction.txnId);
 
                 Alert.alert(
-                  'Success',
-                  `Transaction number ${transaction.txnId} has been verified.`,
-                  [{ text: 'OK', onPress: () => loadTransactions(true) }]
+                  t('common.success'),
+                  t('verifyPayments.verifySuccessMessage', { defaultValue: 'Transaction number {{txnId}} has been verified.', txnId: transaction.txnId }),
+                  [{ text: t('common.done', { defaultValue: 'OK' }), onPress: () => loadTransactions(true) }]
                 );
               } else {
                 Alert.alert(
-                  'Verification Failed',
-                  result.data?.message || 'Transaction not found or could not be verified.',
-                  [{ text: 'OK' }]
+                  t('verifyPayments.verificationFailedTitle', { defaultValue: 'Verification Failed' }),
+                  result.data?.message || t('verifyPayments.verificationFailedMessage', { defaultValue: 'Transaction not found or could not be verified.' }),
+                  [{ text: t('common.done', { defaultValue: 'OK' }) }]
                 );
               }
             } catch (error: any) {
               console.error('Error verifying transaction:', error);
-              const errorMsg = error.response?.data?.error || error.message || 'Failed to verify transaction';
-              Alert.alert('Error', errorMsg);
+              const errorMsg = error.response?.data?.error || error.message || t('verifyPayments.failedVerifyTransaction', { defaultValue: 'Failed to verify transaction' });
+              Alert.alert(t('common.error'), errorMsg);
             } finally {
               setVerifyingIds(prev => {
                 const newSet = new Set(prev);
@@ -356,8 +358,8 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffMins < 1) return t('verifyPayments.justNow', { defaultValue: 'Just now' });
+    if (diffMins < 60) return t('verifyPayments.minutesAgo', { defaultValue: '{{count}}m ago', count: diffMins });
     if (diffHours < 24) {
       let hours = date.getHours();
       const minutes = date.getMinutes();
@@ -365,10 +367,10 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
       hours = hours % 12;
       hours = hours ? hours : 12; // the hour '0' should be '12'
       const minutesStr = minutes.toString().padStart(2, '0');
-      return `Today, ${hours}:${minutesStr} ${ampm}`;
+      return t('verifyPayments.todayAt', { defaultValue: 'Today, {{time}}', time: `${hours}:${minutesStr} ${ampm}` });
     }
-    if (diffDays === 1) return 'Yesterday';
-    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffDays === 1) return t('verifyPayments.yesterday', { defaultValue: 'Yesterday' });
+    if (diffDays < 7) return t('verifyPayments.daysAgo', { defaultValue: '{{count}}d ago', count: diffDays });
     return date.toLocaleDateString();
   };
 
@@ -394,7 +396,7 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
             )}
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Text style={[styles.transactionBank, { color: colors.textSecondary }]}>
-                {item.bank || 'Unknown Bank'}
+                {item.bank || t('verifyPayments.unknownBank', { defaultValue: 'Unknown Bank' })}
               </Text>
               <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>·</Text>
               <Text style={[styles.transactionTime, { color: colors.textSecondary }]}>
@@ -402,13 +404,13 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
               </Text>
             </View>
             <Text style={[styles.transactionId, { color: colors.textSecondary }]}>
-              ID: {item.txnId}
+              {t('verifyPayments.idLabel', { defaultValue: 'ID: {{txnId}}', txnId: item.txnId })}
             </Text>
           </View>
         </View>
         <View style={styles.transactionRight}>
           <Text style={[styles.transactionAmount, { color: isIncome ? colors.darkGreen : '#ef4444' }]}>
-            {isIncome ? '+' : '-'}{Math.abs(item.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Br
+            {isIncome ? '+' : '-'}{Math.abs(item.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {t('common.currency')}
           </Text>
           <TouchableOpacity
             onPress={() => handleVerify(item)}
@@ -426,7 +428,7 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
             ) : (
               <>
                 <CheckCircle2 size={16} color="#fff" />
-                <Text style={styles.verifyButtonText}>Verify</Text>
+                <Text style={styles.verifyButtonText}>{t('verifyPayments.verifyButton', { defaultValue: 'Verify' })}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -439,7 +441,7 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
     return (
       <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading payments...</Text>
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>{t('verifyPayments.loadingPayments', { defaultValue: 'Loading payments...' })}</Text>
       </View>
     );
   }
@@ -448,7 +450,7 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
     return (
       <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
         <Clock size={48} color={colors.textSecondary} />
-        <Text style={[styles.emptyText, { color: colors.text }]}>Please sign in to verify payments</Text>
+        <Text style={[styles.emptyText, { color: colors.text }]}>{t('verifyPayments.signInToVerify', { defaultValue: 'Please sign in to verify payments' })}</Text>
       </View>
     );
   }
@@ -457,11 +459,11 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Text style={[styles.title, { color: colors.text }]}>Verify Payments</Text>
+          <Text style={[styles.title, { color: colors.text }]}>{t('verifyPayments.title', { defaultValue: 'Verify Payments' })}</Text>
         </View>
         <View style={styles.headerRight}>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            {transactions.length} pending
+            {t('verifyPayments.pendingCount', { defaultValue: '{{count}} pending', count: transactions.length })}
           </Text>
         </View>
       </View>
@@ -469,9 +471,9 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
       {transactions.length === 0 ? (
         <View style={styles.emptyState}>
           <CheckCircle2 size={64} color={colors.textSecondary} opacity={0.5} />
-          <Text style={[styles.emptyText, { color: colors.text }]}>All payments verified!</Text>
+          <Text style={[styles.emptyText, { color: colors.text }]}>{t('verifyPayments.allVerifiedTitle', { defaultValue: 'All payments verified!' })}</Text>
           <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>
-            No payments are waiting for verification
+            {t('verifyPayments.allVerifiedSubtitle', { defaultValue: 'No payments are waiting for verification' })}
           </Text>
         </View>
       ) : (

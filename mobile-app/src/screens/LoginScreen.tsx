@@ -23,6 +23,7 @@ import PhoneInput from '../components/PhoneInput';
 import { validatePhoneNumber } from '../utils/phoneCodes';
 import { signInWithGoogle, completeGoogleAuth } from '../services/googleAuth';
 import Svg, { Path, Circle } from 'react-native-svg';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   onLoginSuccess: (user: any, apiKey: string, patterns: Pattern[]) => void;
@@ -34,6 +35,7 @@ const PENDING_TELEGRAM_AUTH_TOKEN_KEY = 'pending_telegram_auth_token';
 
 export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwitchToEmployeeRegister }: Props) {
   const { theme, colors } = useTheme();
+  const { t } = useTranslation();
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -89,14 +91,14 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
         onLoginSuccess(user, apiKey, []);
       }
     } else {
-      Alert.alert('Error', 'No API key found for this account.');
+      Alert.alert(t('common.error'), t('auth.noApiKeyFound'));
     }
   };
 
   // Handle Telegram deep link login
   const handleTelegramLogin = async () => {
     if (!botUsername) {
-      Alert.alert('Error', 'Telegram login is not configured');
+      Alert.alert(t('common.error'), t('login.telegramNotConfigured'));
       return;
     }
 
@@ -105,7 +107,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
       // Get auth token from backend
       const initResponse = await telegramAuthAPI.init();
       if (!initResponse?.success || !initResponse?.data?.token) {
-        Alert.alert('Error', 'Failed to initialize Telegram login');
+        Alert.alert(t('common.error'), t('login.telegramInitFailed'));
         return;
       }
 
@@ -145,7 +147,10 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
             await storage.removeItem(PENDING_TELEGRAM_AUTH_TOKEN_KEY);
             setTelegramLoading(false);
             if (attempts >= maxAttempts) {
-              Alert.alert('Timeout', 'Telegram authentication timed out. Please try again.');
+              Alert.alert(
+                t('login.timeoutTitle'),
+                t('login.telegramAuthTimeout')
+              );
             }
           }
         } catch (error) {
@@ -156,19 +161,19 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
     } catch (error: any) {
       await storage.removeItem(PENDING_TELEGRAM_AUTH_TOKEN_KEY);
       setTelegramLoading(false);
-      Alert.alert('Error', error.message || 'Failed to start Telegram login');
+      Alert.alert(t('common.error'), error.message || t('login.telegramStartFailed'));
     }
   };
 
   // Request password reset OTP
   const handleRequestPasswordReset = async () => {
     if (!phone.trim()) {
-      Alert.alert('Error', 'Please enter your phone number');
+      Alert.alert(t('common.error'), t('auth.enterPhoneNumber'));
       return;
     }
 
     if (!validatePhoneNumber(phone.trim())) {
-      Alert.alert('Error', 'Please enter a valid phone number with country code');
+      Alert.alert(t('common.error'), t('login.enterValidPhoneWithCountryCode'));
       return;
     }
 
@@ -178,19 +183,22 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
       
       if (response.success) {
         setResetOtpSent(true);
-        Alert.alert('OTP Sent', response.message || 'Check your Telegram for the password reset code');
+        Alert.alert(
+          t('login.otpSentTitle'),
+          response.message || t('login.passwordResetOtpSent')
+        );
       } else {
-        Alert.alert('Error', response.message || 'Failed to send OTP');
+        Alert.alert(t('common.error'), response.message || t('login.failedToSendOtp'));
       }
     } catch (error: any) {
       const errorMessage = error.response?.data?.error || error.message || '';
       if (errorMessage.includes('Link Telegram') || errorMessage.includes('link your Telegram')) {
         Alert.alert(
-          'Telegram Not Linked',
-          'To reset password via OTP, your account needs a linked Telegram. Please contact support.',
+          t('login.telegramNotLinkedTitle'),
+          t('login.telegramNotLinkedMessage'),
         );
       } else {
-        Alert.alert('Error', errorMessage || 'Failed to send OTP');
+        Alert.alert(t('common.error'), errorMessage || t('login.failedToSendOtp'));
       }
     } finally {
       setResetLoading(false);
@@ -200,15 +208,15 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
   // Verify OTP and reset password
   const handleResetPassword = async () => {
     if (!resetOtpCode.trim()) {
-      Alert.alert('Error', 'Please enter the OTP code');
+      Alert.alert(t('common.error'), t('login.enterOtpCode'));
       return;
     }
     if (!newPassword.trim()) {
-      Alert.alert('Error', 'Please enter a new password');
+      Alert.alert(t('common.error'), t('login.enterNewPassword'));
       return;
     }
     if (newPassword !== confirmNewPassword) {
-      Alert.alert('Error', 'Passwords do not match');
+      Alert.alert(t('common.error'), t('login.passwordsDoNotMatch'));
       return;
     }
 
@@ -221,17 +229,20 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
       });
 
       if (response.success) {
-        Alert.alert('Success', 'Your password has been reset. Please login with your new password.');
+        Alert.alert(
+          t('common.success'),
+          t('login.passwordResetSuccess')
+        );
         setShowForgotPassword(false);
         setResetOtpSent(false);
         setResetOtpCode('');
         setNewPassword('');
         setConfirmNewPassword('');
       } else {
-        Alert.alert('Error', response.message || 'Failed to reset password');
+        Alert.alert(t('common.error'), response.message || t('login.failedToResetPassword'));
       }
     } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.error || 'Failed to reset password');
+      Alert.alert(t('common.error'), error.response?.data?.error || t('login.failedToResetPassword'));
     } finally {
       setResetLoading(false);
     }
@@ -240,18 +251,21 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
 
   const handleLogin = async () => {
     if (!phone.trim()) {
-      Alert.alert('Error', 'Please enter your phone number');
+      Alert.alert(t('common.error'), t('auth.enterPhoneNumber'));
       return;
     }
 
     // Validate phone number format
     if (!validatePhoneNumber(phone.trim())) {
-      Alert.alert('Error', 'Please enter a valid phone number with country code (e.g., +254712345678)');
+      Alert.alert(
+        t('common.error'),
+        t('login.enterValidPhoneWithExample')
+      );
       return;
     }
 
     if (!password.trim()) {
-      Alert.alert('Error', 'Please enter your password');
+      Alert.alert(t('common.error'), t('auth.enterPassword'));
       return;
     }
 
@@ -267,7 +281,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
         const { token, user } = response.data;
         
         if (!token) {
-          Alert.alert('Error', 'No token received from server');
+          Alert.alert(t('common.error'), t('login.noTokenReceived'));
           return;
         }
         
@@ -280,7 +294,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
         const savedToken = await storage.getToken();
         if (!savedToken || savedToken !== token) {
           console.error('❌ [Login] Token was not saved correctly');
-          Alert.alert('Error', 'Failed to save authentication token');
+          Alert.alert(t('common.error'), t('login.failedSaveAuthToken'));
           return;
         }
         
@@ -293,7 +307,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
           const savedApiKey = await storage.getApiKey();
           if (!savedApiKey || savedApiKey !== apiKey) {
             console.error('❌ [Login] API key was not saved correctly');
-            Alert.alert('Error', 'Failed to save API key');
+            Alert.alert(t('common.error'), t('login.failedSaveApiKey'));
             return;
           }
           
@@ -317,10 +331,10 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
           }
         } else {
           console.error('❌ [Login] No API key in user object:', user);
-          Alert.alert('Error', 'No API key found for this account. Please contact support.');
+          Alert.alert(t('common.error'), t('login.noApiKeySupport'));
         }
       } else {
-        Alert.alert('Error', response.message || 'Login failed');
+        Alert.alert(t('common.error'), response.message || t('auth.loginFailed'));
       }
     } catch (error: any) {
       console.error('Login error:', error);
@@ -329,11 +343,11 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
       const errorMessage = error.response?.data?.error || error.message || '';
       if (errorMessage.includes('Please set a password first') || errorMessage.includes('set a password')) {
         Alert.alert(
-          'Password Not Set',
-          'Your account exists but you haven\'t set a password yet. Please register again with a password or contact support.',
+          t('login.passwordNotSetTitle'),
+          t('login.passwordNotSetMessage'),
           [
             {
-              text: 'OK',
+              text: t('common.done'),
               onPress: () => {
                 if (onSwitchToRegister) {
                   onSwitchToRegister();
@@ -343,7 +357,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
           ]
         );
       } else {
-        Alert.alert('Error', errorMessage || 'Login failed');
+        Alert.alert(t('common.error'), errorMessage || t('auth.loginFailed'));
       }
     } finally {
       setLoading(false);
@@ -359,11 +373,11 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
         // Complete authentication
         await completeGoogleAuth(result.token, result.user, onLoginSuccess);
       } else {
-        Alert.alert('Error', result.error || 'Google sign-in failed');
+        Alert.alert(t('common.error'), result.error || t('login.googleSignInFailed'));
       }
     } catch (error: any) {
       console.error('Google sign-in error:', error);
-      Alert.alert('Error', error.message || 'Google sign-in failed');
+      Alert.alert(t('common.error'), error.message || t('login.googleSignInFailed'));
     } finally {
       setGoogleLoading(false);
     }
@@ -384,33 +398,33 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
             style={styles.logo} 
             resizeMode="contain"
           />
-          <Text style={[styles.title, { color: colors.text }]}>Welcome Back</Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Sign in to continue to CheckPay</Text>
+          <Text style={[styles.title, { color: colors.text }]}>{t('login.title')}</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{t('login.subtitle')}</Text>
           {onSwitchToEmployeeRegister && (
             <TouchableOpacity
               style={styles.switchButton}
               onPress={onSwitchToEmployeeRegister}
             >
-              <Text style={[styles.switchText, { color: colors.textSecondary }]}>Developer Mode: Employee Access with QR/Code</Text>
+              <Text style={[styles.switchText, { color: colors.textSecondary }]}>{t('login.devMode')}</Text>
             </TouchableOpacity>
           )}
         </View>
 
         <View style={styles.form}>
           <View style={styles.inputGroup}>
-            <Text style={[styles.label, { color: colors.text }]}>Phone Number</Text>
+            <Text style={[styles.label, { color: colors.text }]}>{t('login.phoneNumber')}</Text>
             <PhoneInput
               value={phone}
               onChangeText={setPhone}
-              placeholder="712345678"
+              placeholder={t('login.phonePlaceholder')}
             />
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={[styles.label, { color: colors.text }]}>Password</Text>
+            <Text style={[styles.label, { color: colors.text }]}>{t('login.password')}</Text>
             <TextInput
               style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-              placeholder="Enter password"
+              placeholder={t('login.passwordPlaceholder')}
               placeholderTextColor={colors.textSecondary}
               value={password}
               onChangeText={setPassword}
@@ -423,7 +437,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
             onPress={() => setShowForgotPassword(true)}
           >
             <Text style={[styles.forgotPasswordText, { color: colors.primary }]}>
-              Forgot Password?
+              {t('login.forgotPassword')}
             </Text>
           </TouchableOpacity>
 
@@ -436,7 +450,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
               <ActivityIndicator color={colors.primaryText} />
             ) : (
               <Text style={[styles.buttonText, { color: colors.primaryText }]}>
-                Login
+                {t('login.login')}
               </Text>
             )}
           </TouchableOpacity>
@@ -444,7 +458,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
 
           <View style={styles.divider}>
             <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-            <Text style={[styles.dividerText, { color: colors.textSecondary }]}>OR</Text>
+            <Text style={[styles.dividerText, { color: colors.textSecondary }]}>{t('login.or')}</Text>
             <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
           </View>
 
@@ -478,7 +492,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
                   </Svg>
                 </View>
                 <Text style={[styles.googleButtonText, { color: colors.text }]}>
-                  Continue with Google
+                  {t('login.continueWithGoogle')}
                 </Text>
               </>
             )}
@@ -495,7 +509,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
                 <>
                   <ActivityIndicator color="#FFFFFF" style={{ marginRight: 8 }} />
                   <Text style={styles.telegramButtonText}>
-                    Waiting for Telegram...
+                    {t('login.waitingTelegram')}
                   </Text>
                 </>
               ) : (
@@ -509,7 +523,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
                     </Svg>
                   </View>
                   <Text style={styles.telegramButtonText}>
-                    Continue with Telegram
+                    {t('login.continueWithTelegram')}
                   </Text>
                 </>
               )}
@@ -522,7 +536,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
               onPress={onSwitchToRegister}
             >
               <Text style={[styles.switchText, { color: colors.primary }]}>
-                Don't have an account? Sign up
+                {t('login.noAccountSignUp')}
               </Text>
             </TouchableOpacity>
           )}
@@ -533,7 +547,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
               onPress={onSwitchToEmployeeRegister}
             >
               <Text style={[styles.switchText, { color: colors.textSecondary }]}>
-                Employee Access with Code or QR
+                {t('login.employeeAccessCodeQr')}
               </Text>
             </TouchableOpacity>
           )}
@@ -550,7 +564,7 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
         <View style={[styles.modalOverlay, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
           <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Reset Password</Text>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>{t('login.resetPassword')}</Text>
               <TouchableOpacity onPress={() => {
                 setShowForgotPassword(false);
                 setResetOtpSent(false);
@@ -565,14 +579,14 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
             {!resetOtpSent ? (
               <>
                 <Text style={[styles.modalDescription, { color: colors.textSecondary }]}>
-                  Enter your phone number and we'll send a password reset code to your linked Telegram.
+                  {t('login.resetPasswordIntro')}
                 </Text>
                 <View style={styles.inputGroup}>
-                  <Text style={[styles.label, { color: colors.text }]}>Phone Number</Text>
+                  <Text style={[styles.label, { color: colors.text }]}>{t('login.phoneNumber')}</Text>
                   <PhoneInput
                     value={phone}
                     onChangeText={setPhone}
-                    placeholder="712345678"
+                    placeholder={t('login.phonePlaceholder')}
                   />
                 </View>
                 <TouchableOpacity
@@ -583,20 +597,20 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
                   {resetLoading ? (
                     <ActivityIndicator color={colors.primaryText} />
                   ) : (
-                    <Text style={[styles.buttonText, { color: colors.primaryText }]}>Send Reset Code</Text>
+                    <Text style={[styles.buttonText, { color: colors.primaryText }]}>{t('login.sendResetCode')}</Text>
                   )}
                 </TouchableOpacity>
               </>
             ) : (
               <>
                 <Text style={[styles.modalDescription, { color: colors.textSecondary }]}>
-                  Enter the code sent to your Telegram and your new password.
+                  {t('login.enterCodeAndPassword')}
                 </Text>
                 <View style={styles.inputGroup}>
-                  <Text style={[styles.label, { color: colors.text }]}>Reset Code</Text>
+                  <Text style={[styles.label, { color: colors.text }]}>{t('login.resetCode')}</Text>
                   <TextInput
                     style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-                    placeholder="Enter code"
+                    placeholder={t('login.enterCode')}
                     placeholderTextColor={colors.textSecondary}
                     value={resetOtpCode}
                     onChangeText={setResetOtpCode}
@@ -604,10 +618,10 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
                   />
                 </View>
                 <View style={styles.inputGroup}>
-                  <Text style={[styles.label, { color: colors.text }]}>New Password</Text>
+                  <Text style={[styles.label, { color: colors.text }]}>{t('login.newPassword')}</Text>
                   <TextInput
                     style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-                    placeholder="Enter new password"
+                    placeholder={t('login.newPasswordPlaceholder')}
                     placeholderTextColor={colors.textSecondary}
                     value={newPassword}
                     onChangeText={setNewPassword}
@@ -615,10 +629,10 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
                   />
                 </View>
                 <View style={styles.inputGroup}>
-                  <Text style={[styles.label, { color: colors.text }]}>Confirm Password</Text>
+                  <Text style={[styles.label, { color: colors.text }]}>{t('login.confirmPassword')}</Text>
                   <TextInput
                     style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-                    placeholder="Confirm new password"
+                    placeholder={t('login.confirmPasswordPlaceholder')}
                     placeholderTextColor={colors.textSecondary}
                     value={confirmNewPassword}
                     onChangeText={setConfirmNewPassword}
@@ -633,14 +647,14 @@ export default function LoginScreen({ onLoginSuccess, onSwitchToRegister, onSwit
                   {resetLoading ? (
                     <ActivityIndicator color={colors.primaryText} />
                   ) : (
-                    <Text style={[styles.buttonText, { color: colors.primaryText }]}>Reset Password</Text>
+                    <Text style={[styles.buttonText, { color: colors.primaryText }]}>{t('login.resetPassword')}</Text>
                   )}
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.linkButton}
                   onPress={() => setResetOtpSent(false)}
                 >
-                  <Text style={[styles.linkText, { color: colors.textSecondary }]}>← Back</Text>
+                  <Text style={[styles.linkText, { color: colors.textSecondary }]}>{t('login.back')}</Text>
                 </TouchableOpacity>
               </>
             )}

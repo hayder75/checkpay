@@ -12,6 +12,7 @@ import {
 import { useTheme } from '../contexts/ThemeContext';
 import { securityService } from '../services/securityService';
 import { Fingerprint, Delete, Lock, AlertCircle } from 'lucide-react-native';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   onUnlock: () => void;
@@ -21,6 +22,7 @@ const PIN_LENGTH = 4;
 
 export default function LockScreen({ onUnlock }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isLocked, setIsLocked] = useState(false);
@@ -109,9 +111,9 @@ export default function LockScreen({ onUnlock }: Props) {
           setFailedAttempts(attempts);
           if (attempts >= 5) {
             await checkLockout();
-            setError('Too many attempts. Please wait.');
+            setError(t('lock.tooManyAttempts'));
           } else {
-            setError(`Incorrect PIN. ${5 - attempts} attempts remaining.`);
+            setError(t('lock.incorrectPinRemaining', { count: 5 - attempts }));
           }
         }
       } catch (err: any) {
@@ -137,7 +139,7 @@ export default function LockScreen({ onUnlock }: Props) {
     if (result.success) {
       onUnlock();
     } else if (result.error !== 'user_cancel' && result.error !== 'system_cancel') {
-      setError('Biometric authentication failed. Use PIN instead.');
+      setError(t('lock.failedBiometric'));
     }
   };
 
@@ -236,9 +238,9 @@ export default function LockScreen({ onUnlock }: Props) {
         <View style={[styles.lockIconContainer, { backgroundColor: colors.primary + '20' }]}>
           <Lock size={40} color={colors.primary} />
         </View>
-        <Text style={[styles.title, { color: colors.text }]}>Enter PIN</Text>
+        <Text style={[styles.title, { color: colors.text }]}>{t('lock.enterPin')}</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-          Enter your PIN to unlock the app
+          {t('lock.enterPinSubtitle')}
         </Text>
       </View>
 
@@ -257,7 +259,7 @@ export default function LockScreen({ onUnlock }: Props) {
       {isLocked && lockoutRemaining > 0 && (
         <View style={[styles.lockoutContainer, { backgroundColor: '#f59e0b20' }]}>
           <Text style={styles.lockoutText}>
-            Try again in {Math.ceil(lockoutRemaining / 1000)} seconds
+            {t('lock.tryAgainIn', { seconds: Math.ceil(lockoutRemaining / 1000) })}
           </Text>
         </View>
       )}
@@ -272,7 +274,7 @@ export default function LockScreen({ onUnlock }: Props) {
           onPress={handleBiometricAuth}
         >
           <Text style={[styles.biometricHintText, { color: colors.primary }]}>
-            Use {biometricName}
+            {t('lock.useBiometric', { biometricName })}
           </Text>
         </TouchableOpacity>
       )}

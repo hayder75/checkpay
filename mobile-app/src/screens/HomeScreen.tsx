@@ -21,6 +21,8 @@ import { dashboardAPI } from '../services/api';
 import { log } from '../utils/logger';
 import TransactionDetailsModal from '../components/TransactionDetailsModal';
 import { getDisplayName } from '../utils/userUtils';
+import { useTranslation } from 'react-i18next';
+import { getCurrentAppLanguage } from '../i18n';
 
 interface Props {
   apiKey?: string | null;
@@ -42,6 +44,7 @@ let homeScreenMemoryCache: {
 
 export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactions, onNavigateToEmployeeManagement, onNavigateToNotifications }: Props) {
   const { theme, colors } = useTheme();
+  const { t } = useTranslation();
   // const navigation = useNavigation(); // Removed
   const [transactions, setTransactions] = useState<LocalTransaction[]>(() => homeScreenMemoryCache?.transactions || []);
   const [user, setUser] = useState<any>(() => homeScreenMemoryCache?.user || null);
@@ -51,15 +54,16 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
   const [selectedTransaction, setSelectedTransaction] = useState<LocalTransaction | null>(null);
 
   const timeFilterOptions = [
-    { value: '1d' as const, label: '1 Day' },
-    { value: '7d' as const, label: '7 Days' },
-    { value: '30d' as const, label: '30 Days' },
+    { value: '1d' as const, labelKey: 'home.filters.oneDay' },
+    { value: '7d' as const, labelKey: 'home.filters.sevenDays' },
+    { value: '30d' as const, labelKey: 'home.filters.thirtyDays' },
   ];
 
   // Memoize filter label
   const filterLabel = useMemo(() => {
-    return timeFilterOptions.find(opt => opt.value === timeFilter)?.label || '7 Days';
-  }, [timeFilter]);
+    const key = timeFilterOptions.find(opt => opt.value === timeFilter)?.labelKey || 'home.filters.sevenDays';
+    return t(key);
+  }, [timeFilter, t]);
 
   // Memoize loadData to prevent recreating on every render
   const loadData = useCallback(async (forceRefresh: boolean = false) => {
@@ -309,7 +313,7 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
         
         const dayTotal = dayTransactions.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
         dataPoints.push(dayTotal);
-        labels.push(date.toLocaleDateString('en-US', { weekday: 'short' }));
+        labels.push(date.toLocaleDateString(getCurrentAppLanguage(), { weekday: 'short' }));
       }
     } else if (timeFilter === '30d') {
       // Last 30 days in 5-day intervals
@@ -457,8 +461,8 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
     if (item.sendFrom) return safeString(item.sendFrom);
     const patternStr = safeString(item.pattern);
     if (patternStr && patternStr !== 'Institution Pattern') return patternStr;
-    return 'Transaction';
-  }, [extractSenderFromSMS, safeString]);
+    return t('transactions.transactionFallback');
+  }, [extractSenderFromSMS, safeString, t]);
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: colors.background }]} showsVerticalScrollIndicator={false}>
@@ -467,7 +471,7 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
         <View style={styles.headerLeft}>
           {shouldShowGreeting && (
             <View>
-              <Text style={[styles.greeting, { color: colors.textSecondary }]}>Hello,</Text>
+              <Text style={[styles.greeting, { color: colors.textSecondary }]}>{t('home.greeting')}</Text>
               <Text style={[styles.title, { color: colors.text }]}>{userName}</Text>
             </View>
           )}
@@ -495,7 +499,7 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
               }}
             >
               <Users size={18} color="#fff" />
-              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Employee</Text>
+              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>{t('home.employee')}</Text>
             </TouchableOpacity>
           )}
 
@@ -537,7 +541,7 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
         <View style={styles.paymentSection}>
           <View style={styles.paymentHeader}>
             <Text style={styles.statValue}>
-              {paymentTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Br
+              {paymentTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {t('common.currency')}
             </Text>
               {/* <Text style={styles.statLabel}>Total Payment</Text> */}
               <TouchableOpacity
@@ -607,7 +611,7 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
                 // Only show alert for real data points, not our dummy scaling points
                 const colorFunc = data.dataset.color;
                 if (colorFunc && colorFunc(1) !== 'transparent') {
-                  Alert.alert('Amount', `${data.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Br`);
+                  Alert.alert(t('home.amountTitle'), `${data.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${t('common.currency')}`);
                 }
               }}
           />
@@ -649,7 +653,7 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
                       },
                     ]}
                   >
-                    {option.label}
+                    {t(option.labelKey)}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -661,10 +665,10 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
       {/* Recent Transactions */}
       <View style={styles.recentSection}>
         <View style={styles.recentHeader}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Recent Transactions</Text>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('home.recentTransactions')}</Text>
           {onNavigateToTransactions && (
             <TouchableOpacity onPress={onNavigateToTransactions}>
-              <Text style={[styles.seeAll, { color: colors.primary }]}>See All</Text>
+              <Text style={[styles.seeAll, { color: colors.primary }]}>{t('home.seeAll')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -697,7 +701,7 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
               <View style={{ alignItems: 'flex-end', gap: 4 }}>
                 <Text style={[styles.transactionAmount, { color: isIncome ? colors.darkGreen : '#ef4444' }]}>
                   {isIncome ? '+' : '-'}{Math.abs(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  <Text style={styles.currencyUnitSmall}> Br</Text>
+                  <Text style={styles.currencyUnitSmall}> {t('common.currency')}</Text>
                 </Text>
                 <View style={[
                   styles.statusTag, 
@@ -709,7 +713,7 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
                     styles.statusTagText, 
                     { color: tx.isValidated ? colors.darkGreen : '#c2410c' }
                   ]}>
-                    {tx.isValidated ? 'Verified' : 'Pending'}
+                    {tx.isValidated ? t('transactions.verified') : t('transactions.pending')}
                   </Text>
                 </View>
               </View>
@@ -718,7 +722,7 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
         })}
         {filteredTransactions.length === 0 && (
           <View style={styles.emptyState}>
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No transactions yet</Text>
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('home.noTransactions')}</Text>
           </View>
         )}
       </View>

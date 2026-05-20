@@ -20,6 +20,7 @@ import { dashboardAPI } from '../services/api';
 import TransactionDetailsModal from '../components/TransactionDetailsModal';
 import VerifyPaymentsScreen from './VerifyPaymentsScreen';
 import { dedupeTransactionsByIdentity } from '../utils/transactionDedup';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   apiKey?: string | null;
@@ -41,6 +42,7 @@ let transactionsScreenMemoryCache: {
 
 export default function TransactionsScreen({ apiKey }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<TransactionsTab>('verify');
   const [transactions, setTransactions] = useState<LocalTransactionWithMeta[]>(() => transactionsScreenMemoryCache?.transactions || []);
   const [bankFilter, setBankFilter] = useState<string>('all');
@@ -206,7 +208,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
   const syncUnsyncedTransactions = async (showSuccessAlert: boolean = true) => {
     const token = await storage.getToken();
     if (!token) {
-      Alert.alert('Not Signed In', 'Please sign in to sync transactions');
+      Alert.alert(t('transactions.notSignedIn'), t('transactions.signInToSync'));
       return;
     }
 
@@ -214,7 +216,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
     try {
       const unsyncedCount = transactions.filter(t => !t.synced).length;
       if (unsyncedCount === 0) {
-        Alert.alert('All Synced', 'All transactions are already synced to the backend');
+        Alert.alert(t('transactions.allSyncedTitle'), t('transactions.allSyncedMessage'));
         return;
       }
 
@@ -240,13 +242,13 @@ export default function TransactionsScreen({ apiKey }: Props) {
       
       console.log('✅ [TransactionsScreen] Sync complete, transactions refreshed');
       if (showSuccessAlert) {
-        Alert.alert('Success', `Successfully synced ${unsyncedCount} transaction(s) to the backend!`);
+        Alert.alert(t('common.success'), t('transactions.syncSuccessMessage', { count: unsyncedCount }));
       }
     } catch (error: any) {
       console.error('Error syncing transactions:', error);
       const errorMsg = error.response?.data?.error || error.message || 'Failed to sync transactions';
       Alert.alert(
-        'Sync Failed',
+        t('transactions.syncFailedTitle'),
         errorMsg + '\n\nCheck console logs for details.'
       );
     } finally {
@@ -302,11 +304,11 @@ export default function TransactionsScreen({ apiKey }: Props) {
     if (item.bank && item.bank !== 'Unknown') return item.bank;
     if (item.sendFrom) return item.sendFrom;
     if (item.pattern && item.pattern !== 'Institution Pattern') return item.pattern;
-    return 'Transaction';
+    return t('transactions.transactionFallback');
   };
 
   const availableBanks = Array.from(
-    new Set(transactions.map(t => (t.bank && t.bank.trim() ? t.bank.trim() : 'Unknown Bank')))
+    new Set(transactions.map(t => (t.bank && t.bank.trim() ? t.bank.trim() : t('transactions.unknownBank'))))
   ).sort((a, b) => a.localeCompare(b));
 
   const availableBusinesses = Array.from(
@@ -324,7 +326,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
     // Only show verified transactions in the Transactions tab
     if (!t.isValidated) return false;
 
-    const txBank = t.bank && t.bank.trim() ? t.bank.trim() : 'Unknown Bank';
+    const txBank = t.bank && t.bank.trim() ? t.bank.trim() : t('transactions.unknownBank');
     const txBusiness = t.businessName && t.businessName.trim()
       ? t.businessName.trim()
       : t.businessId && t.businessId.trim()
@@ -363,7 +365,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
                 </Text>
               )}
               <Text style={[styles.transactionBank, { color: colors.textSecondary }]} numberOfLines={1}>
-                {item.bank || 'Unknown Bank'}
+                {item.bank || t('transactions.unknownBank')}
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
                 {(item as LocalTransactionWithMeta).businessName && (
@@ -383,7 +385,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
           <View style={styles.transactionRight}>
             <Text style={[styles.transactionAmount, { color: colors.text }]}>
               {item.amount > 0 ? '+' : ''}{item.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              <Text style={styles.currencyUnitSmall}> Br</Text>
+              <Text style={styles.currencyUnitSmall}> {t('common.currency')}</Text>
             </Text>
             <View style={[
               styles.statusTag, 
@@ -396,7 +398,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
                 styles.statusTagText, 
                 { color: item.isValidated ? colors.darkGreen : '#c2410c' }
               ]}>
-                {item.isValidated ? 'Verified' : 'Pending'}
+                {item.isValidated ? t('transactions.verified') : t('transactions.pending')}
               </Text>
             </View>
             {!item.synced && (
@@ -430,7 +432,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
             styles.tabButtonText,
             { color: activeTab === 'verify' ? colors.primary : colors.textSecondary }
           ]}>
-            Verify
+            {t('verifyPayments.title')}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -445,7 +447,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
             styles.tabButtonText,
             { color: activeTab === 'transactions' ? colors.primary : colors.textSecondary }
           ]}>
-            Transactions
+            {t('navigation.history')}
           </Text>
         </TouchableOpacity>
       </View>
@@ -486,7 +488,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
                 style={[styles.filterChip, bankFilter === 'all' && { borderColor: colors.primary, backgroundColor: colors.primary + '12' }]}
                 onPress={() => setBankFilter('all')}
               >
-                <Text style={[styles.filterChipText, { color: bankFilter === 'all' ? colors.primary : colors.text }]}>All Banks</Text>
+                <Text style={[styles.filterChipText, { color: bankFilter === 'all' ? colors.primary : colors.text }]}>{t('transactions.allBanks')}</Text>
               </TouchableOpacity>
               {availableBanks.map((bank) => (
                 <TouchableOpacity
@@ -502,7 +504,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
                 style={[styles.filterChip, businessFilter === 'all' && { borderColor: colors.primary, backgroundColor: colors.primary + '12' }]}
                 onPress={() => setBusinessFilter('all')}
               >
-                <Text style={[styles.filterChipText, { color: businessFilter === 'all' ? colors.primary : colors.text }]}>All Business</Text>
+                <Text style={[styles.filterChipText, { color: businessFilter === 'all' ? colors.primary : colors.text }]}>{t('transactions.allBusiness')}</Text>
               </TouchableOpacity>
               {availableBusinesses.map((business) => (
                 <TouchableOpacity
@@ -522,7 +524,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
                   }}
                 >
                   <X size={10} color={colors.textSecondary} />
-                  <Text style={[styles.clearFiltersText, { color: colors.textSecondary }]}>Clear</Text>
+                  <Text style={[styles.clearFiltersText, { color: colors.textSecondary }]}>{t('transactions.clear')}</Text>
                 </TouchableOpacity>
               )}
             </ScrollView>
@@ -530,7 +532,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
 
           {filteredTransactions.length === 0 ? (
             <View style={styles.emptyState}>
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No transactions match current filters</Text>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('transactions.noMatchingFilters')}</Text>
             </View>
           ) : (
             <FlatList

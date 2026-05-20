@@ -9,7 +9,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { Building2, ChevronRight, Users, UserPlus, QrCode, Copy, RefreshCw, X as CloseIcon, Settings, CreditCard, Shield, Info, LogOut, Mail, Phone, Globe, Clock, AlertCircle, Check, Lock, Fingerprint } from 'lucide-react-native';
+import { Building2, ChevronRight, Users, UserPlus, QrCode, Copy, RefreshCw, X as CloseIcon, CreditCard, Shield, Info, LogOut, Mail, Phone, Globe, Clock, AlertCircle, Check, Lock, Fingerprint, Smartphone, CheckCircle, Hash } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { storage } from '../services/storage';
 import { installationService } from '../services/installation';
@@ -20,6 +20,9 @@ import PaymentModal from '../components/PaymentModal';
 import { securityService } from '../services/securityService';
 import PINSetupScreen from './PINSetupScreen';
 import { getDisplayName, getUserInitials } from '../utils/userUtils';
+import { useTranslation } from 'react-i18next';
+import i18n, { changeAppLanguage, getCurrentAppLanguage } from '../i18n';
+import { AppLanguage } from '../i18n/resources';
 
 interface Props {
   apiKey?: string | null;
@@ -80,6 +83,7 @@ const PROFILE_CACHE_TTL_MS = 10 * 60 * 1000;
 const PACKAGE_USAGE_CACHE_TTL_MS = 10 * 60 * 1000;
 
 export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onNavigateToClusterDetails, onNavigateToClusterGuide }: Props) {
+  const { t } = useTranslation();
   const { colors, theme, toggleTheme } = useTheme();
   const [user, setUser] = useState<any>(null);
   const [installationDate, setInstallationDate] = useState<Date | null>(null);
@@ -103,6 +107,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
   const [biometricName, setBiometricName] = useState('Biometrics');
   const [showPINSetup, setShowPINSetup] = useState(false);
   const [isChangingPIN, setIsChangingPIN] = useState(false);
+  const [selectedLanguage, setSelectedLanguage] = useState<AppLanguage>(getCurrentAppLanguage());
   const [clusterIncoming, setClusterIncoming] = useState<any[]>([]);
   const [clusterOutgoing, setClusterOutgoing] = useState<any[]>([]);
   const [loadingCluster, setLoadingCluster] = useState(false);
@@ -119,6 +124,64 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
     loadPackageInfo();
     loadSecuritySettings();
   }, []);
+
+  useEffect(() => {
+    const onLanguageChanged = (lng: string) => {
+      setSelectedLanguage((lng || 'en').split(/[-_]/)[0] as AppLanguage);
+    };
+
+    i18n.on('languageChanged', onLanguageChanged);
+    return () => {
+      i18n.off('languageChanged', onLanguageChanged);
+    };
+  }, []);
+
+  const getLanguageLabel = (code: AppLanguage) => {
+    switch (code) {
+      case 'am':
+        return t('language.amharic');
+      case 'om':
+        return t('language.afaanOromo');
+      case 'ti':
+        return t('language.tigrinya');
+      default:
+        return t('language.english');
+    }
+  };
+
+  const handleLanguagePicker = () => {
+    Alert.alert(t('profile.language'), t('common.selectLanguage'), [
+      {
+        text: t('language.english'),
+        onPress: async () => {
+          await changeAppLanguage('en');
+          setSelectedLanguage('en');
+        },
+      },
+      {
+        text: t('language.amharic'),
+        onPress: async () => {
+          await changeAppLanguage('am');
+          setSelectedLanguage('am');
+        },
+      },
+      {
+        text: t('language.afaanOromo'),
+        onPress: async () => {
+          await changeAppLanguage('om');
+          setSelectedLanguage('om');
+        },
+      },
+      {
+        text: t('language.tigrinya'),
+        onPress: async () => {
+          await changeAppLanguage('ti');
+          setSelectedLanguage('ti');
+        },
+      },
+      { text: t('common.cancel'), style: 'cancel' },
+    ]);
+  };
 
   useEffect(() => {
     loadClusterData(user?.role);
@@ -174,9 +237,9 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
       }
 
       await loadClusterData();
-      Alert.alert('Success', `Cluster request ${action}ed successfully.`);
+      Alert.alert(t('common.success'), t('cluster.requestActioned', { action }));
     } catch (error: any) {
-      Alert.alert('Error', error?.response?.data?.error || `Failed to ${action} cluster request`);
+      Alert.alert(t('common.error'), error?.response?.data?.error || t('cluster.failedRequestAction', { action }));
     }
   };
 
@@ -204,12 +267,12 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
     } else {
       // Disable PIN - confirm first
       Alert.alert(
-        'Disable PIN',
-        'Are you sure you want to disable the PIN lock? This will also disable biometric unlock.',
+        t('profile.disablePinTitle', { defaultValue: 'Disable PIN' }),
+        t('profile.disablePinMessage', { defaultValue: 'Are you sure you want to disable the PIN lock? This will also disable biometric unlock.' }),
         [
-          { text: 'Cancel', style: 'cancel' },
+          { text: t('common.cancel'), style: 'cancel' },
           {
-            text: 'Disable',
+            text: t('profile.disable', { defaultValue: 'Disable' }),
             style: 'destructive',
             onPress: async () => {
               await securityService.disablePIN();
@@ -227,9 +290,9 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
       try {
         await securityService.enableBiometric();
         setBiometricEnabled(true);
-        Alert.alert('Success', `${biometricName} has been enabled for quick unlock.`);
+        Alert.alert(t('common.success'), t('profile.biometricEnabledMessage', { biometricName, defaultValue: `${biometricName} has been enabled for quick unlock.` }));
       } catch (error: any) {
-        Alert.alert('Error', error.message || 'Failed to enable biometric');
+        Alert.alert(t('common.error'), error.message || t('profile.failedEnableBiometric', { defaultValue: 'Failed to enable biometric' }));
       }
     } else {
       await securityService.disableBiometric();
@@ -334,16 +397,16 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
     const hasPending = pendingPurchases.some(p => p.packageId === pkg.id);
     if (hasPending) {
       Alert.alert(
-        'Pending Purchase',
-        'You already have a pending purchase request for this package. Please wait for admin verification.',
-        [{ text: 'OK' }]
+        t('profile.pendingPurchaseTitle', { defaultValue: 'Pending Purchase' }),
+        t('profile.pendingPurchaseMessage', { defaultValue: 'You already have a pending purchase request for this package. Please wait for admin verification.' }),
+        [{ text: t('common.done') }]
       );
       return;
     }
 
     // Check if it's the current package
     if (currentPackage?.package.id === pkg.id) {
-      Alert.alert('Current Package', 'This is your current package.');
+      Alert.alert(t('profile.currentPackageTitle', { defaultValue: 'Current Package' }), t('profile.currentPackageMessage', { defaultValue: 'This is your current package.' }));
       return;
     }
 
@@ -351,23 +414,25 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
     setShowPaymentModal(true);
   };
 
-  const handlePurchaseSubmit = async (transactionNumber: string) => {
+  const handlePurchaseSubmit = async (payload: { transactionNumber: string; channel: string; screenshotUrl?: string }) => {
     if (!selectedPackage) return;
 
     setPurchasing(true);
     try {
       const response = await packageAPI.purchasePackage({
         packageId: selectedPackage.id,
-        transactionNumber,
+        transactionNumber: payload.transactionNumber,
+        channel: payload.channel,
+        screenshotUrl: payload.screenshotUrl,
       });
 
       if (response.success) {
         setShowPaymentModal(false);
         setSelectedPackage(null);
         Alert.alert(
-          'Request Submitted!', 
-          'Your purchase request has been submitted. Your package will be activated once the transaction is verified by admin.',
-          [{ text: 'OK' }]
+          t('profile.purchaseSubmittedTitle', { defaultValue: 'Request Submitted!' }), 
+          t('profile.purchaseSubmittedMessage', { defaultValue: 'Your purchase request has been submitted. Your package will be activated once the transaction is verified by admin.' }),
+          [{ text: t('common.done') }]
         );
         loadPackageInfo(); // Refresh to show the pending purchase
       } else {
@@ -382,7 +447,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
   };
 
   const formatDate = (dateString?: string | null) => {
-    if (!dateString) return 'Never';
+    if (!dateString) return t('profile.never', { defaultValue: 'Never' });
     return new Date(dateString).toLocaleDateString();
   };
 
@@ -464,7 +529,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
     try {
       const businessId = await storage.getBusinessId();
       if (!businessId) {
-        Alert.alert('Error', 'No business associated with this account');
+        Alert.alert(t('common.error'), t('profile.noBusinessError', { defaultValue: 'No business associated with this account' }));
         return;
       }
       const response = await employeeAPI.generateCode(businessId);
@@ -473,11 +538,11 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
         setEmployeeOTP(response.data.code);
         setShowAddEmployeeModal(true);
       } else {
-        Alert.alert('Error', 'Failed to generate access code');
+        Alert.alert(t('common.error'), t('profile.failedGenerateCode', { defaultValue: 'Failed to generate access code' }));
       }
     } catch (error) {
       console.error('Error generating employee code:', error);
-      Alert.alert('Error', 'Failed to generate access code');
+      Alert.alert(t('common.error'), t('profile.failedGenerateCode', { defaultValue: 'Failed to generate access code' }));
     } finally {
       setGeneratingOTP(false);
     }
@@ -485,12 +550,12 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
 
   const handleLogout = () => {
     Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
+      t('profile.logoutConfirmTitle'),
+      t('profile.logoutConfirmMessage'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Logout',
+          text: t('profile.logout'),
           style: 'destructive',
           onPress: onLogout,
         },
@@ -529,30 +594,32 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
               )}
             </View>
           </View>
-          <TouchableOpacity style={[styles.settingsBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Settings size={20} color={colors.textSecondary} />
-          </TouchableOpacity>
+          {ownerIdentifier ? (
+            <View style={[styles.ownerIdBadge, { backgroundColor: colors.primary + '12', borderColor: colors.primary + '30' }]}>
+              <Hash size={13} color={colors.primary} />
+              <Text style={[styles.ownerIdText, { color: colors.primary }]}>{ownerIdentifier}</Text>
+            </View>
+          ) : null}
         </View>
       </View>
 
       <View style={styles.content}>
         {/* Account Section */}
-        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>ACCOUNT</Text>
+        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('profile.account')}</Text>
         <View style={[styles.listCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={styles.listItem}>
             <View style={styles.listItemLeft}>
-              <Phone size={18} color={colors.textSecondary} />
-              <Text style={[styles.listItemText, { color: colors.text }]}>Phone Number</Text>
+              <Text style={[styles.listItemText, { color: colors.text }]}>{t('profile.phoneNumber')}</Text>
             </View>
-            <Text style={[styles.listItemValue, { color: colors.textSecondary }]}>{user?.phone || 'Not set'}</Text>
+            <Text style={[styles.listItemValue, { color: colors.textSecondary }]}>{user?.phone || t('profile.notSet')}</Text>
           </View>
           <View style={[styles.listDivider, { backgroundColor: colors.border }]} />
           <View style={styles.listItem}>
             <View style={styles.listItemLeft}>
               <Globe size={18} color={colors.textSecondary} />
-              <Text style={[styles.listItemText, { color: colors.text }]}>Country</Text>
+              <Text style={[styles.listItemText, { color: colors.text }]}>{t('profile.country')}</Text>
             </View>
-            <Text style={[styles.listItemValue, { color: colors.textSecondary }]}>{user?.country || 'Not set'}</Text>
+            <Text style={[styles.listItemValue, { color: colors.textSecondary }]}>{user?.country || t('profile.notSet')}</Text>
           </View>
           {(user?.role === 'BUSINESS_OWNER' || user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
             <>
@@ -560,88 +627,78 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
               <View style={styles.listItem}>
                 <View style={styles.listItemLeft}>
                   <Shield size={18} color={colors.textSecondary} />
-                  <Text style={[styles.listItemText, { color: colors.text }]}>Owner ID</Text>
+                  <Text style={[styles.listItemText, { color: colors.text }]}>{t('profile.ownerId')}</Text>
                 </View>
-                <Text style={[styles.listItemValue, { color: colors.primary }]}>{ownerIdentifier || 'Not assigned yet'}</Text>
+                <Text style={[styles.listItemValue, { color: colors.primary }]}>{ownerIdentifier || t('profile.notAssignedYet')}</Text>
               </View>
             </>
           )}
         </View>
 
-        {/* Cluster Section */}
-        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>CLUSTER</Text>
-        <View style={[styles.listCard, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
-          {!canViewIncomingClusterRequests && !canViewOutgoingClusterRequests ? (
-            <View style={styles.noPackageContainer}>
-              <Text style={[styles.noPackageText, { color: colors.textSecondary }]}>Cluster requests are not available for your role</Text>
-            </View>
-          ) : loadingCluster ? (
-            <View style={styles.noPackageContainer}>
-              <ActivityIndicator size="small" color={colors.primary} />
-            </View>
-          ) : (
+        {/* Cluster Section - only show if there are active pending requests */}
+        {(() => {
+          const pendingIncoming = canViewIncomingClusterRequests ? clusterIncoming.filter((req: any) => req.status === 'PENDING') : [];
+          const pendingOutgoing = canViewOutgoingClusterRequests ? clusterOutgoing.filter((req: any) => req.status === 'PENDING') : [];
+          const hasActiveRequests = pendingIncoming.length > 0 || pendingOutgoing.length > 0;
+          if (!hasActiveRequests && !loadingCluster) return null;
+          return (
             <>
-              {canViewIncomingClusterRequests && clusterIncoming.filter((req) => req.status === 'PENDING').slice(0, 3).map((req) => (
-                <View key={req.id} style={styles.clusterItemRow}>
-                  <View style={styles.clusterItemInfo}>
-                    <Text style={[styles.clusterTitle, { color: colors.text }]}>Incoming from {req.developer?.username || 'Developer'}</Text>
-                    <Text style={[styles.clusterSub, { color: colors.textSecondary }]}>{req.project?.name || 'No project linked'}</Text>
+              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('profile.cluster')}</Text>
+              <View style={[styles.listCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                {loadingCluster ? (
+                  <View style={styles.noPackageContainer}>
+                    <ActivityIndicator size="small" color={colors.primary} />
                   </View>
-                  <View style={styles.clusterActionsRow}>
-                    <TouchableOpacity onPress={() => handleClusterAction('accept', req.id)}>
-                      <Text style={[styles.clusterActionText, { color: '#16a34a' }]}>Accept</Text>
+                ) : (
+                  <>
+                    {pendingIncoming.slice(0, 3).map((req: any) => (
+                      <View key={req.id} style={styles.clusterItemRow}>
+                        <View style={styles.clusterItemInfo}>
+                          <Text style={[styles.clusterTitle, { color: colors.text }]}>{t('profile.incomingFrom', { name: req.developer?.username || t('employee.unknown') })}</Text>
+                          <Text style={[styles.clusterSub, { color: colors.textSecondary }]}>{req.project?.name || t('profile.noProjectLinked')}</Text>
+                        </View>
+                        <View style={styles.clusterActionsRow}>
+                          <TouchableOpacity onPress={() => handleClusterAction('accept', req.id)}>
+                            <Text style={[styles.clusterActionText, { color: '#16a34a' }]}>{t('common.accept', { defaultValue: 'Accept' })}</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => handleClusterAction('reject', req.id)}>
+                            <Text style={[styles.clusterActionText, { color: '#dc2626' }]}>{t('common.reject', { defaultValue: 'Reject' })}</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ))}
+
+                    {pendingOutgoing.slice(0, 3).map((req: any) => (
+                      <View key={req.id} style={styles.clusterItemRow}>
+                        <View style={styles.clusterItemInfo}>
+                          <Text style={[styles.clusterTitle, { color: colors.text }]}>{t('profile.pendingTo', { code: req.ownerCode })}</Text>
+                          <Text style={[styles.clusterSub, { color: colors.textSecondary }]}>{req.project?.name || t('profile.noProjectLinked')}</Text>
+                        </View>
+                        <View style={styles.clusterActionsRow}>
+                          <TouchableOpacity onPress={() => handleClusterAction('cancel', req.id)}>
+                            <Text style={[styles.clusterActionText, { color: '#dc2626' }]}>{t('common.cancel')}</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ))}
+
+                    <View style={[styles.listDivider, { backgroundColor: colors.border }]} />
+                    <TouchableOpacity style={styles.clusterDetailsRow} onPress={onNavigateToClusterDetails}>
+                      <View style={styles.listItemLeft}>
+                        <Users size={18} color={colors.textSecondary} />
+                        <Text style={[styles.listItemText, { color: colors.text }]}>{t('profile.viewFullCluster')}</Text>
+                      </View>
+                      <ChevronRight size={18} color={colors.textSecondary} />
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleClusterAction('reject', req.id)}>
-                      <Text style={[styles.clusterActionText, { color: '#dc2626' }]}>Reject</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))}
-
-              {canViewOutgoingClusterRequests && clusterOutgoing.filter((req) => req.status === 'PENDING').slice(0, 3).map((req) => (
-                <View key={req.id} style={styles.clusterItemRow}>
-                  <View style={styles.clusterItemInfo}>
-                    <Text style={[styles.clusterTitle, { color: colors.text }]}>Pending to Owner #{req.ownerCode}</Text>
-                    <Text style={[styles.clusterSub, { color: colors.textSecondary }]}>{req.project?.name || 'No project linked'}</Text>
-                  </View>
-                  <View style={styles.clusterActionsRow}>
-                    <TouchableOpacity onPress={() => handleClusterAction('cancel', req.id)}>
-                      <Text style={[styles.clusterActionText, { color: '#dc2626' }]}>Cancel</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))}
-
-              {(canViewIncomingClusterRequests ? clusterIncoming.filter((req) => req.status === 'PENDING').length === 0 : true) &&
-                (canViewOutgoingClusterRequests ? clusterOutgoing.filter((req) => req.status === 'PENDING').length === 0 : true) && (
-                <View style={styles.noPackageContainer}>
-                  <Text style={[styles.noPackageText, { color: colors.textSecondary }]}>No pending cluster requests</Text>
-                </View>
-              )}
-
-              <View style={[styles.listDivider, { backgroundColor: colors.border }]} />
-              <TouchableOpacity style={styles.clusterDetailsRow} onPress={onNavigateToClusterDetails}>
-                <View style={styles.listItemLeft}>
-                  <Users size={18} color={colors.textSecondary} />
-                  <Text style={[styles.listItemText, { color: colors.text }]}>View Full Cluster Details</Text>
-                </View>
-                <ChevronRight size={18} color={colors.textSecondary} />
-              </TouchableOpacity>
-
-              <View style={[styles.listDivider, { backgroundColor: colors.border }]} />
-              <TouchableOpacity style={styles.clusterDetailsRow} onPress={onNavigateToClusterGuide}>
-                <View style={styles.listItemLeft}>
-                  <Info size={18} color={colors.textSecondary} />
-                  <Text style={[styles.listItemText, { color: colors.text }]}>How Single, Cluster, and Transferable Work</Text>
-                </View>
-                <ChevronRight size={18} color={colors.textSecondary} />
-              </TouchableOpacity>
+                  </>
+                )}
+              </View>
             </>
-          )}
-        </View>
+          );
+        })()}
 
         {/* Package & Usage Section */}
-        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>PACKAGE & USAGE</Text>
+        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('profile.packageAndUsage')}</Text>
         <View style={[styles.listCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           {loadingPackage ? (
             <View style={styles.packageSkeletonContainer}>
@@ -657,102 +714,136 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
             </View>
           ) : currentPackage ? (
             <>
+              {/* Plan Header */}
               <View style={styles.packageHeader}>
                 <View style={styles.packageHeaderLeft}>
                   <Text style={[styles.packageName, { color: colors.text }]}>
                     {currentPackage.package.name}
                   </Text>
-                  <Text style={[styles.packageTier, { color: colors.textSecondary }]}>
-                    {currentPackage.package.tier || 'Standard'} Package
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                    <Text style={[styles.packageTier, { color: colors.textSecondary }]}>
+                      {currentPackage.package.tier || 'Standard'}
+                    </Text>
+                    <View style={[styles.activeStatusDot, { backgroundColor: '#22C55E' }]} />
+                    <Text style={{ fontSize: 11, color: '#22C55E', fontWeight: '600' }}>
+                      {currentPackage.status || t('employeeManagement.active')}
+                    </Text>
+                  </View>
                 </View>
                 {currentPackage.package.tier === 'BUSINESS' && (
-                  <View style={[styles.badge, { backgroundColor: '#f59e0b20' }]}>
-                    <Text style={[styles.badgeText, { color: '#f59e0b' }]}>BUSINESS</Text>
+                  <View style={[styles.badge, { backgroundColor: colors.primary + '15' }]}>
+                    <CreditCard size={12} color={colors.primary} style={{ marginRight: 4 }} />
+                    <Text style={[styles.badgeText, { color: colors.primary }]}>BUSINESS</Text>
                   </View>
                 )}
               </View>
 
               {currentPackage.endsAt && (
                 <View style={[styles.packageInfoRow, { borderTopColor: colors.border }]}>
-                  <Text style={[styles.packageInfoLabel, { color: colors.textSecondary }]}>Expires:</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Clock size={13} color={colors.textSecondary} />
+                    <Text style={[styles.packageInfoLabel, { color: colors.textSecondary }]}>{t('profile.expires')}</Text>
+                  </View>
                   <Text style={[styles.packageInfoValue, { color: colors.text }]}>
                     {formatDate(currentPackage.endsAt)}
                   </Text>
                 </View>
               )}
 
+              {/* Usage Stats */}
               {isFixedPriceMode ? (
                 <View style={[styles.usageItem, { borderTopColor: colors.border }]}> 
                   <View style={styles.usageHeader}>
-                    <Text style={[styles.usageLabel, { color: colors.text }]}>Usage</Text>
-                    <Text style={[styles.usageStats, { color: colors.textSecondary }]}>Unlimited while active</Text>
+                    <Text style={[styles.usageLabel, { color: colors.text }]}>{t('profile.usage')}</Text>
+                    <View style={[styles.unlimitedBadge, { backgroundColor: '#22C55E15' }]}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#22C55E' }}>∞ {t('profile.unlimited')}</Text>
+                    </View>
                   </View>
                 </View>
               ) : (
-                <>
-                  {/* Phone Transactions Usage */}
-                  <View style={[styles.usageItem, { borderTopColor: colors.border }]}> 
-                    <View style={styles.usageHeader}>
-                      <Text style={[styles.usageLabel, { color: colors.text }]}>Phone Transactions</Text>
-                      <Text style={[styles.usageStats, { color: colors.textSecondary }]}> 
-                        {currentPackage.phoneTxnsRemaining === null
-                          ? 'Unlimited'
-                          : `${currentPackage.phoneTxnsRemaining} / ${currentPackage.package.maxPhoneTxns || 0}`}
-                      </Text>
-                    </View>
-                    {currentPackage.phoneTxnsRemaining !== null && currentPackage.package.maxPhoneTxns && (
-                      <View style={[styles.progressBar, { backgroundColor: colors.border }]}> 
-                        <View
-                          style={[
-                            styles.progressFill,
-                            {
-                              width: `${getRemainingPercentage(
-                                currentPackage.phoneTxnsRemaining,
-                                currentPackage.package.maxPhoneTxns
-                              )}%`,
-                              backgroundColor: colors.primary,
-                            },
-                          ]}
-                        />
+                <View style={styles.usageStatsGrid}>
+                  {/* Phone Transactions Card */}
+                  <View style={[styles.usageStatCard, { backgroundColor: colors.background, borderColor: colors.border }]}> 
+                    <View style={styles.usageStatCardHeader}>
+                      <View style={[styles.usageStatIcon, { backgroundColor: colors.primary + '12' }]}>
+                        <Smartphone size={14} color={colors.primary} />
                       </View>
+                      <Text style={[styles.usageStatLabel, { color: colors.textSecondary }]}>{t('profile.phoneTxns')}</Text>
+                    </View>
+                    <Text style={[styles.usageStatValue, { color: colors.text }]}>
+                      {currentPackage.phoneTxnsRemaining === null
+                        ? '∞'
+                        : currentPackage.phoneTxnsRemaining}
+                    </Text>
+                    {currentPackage.phoneTxnsRemaining !== null && currentPackage.package.maxPhoneTxns ? (
+                      <>
+                        <View style={[styles.progressBar, { backgroundColor: colors.border }]}> 
+                          <View
+                            style={[
+                              styles.progressFill,
+                              {
+                                width: `${getRemainingPercentage(
+                                  currentPackage.phoneTxnsRemaining,
+                                  currentPackage.package.maxPhoneTxns
+                                )}%`,
+                                backgroundColor: getRemainingPercentage(currentPackage.phoneTxnsRemaining, currentPackage.package.maxPhoneTxns) > 30 ? colors.primary : '#EF4444',
+                              },
+                            ]}
+                          />
+                        </View>
+                        <Text style={[styles.usageStatSub, { color: colors.textSecondary }]}>
+                          {currentPackage.phoneTxnsRemaining} {t('common.of', { defaultValue: 'of' })} {currentPackage.package.maxPhoneTxns} {t('profile.remaining')}
+                        </Text>
+                      </>
+                    ) : (
+                      <Text style={[styles.usageStatSub, { color: '#22C55E' }]}>Unlimited</Text>
                     )}
                   </View>
 
-                  {/* Verified Transactions Usage */}
-                  <View style={[styles.usageItem, { borderTopColor: colors.border }]}> 
-                    <View style={styles.usageHeader}>
-                      <Text style={[styles.usageLabel, { color: colors.text }]}>Verified Transactions</Text>
-                      <Text style={[styles.usageStats, { color: colors.textSecondary }]}> 
-                        {currentPackage.verifiedTxnsRemaining === null
-                          ? 'Unlimited'
-                          : `${currentPackage.verifiedTxnsRemaining} / ${currentPackage.package.maxVerifiedTxns || 0}`}
-                      </Text>
-                    </View>
-                    {currentPackage.verifiedTxnsRemaining !== null && currentPackage.package.maxVerifiedTxns && (
-                      <View style={[styles.progressBar, { backgroundColor: colors.border }]}> 
-                        <View
-                          style={[
-                            styles.progressFill,
-                            {
-                              width: `${getRemainingPercentage(
-                                currentPackage.verifiedTxnsRemaining,
-                                currentPackage.package.maxVerifiedTxns
-                              )}%`,
-                              backgroundColor: colors.primary,
-                            },
-                          ]}
-                        />
+                  {/* Verified Transactions Card */}
+                  <View style={[styles.usageStatCard, { backgroundColor: colors.background, borderColor: colors.border }]}> 
+                    <View style={styles.usageStatCardHeader}>
+                      <View style={[styles.usageStatIcon, { backgroundColor: '#8B5CF612' }]}>
+                        <CheckCircle size={14} color="#8B5CF6" />
                       </View>
+                      <Text style={[styles.usageStatLabel, { color: colors.textSecondary }]}>{t('profile.verifiedTxns')}</Text>
+                    </View>
+                    <Text style={[styles.usageStatValue, { color: colors.text }]}>
+                      {currentPackage.verifiedTxnsRemaining === null
+                        ? '∞'
+                        : currentPackage.verifiedTxnsRemaining}
+                    </Text>
+                    {currentPackage.verifiedTxnsRemaining !== null && currentPackage.package.maxVerifiedTxns ? (
+                      <>
+                        <View style={[styles.progressBar, { backgroundColor: colors.border }]}> 
+                          <View
+                            style={[
+                              styles.progressFill,
+                              {
+                                width: `${getRemainingPercentage(
+                                  currentPackage.verifiedTxnsRemaining,
+                                  currentPackage.package.maxVerifiedTxns
+                                )}%`,
+                                backgroundColor: getRemainingPercentage(currentPackage.verifiedTxnsRemaining, currentPackage.package.maxVerifiedTxns) > 30 ? '#8B5CF6' : '#EF4444',
+                              },
+                            ]}
+                          />
+                        </View>
+                        <Text style={[styles.usageStatSub, { color: colors.textSecondary }]}>
+                          {currentPackage.verifiedTxnsRemaining} {t('common.of', { defaultValue: 'of' })} {currentPackage.package.maxVerifiedTxns} {t('profile.remaining')}
+                        </Text>
+                      </>
+                    ) : (
+                      <Text style={[styles.usageStatSub, { color: '#22C55E' }]}>Unlimited</Text>
                     )}
                   </View>
-                </>
+                </View>
               )}
             </>
           ) : (
             <View style={styles.noPackageContainer}>
               <Text style={[styles.noPackageText, { color: colors.textSecondary }]}>
-                No active package found
+                {t('profile.noActivePackage')}
               </Text>
             </View>
           )}
@@ -762,7 +853,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
             <View style={[styles.pendingSection, { borderTopColor: colors.border }]}>
               <View style={styles.pendingHeader}>
                 <Clock size={16} color="#f59e0b" />
-                <Text style={styles.pendingSectionTitle}>PENDING VERIFICATION</Text>
+                <Text style={styles.pendingSectionTitle}>{t('profile.pendingVerification')}</Text>
               </View>
               {pendingPurchases.map((purchase) => (
                 <View key={purchase.id} style={[styles.pendingItem, { borderBottomColor: 'rgba(245, 158, 11, 0.2)' }]}>
@@ -776,12 +867,12 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
                   </View>
                   <View style={styles.pendingBadge}>
                     <AlertCircle size={12} color="#f59e0b" />
-                    <Text style={styles.pendingBadgeText}>Awaiting</Text>
+                    <Text style={styles.pendingBadgeText}>{t('profile.awaiting')}</Text>
                   </View>
                 </View>
               ))}
               <Text style={[styles.pendingNote, { color: colors.textSecondary }]}>
-                Will be activated after admin verification
+                {t('profile.adminVerificationNote')}
               </Text>
             </View>
           )}
@@ -795,9 +886,9 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
                 activeOpacity={0.7}
               >
                 <View style={{ flex: 1 }}>
-                  <Text style={[styles.availablePackagesTitle, { color: colors.text }]}>Upgrade Package</Text>
+                  <Text style={[styles.availablePackagesTitle, { color: colors.text }]}>{t('profile.upgradePackage')}</Text>
                   <Text style={[styles.availablePackagesSubtitle, { color: colors.textSecondary }]}>
-                    Select a package and complete payment to upgrade
+                    {t('profile.upgradePackageSubtitle')}
                   </Text>
                 </View>
                 <ChevronRight 
@@ -829,7 +920,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
                   >
                     {isPopular && (
                       <View style={[styles.popularBadge, { backgroundColor: colors.primary }]}>
-                        <Text style={styles.popularBadgeText}>MOST POPULAR</Text>
+                        <Text style={styles.popularBadgeText}>{t('profile.mostPopular')}</Text>
                       </View>
                     )}
 
@@ -839,7 +930,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
                           {pkg.name}
                         </Text>
                         <Text style={[styles.packageOptionTier, { color: colors.textSecondary }]}>
-                          {pkg.tier} Tier
+                          {pkg.tier} {t('profile.tier')}
                         </Text>
                       </View>
                       <View style={styles.packageOptionPriceSection}>
@@ -858,7 +949,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
                       {isFixedPriceMode ? (
                         <View style={styles.featureItem}>
                           <Check size={14} color={colors.primary} />
-                          <Text style={[styles.featureText, { color: colors.textSecondary }]}>Unlimited transactions while active</Text>
+                          <Text style={[styles.featureText, { color: colors.textSecondary }]}>{t('profile.unlimitedTransactions')}</Text>
                         </View>
                       ) : (
                         <>
@@ -866,16 +957,16 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
                             <Check size={14} color={colors.primary} />
                             <Text style={[styles.featureText, { color: colors.textSecondary }]}> 
                               <Text style={{ color: colors.text, fontWeight: '600' }}>
-                                {pkg.maxPhoneTxns === null ? 'Unlimited' : pkg.maxPhoneTxns}
-                              </Text> Phone Txns
+                                {pkg.maxPhoneTxns === null ? t('profile.unlimited') : pkg.maxPhoneTxns}
+                              </Text> {t('profile.phoneTxnsLabel')}
                             </Text>
                           </View>
                           <View style={styles.featureItem}>
                             <Check size={14} color={colors.primary} />
                             <Text style={[styles.featureText, { color: colors.textSecondary }]}> 
                               <Text style={{ color: colors.text, fontWeight: '600' }}>
-                                {pkg.maxVerifiedTxns === null ? 'Unlimited' : pkg.maxVerifiedTxns}
-                              </Text> Verified Txns
+                                {pkg.maxVerifiedTxns === null ? t('profile.unlimited') : pkg.maxVerifiedTxns}
+                              </Text> {t('profile.verifiedTxnsLabel')}
                             </Text>
                           </View>
                         </>
@@ -886,16 +977,16 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
                       {isCurrent ? (
                         <View style={[styles.statusBadge, { backgroundColor: colors.primary + '15' }]}>
                           <Check size={12} color={colors.primary} />
-                          <Text style={[styles.statusBadgeText, { color: colors.primary }]}>Current Plan</Text>
+                          <Text style={[styles.statusBadgeText, { color: colors.primary }]}>{t('profile.currentPlan')}</Text>
                         </View>
                       ) : isPending ? (
                         <View style={[styles.statusBadge, { backgroundColor: '#f59e0b15' }]}>
                           <Clock size={12} color="#f59e0b" />
-                          <Text style={[styles.statusBadgeText, { color: '#f59e0b' }]}>Pending</Text>
+                          <Text style={[styles.statusBadgeText, { color: '#f59e0b' }]}>{t('common.pending', { defaultValue: 'Pending' })}</Text>
                         </View>
                       ) : (
                         <Text style={[styles.selectActionText, { color: colors.primary }]}>
-                          Upgrade Now
+                          {t('profile.upgradeNow')}
                         </Text>
                       )}
                     </View>
@@ -909,7 +1000,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
         {/* Business Section */}
         {isBusinessOwner && (
           <>
-            <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>BUSINESS MANAGEMENT</Text>
+            <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('profile.businessManagement')}</Text>
             <View style={[styles.listCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <TouchableOpacity 
                 style={styles.listItem}
@@ -917,7 +1008,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
               >
                 <View style={styles.listItemLeft}>
                   <Building2 size={18} color={colors.textSecondary} />
-                  <Text style={[styles.listItemText, { color: colors.text }]}>Linked Banks</Text>
+                  <Text style={[styles.listItemText, { color: colors.text }]}>{t('profile.linkedBanks')}</Text>
                 </View>
                 <ChevronRight size={18} color={colors.textSecondary} />
               </TouchableOpacity>
@@ -929,7 +1020,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
               >
                 <View style={styles.listItemLeft}>
                   <UserPlus size={18} color={colors.textSecondary} />
-                  <Text style={[styles.listItemText, { color: colors.text }]}>Add Employee</Text>
+                  <Text style={[styles.listItemText, { color: colors.text }]}>{t('profile.addEmployee')}</Text>
                 </View>
                 {generatingOTP ? (
                   <ActivityIndicator size="small" color={colors.primary} />
@@ -942,13 +1033,13 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
         )}
 
         {/* Security Section */}
-        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>SECURITY</Text>
+        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('profile.security')}</Text>
         <View style={[styles.listCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           {/* App Lock Toggle */}
           <View style={styles.listItem}>
             <View style={styles.listItemLeft}>
               <Lock size={18} color={colors.primary} />
-              <Text style={[styles.listItemText, { color: colors.text }]}>App Lock</Text>
+              <Text style={[styles.listItemText, { color: colors.text }]}>{t('profile.appLock')}</Text>
             </View>
             <Switch
               value={pinEnabled}
@@ -965,7 +1056,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
               <View style={styles.listItem}>
                 <View style={styles.listItemLeft}>
                   <Fingerprint size={18} color={colors.primary} />
-                  <Text style={[styles.listItemText, { color: colors.text }]}>{biometricName}</Text>
+                  <Text style={[styles.listItemText, { color: colors.text }]}>{t('profile.biometricUnlock', { biometricName })}</Text>
                 </View>
                 <Switch
                   value={biometricEnabled}
@@ -984,7 +1075,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
               <TouchableOpacity style={styles.listItem} onPress={handleChangePIN}>
                 <View style={styles.listItemLeft}>
                   <Shield size={18} color={colors.textSecondary} />
-                  <Text style={[styles.listItemText, { color: colors.text }]}>Change PIN</Text>
+                  <Text style={[styles.listItemText, { color: colors.text }]}>{t('profile.changePin')}</Text>
                 </View>
                 <ChevronRight size={18} color={colors.textSecondary} />
               </TouchableOpacity>
@@ -993,12 +1084,12 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
         </View>
 
         {/* Preferences Section */}
-        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>PREFERENCES</Text>
+        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('profile.preferences')}</Text>
         <View style={[styles.listCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={styles.listItem}>
             <View style={styles.listItemLeft}>
               <RefreshCw size={18} color={colors.textSecondary} />
-              <Text style={[styles.listItemText, { color: colors.text }]}>Dark Mode</Text>
+              <Text style={[styles.listItemText, { color: colors.text }]}>{t('profile.darkMode')}</Text>
             </View>
             <Switch
               value={theme === 'dark'}
@@ -1008,17 +1099,33 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
             />
           </View>
           <View style={[styles.listDivider, { backgroundColor: colors.border }]} />
+          <TouchableOpacity style={styles.listItem} onPress={handleLanguagePicker}>
+            <View style={styles.listItemLeft}>
+              <Globe size={18} color={colors.textSecondary} />
+              <Text style={[styles.listItemText, { color: colors.text }]}>{t('profile.language')}</Text>
+            </View>
+            <View style={styles.listItemRight}>
+              <Text style={[styles.listItemValue, { color: colors.textSecondary }]}>
+                {getLanguageLabel(selectedLanguage)}
+              </Text>
+              <ChevronRight size={18} color={colors.textSecondary} />
+            </View>
+          </TouchableOpacity>
+          <View style={[styles.listDivider, { backgroundColor: colors.border }]} />
           <TouchableOpacity 
             style={styles.listItem}
-            onPress={() => plan === 'FREE' && Alert.alert('Upgrade', 'Premium features coming soon!')}
+            onPress={() =>
+              plan === 'FREE' &&
+              Alert.alert(t('profile.premiumComingSoonTitle'), t('profile.premiumComingSoonMessage'))
+            }
           >
             <View style={styles.listItemLeft}>
               <CreditCard size={18} color={colors.textSecondary} />
-              <Text style={[styles.listItemText, { color: colors.text }]}>Subscription</Text>
+              <Text style={[styles.listItemText, { color: colors.text }]}>{t('profile.subscription')}</Text>
             </View>
             <View style={styles.listItemRight}>
               <Text style={[styles.listItemValue, { color: plan === 'PREMIUM' ? colors.primary : colors.textSecondary }]}>
-                {plan === 'PREMIUM' ? 'Premium' : 'Free'}
+                {plan === 'PREMIUM' ? t('profile.premium') : t('profile.free')}
               </Text>
               <ChevronRight size={18} color={colors.textSecondary} />
             </View>
@@ -1026,12 +1133,12 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
         </View>
 
         {/* About Section */}
-        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>ABOUT</Text>
+        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('profile.about')}</Text>
         <View style={[styles.listCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={styles.listItem}>
             <View style={styles.listItemLeft}>
               <Info size={18} color={colors.textSecondary} />
-              <Text style={[styles.listItemText, { color: colors.text }]}>Version</Text>
+              <Text style={[styles.listItemText, { color: colors.text }]}>{t('profile.version')}</Text>
             </View>
             <Text style={[styles.listItemValue, { color: colors.textSecondary }]}>1.0.0</Text>
           </View>
@@ -1043,11 +1150,11 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
           onPress={handleLogout}
         >
           <LogOut size={18} color="#ef4444" />
-          <Text style={styles.logoutButtonText}>Sign Out</Text>
+          <Text style={styles.logoutButtonText}>{t('profile.logout')}</Text>
         </TouchableOpacity>
 
         <Text style={[styles.copyright, { color: colors.textSecondary }]}>
-          CheckPay v1.0.0 • Built for Ethiopia
+          {t('profile.copyright')}
         </Text>
       </View>
 
@@ -1061,7 +1168,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.background, height: 'auto', maxHeight: '80%', paddingBottom: 40 }]}>
             <View style={[styles.modalHeader, { borderBottomWidth: 0 }]}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Add New Employee</Text>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>{t('employeeManagement.addNewEmployee')}</Text>
               <TouchableOpacity onPress={() => setShowAddEmployeeModal(false)}>
                 <CloseIcon size={24} color={colors.text} />
               </TouchableOpacity>
@@ -1069,7 +1176,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
 
             <View style={styles.modalBody}>
               <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
-                Share this code or QR with your employee to register them.
+                {t('employeeManagement.shareCodeForRegister')}
               </Text>
 
               <View style={[styles.qrPlaceholder, { backgroundColor: '#fff', borderColor: colors.border }]}>
@@ -1087,17 +1194,17 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
                 ) : (
                   <QrCode size={120} color={colors.primary} strokeWidth={1.5} />
                 )}
-                <Text style={[styles.qrHint, { color: colors.textSecondary }]}>Employee Invite QR</Text>
+                <Text style={[styles.qrHint, { color: colors.textSecondary }]}>{t('employeeManagement.employeeInviteQr')}</Text>
               </View>
 
               <View style={styles.otpContainer}>
-                <Text style={[styles.otpLabel, { color: colors.textSecondary }]}>Invite Code</Text>
+                <Text style={[styles.otpLabel, { color: colors.textSecondary }]}>{t('employeeManagement.inviteCode')}</Text>
                 <View style={[styles.otpBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                   <Text style={[styles.otpText, { color: colors.primary }]}>{employeeOTP}</Text>
                   <TouchableOpacity 
                     onPress={() => {
                       // Copy to clipboard logic would go here
-                      Alert.alert('Copied', 'Invite code copied to clipboard');
+                      Alert.alert(t('employeeManagement.copiedTitle'), t('employeeManagement.inviteCodeCopied'));
                     }}
                     style={styles.copyButton}
                   >
@@ -1110,7 +1217,7 @@ export default function ProfileScreen({ apiKey, onLogout, onNavigateToBanks, onN
                 style={[styles.doneButton, { backgroundColor: colors.primary }]}
                 onPress={() => setShowAddEmployeeModal(false)}
               >
-                <Text style={[styles.doneButtonText, { color: colors.primaryText }]}>Done</Text>
+                <Text style={[styles.doneButtonText, { color: colors.primaryText }]}>{t('profile.done')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1208,13 +1315,69 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
   },
-  settingsBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  ownerIdBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 4,
+  },
+  ownerIdText: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  activeStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  unlimitedBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  usageStatsGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    padding: 12,
+    paddingTop: 4,
+  },
+  usageStatCard: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  usageStatCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  usageStatIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
+  },
+  usageStatLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  usageStatValue: {
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: -1,
+    marginBottom: 8,
+  },
+  usageStatSub: {
+    fontSize: 10,
+    marginTop: 6,
+    fontWeight: '500',
   },
   content: {
     paddingHorizontal: 20,
@@ -1423,13 +1586,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   badge: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: 8,
   },
   badgeText: {
     fontSize: 10,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   packageInfoRow: {
     flexDirection: 'row',

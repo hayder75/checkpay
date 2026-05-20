@@ -23,6 +23,7 @@ import PaymentModal from '../components/PaymentModal';
 import { securityService } from '../services/securityService';
 import PINSetupScreen from './PINSetupScreen';
 import { getDisplayName } from '../utils/userUtils';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   apiKey: string;
@@ -78,6 +79,7 @@ interface PurchaseRequest {
 
 export default function SettingsScreen({ apiKey, onLogout }: Props) {
   const { colors, theme, toggleTheme } = useTheme();
+  const { t } = useTranslation();
   const [smsMonitoring, setSmsMonitoring] = useState(false);
   const [installationDate, setInstallationDate] = useState<Date | null>(null);
   const [currentPackage, setCurrentPackage] = useState<UserPackage | null>(null);
@@ -159,15 +161,18 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
           setBotUsername(response.data.botUsername);
         }
         Alert.alert(
-          'Linking Code Generated',
-          `Send /link ${response.data.code} to our Telegram bot to link your account.`,
-          [{ text: 'OK' }]
+          t('settings.linkingCodeGeneratedTitle', { defaultValue: 'Linking Code Generated' }),
+          t('settings.linkingCodeGeneratedMessage', {
+            defaultValue: 'Send /link {{code}} to our Telegram bot to link your account.',
+            code: response.data.code,
+          }),
+          [{ text: t('common.done', { defaultValue: 'OK' }) }]
         );
       } else {
-        Alert.alert('Error', response.error || 'Failed to generate linking code');
+        Alert.alert(t('common.error'), response.error || t('settings.failedGenerateLinkingCode', { defaultValue: 'Failed to generate linking code' }));
       }
     } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.error || 'Failed to generate linking code');
+      Alert.alert(t('common.error'), error.response?.data?.error || t('settings.failedGenerateLinkingCode', { defaultValue: 'Failed to generate linking code' }));
     } finally {
       setLinkingTelegram(false);
     }
@@ -175,12 +180,12 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
 
   const handleUnlinkTelegram = async () => {
     Alert.alert(
-      'Unlink Telegram',
-      'Are you sure you want to unlink your Telegram account? You will no longer receive OTP codes or notifications via Telegram.',
+      t('settings.unlinkTelegramTitle', { defaultValue: 'Unlink Telegram' }),
+      t('settings.unlinkTelegramMessage', { defaultValue: 'Are you sure you want to unlink your Telegram account? You will no longer receive OTP codes or notifications via Telegram.' }),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Unlink',
+          text: t('settings.unlink', { defaultValue: 'Unlink' }),
           style: 'destructive',
           onPress: async () => {
             setUnlinkingTelegram(true);
@@ -189,12 +194,12 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
               if (response.success) {
                 setTelegramStatus({ isLinked: false, telegramUsername: null, linkedAt: null });
                 setLinkingCode(null);
-                Alert.alert('Success', 'Telegram account unlinked successfully');
+                Alert.alert(t('common.success'), t('settings.telegramUnlinked', { defaultValue: 'Telegram account unlinked successfully' }));
               } else {
-                Alert.alert('Error', response.error || 'Failed to unlink Telegram');
+                Alert.alert(t('common.error'), response.error || t('settings.failedUnlinkTelegram', { defaultValue: 'Failed to unlink Telegram' }));
               }
             } catch (error: any) {
-              Alert.alert('Error', error.response?.data?.error || 'Failed to unlink Telegram account');
+              Alert.alert(t('common.error'), error.response?.data?.error || t('settings.failedUnlinkTelegramAccount', { defaultValue: 'Failed to unlink Telegram account' }));
             } finally {
               setUnlinkingTelegram(false);
             }
@@ -206,7 +211,10 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
 
   const copyToClipboard = (text: string) => {
     Clipboard.setString(text);
-    Alert.alert('Copied', 'Command copied to clipboard');
+    Alert.alert(
+      t('settings.copiedTitle', { defaultValue: 'Copied' }),
+      t('settings.commandCopiedToClipboard', { defaultValue: 'Command copied to clipboard' })
+    );
   };
 
   const loadSecuritySettings = async () => {
@@ -233,12 +241,12 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
     } else {
       // Disable PIN - confirm first
       Alert.alert(
-        'Disable PIN',
-        'Are you sure you want to disable the PIN lock? This will also disable biometric unlock.',
+        t('settings.disablePinTitle', { defaultValue: 'Disable PIN' }),
+        t('settings.disablePinMessage', { defaultValue: 'Are you sure you want to disable the PIN lock? This will also disable biometric unlock.' }),
         [
-          { text: 'Cancel', style: 'cancel' },
+          { text: t('common.cancel'), style: 'cancel' },
           {
-            text: 'Disable',
+            text: t('settings.disable', { defaultValue: 'Disable' }),
             style: 'destructive',
             onPress: async () => {
               await securityService.disablePIN();
@@ -256,9 +264,15 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
       try {
         await securityService.enableBiometric();
         setBiometricEnabled(true);
-        Alert.alert('Success', `${biometricName} has been enabled for quick unlock.`);
+        Alert.alert(
+          t('common.success'),
+          t('settings.biometricEnabled', {
+            defaultValue: '{{biometricName}} has been enabled for quick unlock.',
+            biometricName,
+          })
+        );
       } catch (error: any) {
-        Alert.alert('Error', error.message || 'Failed to enable biometric');
+        Alert.alert(t('common.error'), error.message || t('settings.failedEnableBiometric', { defaultValue: 'Failed to enable biometric' }));
       }
     } else {
       await securityService.disableBiometric();
@@ -307,7 +321,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
       }
     } catch (error) {
       console.error('Error loading package info:', error);
-      Alert.alert('Error', 'Failed to load package information');
+      Alert.alert(t('common.error'), t('settings.failedLoadPackageInfo', { defaultValue: 'Failed to load package information' }));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -335,17 +349,17 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
         setShowPaymentModal(false);
         setSelectedPackage(null);
         Alert.alert(
-          'Request Submitted!', 
-          'Your purchase request has been submitted. Your package will be activated once the transaction is verified by admin.',
-          [{ text: 'OK' }]
+          t('settings.requestSubmittedTitle', { defaultValue: 'Request Submitted!' }), 
+          t('settings.requestSubmittedMessage', { defaultValue: 'Your purchase request has been submitted. Your package will be activated once the transaction is verified by admin.' }),
+          [{ text: t('common.done', { defaultValue: 'OK' }) }]
         );
         loadPackageInfo(); // Refresh to show the pending purchase
       } else {
-        throw new Error(response.error || 'Failed to submit purchase request');
+        throw new Error(response.error || t('settings.failedSubmitPurchaseRequest', { defaultValue: 'Failed to submit purchase request' }));
       }
     } catch (error: any) {
       console.error('Purchase error:', error);
-      Alert.alert('Error', error.response?.data?.error || error.message || 'Failed to submit purchase request');
+      Alert.alert(t('common.error'), error.response?.data?.error || error.message || t('settings.failedSubmitPurchaseRequest', { defaultValue: 'Failed to submit purchase request' }));
     } finally {
       setPurchasing(false);
     }
@@ -356,9 +370,9 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
     const hasPending = pendingPurchases.some(p => p.packageId === pkg.id);
     if (hasPending) {
       Alert.alert(
-        'Pending Purchase',
-        'You already have a pending purchase request for this package. Please wait for admin verification.',
-        [{ text: 'OK' }]
+        t('settings.pendingPurchaseTitle', { defaultValue: 'Pending Purchase' }),
+        t('settings.pendingPurchaseMessage', { defaultValue: 'You already have a pending purchase request for this package. Please wait for admin verification.' }),
+        [{ text: t('common.done', { defaultValue: 'OK' }) }]
       );
       return;
     }
@@ -367,12 +381,12 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
 
   const handleLogout = () => {
     Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
+      t('settings.logoutTitle', { defaultValue: 'Logout' }),
+      t('settings.logoutMessage', { defaultValue: 'Are you sure you want to logout?' }),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Logout',
+          text: t('settings.logout', { defaultValue: 'Logout' }),
           style: 'destructive',
           onPress: onLogout,
         },
@@ -381,7 +395,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
   };
 
   const formatDate = (dateString?: string | null) => {
-    if (!dateString) return 'Never';
+    if (!dateString) return t('settings.never', { defaultValue: 'Never' });
     return new Date(dateString).toLocaleDateString();
   };
 
@@ -397,7 +411,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={styles.headerContent}>
           <View>
-            <Text style={[styles.title, { color: colors.text }]}>Settings</Text>
+            <Text style={[styles.title, { color: colors.text }]}>{t('settings.title', { defaultValue: 'Settings' })}</Text>
             <Text style={[styles.userName, { color: colors.textSecondary }]}>
               {getDisplayName(user)}
             </Text>
@@ -407,7 +421,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
 
       {/* Package & Usage Section */}
       <View style={[styles.section, { borderTopColor: colors.border }]}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Package & Usage</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('settings.packageAndUsage', { defaultValue: 'Package & Usage' })}</Text>
         
         {loading ? (
           <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 20 }} />
@@ -418,10 +432,10 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
               <View style={styles.cardHeader}>
                 <View>
                   <Text style={[styles.planName, { color: colors.text }]}>
-                    {currentPackage?.package?.name || 'Free Plan'}
+                    {currentPackage?.package?.name || t('settings.freePlan', { defaultValue: 'Free Plan' })}
                   </Text>
                   <Text style={[styles.planStatus, { color: isPremium ? colors.primary : colors.textSecondary }]}>
-                    {currentPackage?.status || 'Active'}
+                    {currentPackage?.status || t('settings.active', { defaultValue: 'Active' })}
                   </Text>
                 </View>
                 {isPremium && <Crown size={24} color={colors.primary} fill={colors.primary + '20'} />}
@@ -430,7 +444,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
               <View style={[styles.usageStats, { backgroundColor: colors.background }]}>
                 <View style={styles.usageItem}>
                   <Smartphone size={16} color={colors.textSecondary} style={{ marginBottom: 4 }} />
-                  <Text style={[styles.usageLabel, { color: colors.textSecondary }]}>Phone Txns</Text>
+                  <Text style={[styles.usageLabel, { color: colors.textSecondary }]}>{t('settings.phoneTxns', { defaultValue: 'Phone Txns' })}</Text>
                   <Text style={[styles.usageValue, { color: colors.text }]}>
                     {currentPackage?.phoneTxnsRemaining === null ? '∞' : currentPackage?.phoneTxnsRemaining}
                   </Text>
@@ -438,7 +452,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                 <View style={[styles.divider, { backgroundColor: colors.border }]} />
                 <View style={styles.usageItem}>
                   <CheckCircle size={16} color={colors.textSecondary} style={{ marginBottom: 4 }} />
-                  <Text style={[styles.usageLabel, { color: colors.textSecondary }]}>Verified Txns</Text>
+                  <Text style={[styles.usageLabel, { color: colors.textSecondary }]}>{t('settings.verifiedTxns', { defaultValue: 'Verified Txns' })}</Text>
                   <Text style={[styles.usageValue, { color: colors.text }]}>
                     {currentPackage?.verifiedTxnsRemaining === null ? '∞' : currentPackage?.verifiedTxnsRemaining}
                   </Text>
@@ -447,7 +461,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
               
               {currentPackage?.endsAt && (
                 <Text style={[styles.expiryText, { color: colors.textSecondary }]}>
-                  Expires: {formatDate(currentPackage.endsAt)}
+                  {t('settings.expires', { defaultValue: 'Expires' })}: {formatDate(currentPackage.endsAt)}
                 </Text>
               )}
             </View>
@@ -461,9 +475,9 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                   activeOpacity={0.7}
                 >
                   <View style={styles.upgradesHeader}>
-                    <Text style={[styles.subsectionTitle, { color: colors.text }]}>Upgrade Plan</Text>
+                    <Text style={[styles.subsectionTitle, { color: colors.text }]}>{t('settings.upgradePlan', { defaultValue: 'Upgrade Plan' })}</Text>
                     <Text style={[styles.upgradesSubtitle, { color: colors.textSecondary }]}>
-                      Select a plan to continue
+                      {t('settings.selectPlanToContinue', { defaultValue: 'Select a plan to continue' })}
                     </Text>
                   </View>
                   <ChevronRight 
@@ -497,7 +511,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                       >
                         {isPopular && (
                           <View style={[styles.popularBadge, { backgroundColor: colors.primary }]}>
-                            <Text style={styles.popularBadgeText}>MOST POPULAR</Text>
+                            <Text style={styles.popularBadgeText}>{t('settings.mostPopular', { defaultValue: 'MOST POPULAR' })}</Text>
                           </View>
                         )}
                         
@@ -507,7 +521,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                               {pkg.name}
                             </Text>
                             <Text style={[styles.packageTierLabel, { color: colors.textSecondary }]}>
-                              {pkg.tier} Tier
+                              {t('settings.tierLabel', { defaultValue: '{{tier}} Tier', tier: pkg.tier })}
                             </Text>
                           </View>
                           <View style={styles.packagePriceSection}>
@@ -515,7 +529,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                               ${pkg.price}
                             </Text>
                             <Text style={[styles.packagePeriod, { color: colors.textSecondary }]}>
-                              /{pkg.billingCycle?.toLowerCase().replace('_', ' ') || 'mo'}
+                              /{pkg.billingCycle?.toLowerCase().replace('_', ' ') || t('settings.monthShort', { defaultValue: 'mo' })}
                             </Text>
                           </View>
                         </View>
@@ -527,16 +541,16 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                             <Check size={16} color={colors.primary} />
                             <Text style={[styles.featureText, { color: colors.textSecondary }]}>
                               <Text style={{ color: colors.text, fontWeight: '600' }}>
-                                {pkg.maxPhoneTxns === null ? 'Unlimited' : pkg.maxPhoneTxns}
-                              </Text> Phone Transactions
+                                {pkg.maxPhoneTxns === null ? t('settings.unlimited', { defaultValue: 'Unlimited' }) : pkg.maxPhoneTxns}
+                              </Text> {t('settings.phoneTransactions', { defaultValue: 'Phone Transactions' })}
                             </Text>
                           </View>
                           <View style={styles.featureItem}>
                             <Check size={16} color={colors.primary} />
                             <Text style={[styles.featureText, { color: colors.textSecondary }]}>
                               <Text style={{ color: colors.text, fontWeight: '600' }}>
-                                {pkg.maxVerifiedTxns === null ? 'Unlimited' : pkg.maxVerifiedTxns}
-                              </Text> Verified Transactions
+                                {pkg.maxVerifiedTxns === null ? t('settings.unlimited', { defaultValue: 'Unlimited' }) : pkg.maxVerifiedTxns}
+                              </Text> {t('settings.verifiedTransactions', { defaultValue: 'Verified Transactions' })}
                             </Text>
                           </View>
                           {pkg.description && (
@@ -553,16 +567,16 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                           {hasPending ? (
                             <View style={[styles.statusBadge, { backgroundColor: '#f59e0b15' }]}>
                               <Clock size={14} color="#f59e0b" />
-                              <Text style={[styles.statusBadgeText, { color: '#f59e0b' }]}>Pending Verification</Text>
+                              <Text style={[styles.statusBadgeText, { color: '#f59e0b' }]}>{t('settings.pendingVerification', { defaultValue: 'Pending Verification' })}</Text>
                             </View>
                           ) : isSelected ? (
                             <View style={[styles.statusBadge, { backgroundColor: colors.primary + '15' }]}>
                               <Check size={14} color={colors.primary} />
-                              <Text style={[styles.statusBadgeText, { color: colors.primary }]}>Selected</Text>
+                              <Text style={[styles.statusBadgeText, { color: colors.primary }]}>{t('settings.selected', { defaultValue: 'Selected' })}</Text>
                             </View>
                           ) : (
                             <Text style={[styles.selectActionText, { color: colors.primary }]}>
-                              Select Plan
+                              {t('settings.selectPlan', { defaultValue: 'Select Plan' })}
                             </Text>
                           )}
                         </View>
@@ -580,7 +594,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                       onPress={() => setShowPaymentModal(true)}
                     >
                       <Text style={styles.continueButtonText}>
-                        Continue to Payment
+                        {t('settings.continueToPayment', { defaultValue: 'Continue to Payment' })}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -594,7 +608,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                 <View style={styles.pendingHeader}>
                   <Clock size={18} color="#f59e0b" />
                   <Text style={[styles.pendingSectionTitle, { color: '#f59e0b' }]}>
-                    PENDING VERIFICATION
+                    {t('settings.pendingVerificationUpper', { defaultValue: 'PENDING VERIFICATION' })}
                   </Text>
                 </View>
                 {pendingPurchases.map((purchase) => (
@@ -604,17 +618,17 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                         {purchase.package.name}
                       </Text>
                       <Text style={[styles.pendingTxn, { color: colors.textSecondary }]}>
-                        Txn: {purchase.transactionNumber}
+                        {t('settings.txnLabel', { defaultValue: 'Txn' })}: {purchase.transactionNumber}
                       </Text>
                     </View>
                     <View style={styles.pendingBadge}>
                       <AlertCircle size={14} color="#f59e0b" />
-                      <Text style={styles.pendingBadgeText}>Awaiting</Text>
+                      <Text style={styles.pendingBadgeText}>{t('settings.awaiting', { defaultValue: 'Awaiting' })}</Text>
                     </View>
                   </View>
                 ))}
                 <Text style={[styles.pendingNote, { color: colors.textSecondary }]}>
-                  Your purchase will be activated once verified by admin
+                  {t('settings.purchaseActivatedAfterVerification', { defaultValue: 'Your purchase will be activated once verified by admin' })}
                 </Text>
               </View>
             )}
@@ -624,17 +638,17 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
 
       {/* Security Section */}
       <View style={[styles.section, { borderTopColor: colors.border }]}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Security</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('settings.security', { defaultValue: 'Security' })}</Text>
         
         {/* App Lock Toggle */}
         <View style={styles.settingItem}>
           <View style={styles.settingContent}>
             <View style={styles.settingLabelRow}>
               <Lock size={18} color={colors.primary} style={{ marginRight: 8 }} />
-              <Text style={[styles.settingLabel, { color: colors.text }]}>App Lock</Text>
+                <Text style={[styles.settingLabel, { color: colors.text }]}>{t('settings.appLock', { defaultValue: 'App Lock' })}</Text>
             </View>
             <Text style={[styles.settingHint, { color: colors.textSecondary }]}>
-              Require PIN to open the app
+                {t('settings.requirePinToOpen', { defaultValue: 'Require PIN to open the app' })}
             </Text>
           </View>
           <Switch
@@ -654,7 +668,10 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                 <Text style={[styles.settingLabel, { color: colors.text }]}>{biometricName}</Text>
               </View>
               <Text style={[styles.settingHint, { color: colors.textSecondary }]}>
-                Use {biometricName} for quick unlock
+                {t('settings.useBiometricQuickUnlock', {
+                  defaultValue: 'Use {{biometricName}} for quick unlock',
+                  biometricName,
+                })}
               </Text>
             </View>
             <Switch
@@ -672,7 +689,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
             style={[styles.changePinButton, { borderColor: colors.border }]}
             onPress={handleChangePIN}
           >
-            <Text style={[styles.changePinText, { color: colors.primary }]}>Change PIN</Text>
+            <Text style={[styles.changePinText, { color: colors.primary }]}>{t('settings.changePin', { defaultValue: 'Change PIN' })}</Text>
             <ChevronRight size={18} color={colors.primary} />
           </TouchableOpacity>
         )}
@@ -680,7 +697,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
 
       {/* Telegram Account Section */}
       <View style={[styles.section, { borderTopColor: colors.border }]}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Telegram Account</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('settings.telegramAccount', { defaultValue: 'Telegram Account' })}</Text>
         
         {telegramLoading ? (
           <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 20 }} />
@@ -694,20 +711,19 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                 </View>
                 <View style={styles.telegramCardContent}>
                   <Text style={[styles.telegramCardTitle, { color: colors.text }]}>
-                    Telegram Linked
+                    {t('settings.telegramLinked', { defaultValue: 'Telegram Linked' })}
                   </Text>
                   <Text style={[styles.telegramCardSubtitle, { color: colors.textSecondary }]}>
-                    @{telegramStatus.telegramUsername || 'Unknown'}
+                    @{telegramStatus.telegramUsername || t('settings.unknown', { defaultValue: 'Unknown' })}
                   </Text>
                 </View>
               </View>
             </View>
 
             <Text style={[styles.telegramInfoText, { color: colors.textSecondary }]}>
-              With Telegram linked, you can:{'\n'}
-              • Login using OTP sent to Telegram{'\n'}
-              • Receive transaction notifications{'\n'}
-              • Reset your password using OTP
+              {t('settings.telegramLinkedBenefits', {
+                defaultValue: 'With Telegram linked, you can:\n• Login using OTP sent to Telegram\n• Receive transaction notifications\n• Reset your password using OTP',
+              })}
             </Text>
 
             <TouchableOpacity
@@ -720,7 +736,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
               ) : (
                 <>
                   <Link2Off size={18} color="#EF4444" />
-                  <Text style={styles.unlinkButtonText}>Unlink Telegram</Text>
+                  <Text style={styles.unlinkButtonText}>{t('settings.unlinkTelegram', { defaultValue: 'Unlink Telegram' })}</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -735,10 +751,10 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                 </View>
                 <View style={styles.telegramCardContent}>
                   <Text style={[styles.telegramCardTitle, { color: colors.text }]}>
-                    Telegram Not Linked
+                    {t('settings.telegramNotLinked', { defaultValue: 'Telegram Not Linked' })}
                   </Text>
                   <Text style={[styles.telegramCardSubtitle, { color: colors.textSecondary }]}>
-                    Link to enable OTP login & notifications
+                    {t('settings.linkEnableOtpNotifications', { defaultValue: 'Link to enable OTP login & notifications' })}
                   </Text>
                 </View>
               </View>
@@ -748,20 +764,22 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
               <View style={styles.linkingSteps}>
                 <View style={[styles.linkingStep, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
                   <Text style={[styles.linkingStepTitle, { color: '#1E40AF' }]}>
-                    Step 1: Open our Telegram bot
+                    {t('settings.stepOpenTelegramBot', { defaultValue: 'Step 1: Open our Telegram bot' })}
                   </Text>
                   <TouchableOpacity
                     style={styles.linkingStepAction}
                     onPress={() => Linking.openURL(`https://t.me/${botUsername}`)}
                   >
                     <ExternalLink size={16} color="#2563EB" />
-                    <Text style={styles.linkingStepLink}>Open @{botUsername}</Text>
+                    <Text style={styles.linkingStepLink}>
+                      {t('settings.openBot', { defaultValue: 'Open @{{botUsername}}', botUsername })}
+                    </Text>
                   </TouchableOpacity>
                 </View>
 
                 <View style={[styles.linkingStep, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
                   <Text style={[styles.linkingStepTitle, { color: '#1E40AF' }]}>
-                    Step 2: Send this command to the bot
+                    {t('settings.stepSendCommand', { defaultValue: 'Step 2: Send this command to the bot' })}
                   </Text>
                   <View style={styles.linkingCodeContainer}>
                     <Text style={styles.linkingCodeText}>/link {linkingCode}</Text>
@@ -775,7 +793,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                 </View>
 
                 <Text style={[styles.linkingNote, { color: colors.textSecondary }]}>
-                  Code expires in 10 minutes. After sending the command, refresh to see linked status.
+                  {t('settings.codeExpiresNote', { defaultValue: 'Code expires in 10 minutes. After sending the command, refresh to see linked status.' })}
                 </Text>
 
                 <View style={styles.linkingActions}>
@@ -783,13 +801,13 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                     style={[styles.refreshButton, { borderColor: colors.border }]}
                     onPress={loadTelegramStatus}
                   >
-                    <Text style={[styles.refreshButtonText, { color: colors.text }]}>Refresh Status</Text>
+                    <Text style={[styles.refreshButtonText, { color: colors.text }]}>{t('settings.refreshStatus', { defaultValue: 'Refresh Status' })}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.cancelLinkButton}
                     onPress={() => setLinkingCode(null)}
                   >
-                    <Text style={[styles.cancelLinkText, { color: colors.textSecondary }]}>Cancel</Text>
+                    <Text style={[styles.cancelLinkText, { color: colors.textSecondary }]}>{t('common.cancel')}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -804,7 +822,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
                 ) : (
                   <>
                     <Link2 size={18} color="#FFFFFF" />
-                    <Text style={styles.linkTelegramButtonText}>Link Telegram Account</Text>
+                    <Text style={styles.linkTelegramButtonText}>{t('settings.linkTelegramAccount', { defaultValue: 'Link Telegram Account' })}</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -815,12 +833,14 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
 
       {/* Appearance Section */}
       <View style={[styles.section, { borderTopColor: colors.border }]}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Appearance</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('settings.appearance', { defaultValue: 'Appearance' })}</Text>
         <View style={styles.settingItem}>
           <View style={styles.settingContent}>
-            <Text style={[styles.settingLabel, { color: colors.text }]}>Theme</Text>
+            <Text style={[styles.settingLabel, { color: colors.text }]}>{t('settings.theme', { defaultValue: 'Theme' })}</Text>
             <Text style={[styles.settingHint, { color: colors.textSecondary }]}>
-              {theme === 'dark' ? 'Dark' : 'Light'} mode
+              {theme === 'dark'
+                ? t('settings.darkModeLabel', { defaultValue: 'Dark mode' })
+                : t('settings.lightModeLabel', { defaultValue: 'Light mode' })}
             </Text>
           </View>
           <Switch
@@ -834,12 +854,12 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
 
       {/* SMS Monitoring Section */}
       <View style={[styles.section, { borderTopColor: colors.border }]}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>SMS Monitoring</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('settings.smsMonitoring', { defaultValue: 'SMS Monitoring' })}</Text>
         <View style={styles.settingItem}>
           <View style={styles.settingContent}>
-            <Text style={[styles.settingLabel, { color: colors.text }]}>Enable SMS Monitoring</Text>
+            <Text style={[styles.settingLabel, { color: colors.text }]}>{t('settings.enableSmsMonitoring', { defaultValue: 'Enable SMS Monitoring' })}</Text>
             <Text style={[styles.settingHint, { color: colors.textSecondary }]}>
-              Automatically process incoming SMS (requires permissions)
+              {t('settings.autoProcessSmsHint', { defaultValue: 'Automatically process incoming SMS (requires permissions)' })}
             </Text>
           </View>
           <Switch
@@ -853,17 +873,17 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
 
       {/* App Info Section */}
       <View style={[styles.section, { borderTopColor: colors.border }]}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>App Information</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('settings.appInformation', { defaultValue: 'App Information' })}</Text>
         {installationDate && (
           <View style={[styles.infoItem, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Installed:</Text>
+            <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>{t('settings.installedLabel', { defaultValue: 'Installed' })}:</Text>
             <Text style={[styles.infoValue, { color: colors.text }]}>
               {installationDate.toLocaleDateString()}
             </Text>
           </View>
         )}
         <View style={[styles.infoItem, { borderBottomColor: colors.border }]}>
-          <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Version:</Text>
+          <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>{t('settings.versionLabel', { defaultValue: 'Version' })}:</Text>
           <Text style={[styles.infoValue, { color: colors.text }]}>1.0.0</Text>
         </View>
       </View>
@@ -874,7 +894,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
           style={[styles.logoutButton, { backgroundColor: colors.primary }]} 
           onPress={handleLogout}
         >
-          <Text style={[styles.logoutText, { color: colors.primaryText }]}>Logout</Text>
+          <Text style={[styles.logoutText, { color: colors.primaryText }]}>{t('settings.logout', { defaultValue: 'Logout' })}</Text>
         </TouchableOpacity>
       </View>
 

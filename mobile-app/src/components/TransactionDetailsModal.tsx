@@ -11,7 +11,7 @@ import {
   Platform,
 } from 'react-native';
 import { X, CheckCircle2, AlertCircle, Building2, User, Phone, Calendar, Hash, MessageSquare, Share2 } from 'lucide-react-native';
-import { useTheme } from '../contexts/ThemeContext';
+import { useTranslation } from 'react-i18next';
 import { LocalTransaction } from '../services/smsService';
 
 interface Props {
@@ -24,6 +24,7 @@ const { width } = Dimensions.get('window');
 
 export default function TransactionDetailsModal({ visible, transaction, onClose }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
 
   if (!transaction) return null;
 
@@ -69,7 +70,7 @@ export default function TransactionDetailsModal({ visible, transaction, onClose 
       const extracted = extractSenderFromSMS(transaction.smsText);
       if (extracted) return extracted;
     }
-    return 'Unknown Sender';
+    return t('transactions.unknownSender');
   };
 
   const displaySender = getSenderForDisplay();
@@ -83,7 +84,7 @@ export default function TransactionDetailsModal({ visible, transaction, onClose 
   const handleShare = async () => {
     try {
       await Share.share({
-        message: `Transaction Receipt\nAmount: ${transaction.amount.toLocaleString()} Br\nFrom: ${displaySender}\nDate: ${new Date(transaction.receivedAt).toLocaleString()}\nTxn ID: ${txnIdStr}`,
+        message: `${t('transactions.receiptTitle')}\n${t('home.amountTitle')}: ${transaction.amount.toLocaleString()} ${t('common.currency')}\n${t('transactions.sender')}: ${displaySender}\n${t('transactions.date')}: ${new Date(transaction.receivedAt).toLocaleString()}\n${t('transactions.id')}: ${txnIdStr}`,
       });
     } catch (error) {
       console.error(error);
@@ -118,7 +119,7 @@ export default function TransactionDetailsModal({ visible, transaction, onClose 
             <View style={styles.amountSection}>
               <Text style={[styles.amountValue, { color: isIncome ? colors.darkGreen : '#ef4444' }]}>
                 {isIncome ? '+' : ''}{transaction.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                <Text style={[styles.currencyUnit, { color: isIncome ? colors.darkGreen : '#ef4444' }]}> Br</Text>
+                <Text style={[styles.currencyUnit, { color: isIncome ? colors.darkGreen : '#ef4444' }]}> {t('common.currency')}</Text>
               </Text>
               
               {/* Status Badge - Subtle */}
@@ -137,7 +138,7 @@ export default function TransactionDetailsModal({ visible, transaction, onClose 
                   styles.statusText, 
                   { color: transaction.isValidated ? colors.darkGreen : '#c2410c' }
                 ]}>
-                  {transaction.isValidated ? 'Verified' : 'Pending'}
+                  {transaction.isValidated ? t('transactions.verified') : t('transactions.pending')}
                 </Text>
               </View>
             </View>
@@ -148,7 +149,7 @@ export default function TransactionDetailsModal({ visible, transaction, onClose 
               <View style={styles.detailRow}>
                 <User size={20} color={colors.textSecondary} style={{ marginTop: 2 }} />
                 <View style={styles.detailContent}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Sender</Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('transactions.sender')}</Text>
                   <Text style={[styles.detailValue, { color: colors.text }]}>{displaySender}</Text>
                 </View>
               </View>
@@ -158,7 +159,7 @@ export default function TransactionDetailsModal({ visible, transaction, onClose 
                 <View style={styles.detailRow}>
                   <Building2 size={20} color={colors.textSecondary} style={{ marginTop: 2 }} />
                   <View style={styles.detailContent}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Bank</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('transactions.bank')}</Text>
                     <Text style={[styles.detailValue, { color: colors.text }]}>{bankStr}</Text>
                   </View>
                 </View>
@@ -168,7 +169,7 @@ export default function TransactionDetailsModal({ visible, transaction, onClose 
               <View style={styles.detailRow}>
                 <Calendar size={20} color={colors.textSecondary} style={{ marginTop: 2 }} />
                 <View style={styles.detailContent}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Date</Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('transactions.date')}</Text>
                   <Text style={[styles.detailValue, { color: colors.text }]}>
                     {(() => {
                       const date = new Date(transaction.receivedAt);
@@ -189,7 +190,7 @@ export default function TransactionDetailsModal({ visible, transaction, onClose 
               <View style={styles.detailRow}>
                 <Hash size={20} color={colors.textSecondary} style={{ marginTop: 2 }} />
                 <View style={styles.detailContent}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>ID</Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('transactions.id')}</Text>
                   <Text style={[styles.detailValue, { color: colors.text, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 13 }]}>
                     {txnIdStr}
                   </Text>
@@ -201,7 +202,7 @@ export default function TransactionDetailsModal({ visible, transaction, onClose 
                 <View style={styles.detailRow}>
                   <Phone size={20} color={colors.textSecondary} style={{ marginTop: 2 }} />
                   <View style={styles.detailContent}>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Phone</Text>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t('transactions.phone')}</Text>
                     <Text style={[styles.detailValue, { color: colors.text }]}>{sendFromStr}</Text>
                   </View>
                 </View>
@@ -211,7 +212,7 @@ export default function TransactionDetailsModal({ visible, transaction, onClose 
             {/* Original SMS Section - Minimal */}
             {transaction.smsText && (
               <View style={styles.smsSection}>
-                <Text style={[styles.smsLabel, { color: colors.textSecondary }]}>Original SMS</Text>
+                <Text style={[styles.smsLabel, { color: colors.textSecondary }]}>{t('transactions.originalSms')}</Text>
                 <Text style={[styles.smsText, { color: colors.textSecondary }]}>
                   {transaction.smsText}
                 </Text>
@@ -225,7 +226,7 @@ export default function TransactionDetailsModal({ visible, transaction, onClose 
               activeOpacity={0.7}
             >
               <Share2 size={18} color={colors.text} />
-              <Text style={[styles.shareButtonText, { color: colors.text }]}>Share Receipt</Text>
+              <Text style={[styles.shareButtonText, { color: colors.text }]}>{t('transactions.shareReceipt')}</Text>
             </TouchableOpacity>
           </ScrollView>
         </View>

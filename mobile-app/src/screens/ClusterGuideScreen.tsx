@@ -2,6 +2,7 @@ import React from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { ArrowLeft, ArrowRightLeft, Briefcase, Building2, CheckCircle2, GitBranch, Link2, ShieldCheck, Users } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   onBack: () => void;
@@ -19,55 +20,56 @@ type ModeCard = {
 
 export default function ClusterGuideScreen({ onBack }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
 
   const modeCards: ModeCard[] = [
     {
       key: 'single',
-      title: 'Single / Standalone',
+      title: t('clusterGuide.single.title'),
       icon: Building2,
       accent: '#2563eb',
-      summary: 'One owner or one team manages one project directly without sharing cluster ownership.',
-      bestFor: 'Use this when the project belongs to one business and does not need to move between operators.',
-      howItWorks: 'Transactions, verification, package usage, and responsibility stay under one account structure.',
+      summary: t('clusterGuide.single.summary'),
+      bestFor: t('clusterGuide.single.bestFor'),
+      howItWorks: t('clusterGuide.single.howItWorks'),
     },
     {
       key: 'cluster',
-      title: 'Cluster',
+      title: t('clusterGuide.cluster.title'),
       icon: Users,
       accent: '#16a34a',
-      summary: 'A developer links work to a business owner using the owner ID so transactions and project activity can be managed together.',
-      bestFor: 'Use this when a developer operates for a business owner and both sides need visibility and controlled linking.',
-      howItWorks: 'Developer sends a cluster request, owner reviews and accepts, then the project becomes an active linked cluster relationship.',
+      summary: t('clusterGuide.cluster.summary'),
+      bestFor: t('clusterGuide.cluster.bestFor'),
+      howItWorks: t('clusterGuide.cluster.howItWorks'),
     },
     {
       key: 'transferable',
-      title: 'Transferable',
+      title: t('clusterGuide.transferable.title'),
       icon: ArrowRightLeft,
       accent: '#d97706',
-      summary: 'A project is prepared so it can be handed over or reassigned without rebuilding the operating flow from zero.',
-      bestFor: 'Use this when a project may change hands between teams, owners, or operating accounts later.',
-      howItWorks: 'The project structure stays portable so ownership and management can move with less disruption to tracking and operations.',
+      summary: t('clusterGuide.transferable.summary'),
+      bestFor: t('clusterGuide.transferable.bestFor'),
+      howItWorks: t('clusterGuide.transferable.howItWorks'),
     },
   ];
 
   const workflowSteps = [
-    'Developer gets the business owner ID from the owner account.',
-    'Developer creates or chooses the target project and sends the cluster request to that owner ID.',
-    'Business owner reviews the incoming request from the Cluster section and accepts or rejects it.',
-    'When accepted, the link becomes active and the project can be monitored as part of the owner-developer cluster relationship.',
-    'If the relationship should end, the cluster link can be canceled, rejected, or removed later from the cluster details page.',
+    t('clusterGuide.workflow.1'),
+    t('clusterGuide.workflow.2'),
+    t('clusterGuide.workflow.3'),
+    t('clusterGuide.workflow.4'),
+    t('clusterGuide.workflow.5'),
   ];
 
   const transferNotes = [
-    'Single mode is simplest when no handover is expected.',
-    'Cluster mode is best when a developer and owner need a live shared operating relationship.',
-    'Transferable mode is best when the project may be reassigned and should remain portable.',
+    t('clusterGuide.transferNotes.1'),
+    t('clusterGuide.transferNotes.2'),
+    t('clusterGuide.transferNotes.3'),
   ];
 
   const managePoints = [
-    'Profile > Cluster shows pending requests and your current owner ID.',
-    'View Full Cluster Details shows active links, pending requests, and recent history.',
-    'Accept, reject, cancel, and remove actions all happen from the cluster management screens already in the app.',
+    t('clusterGuide.managePoints.1'),
+    t('clusterGuide.managePoints.2'),
+    t('clusterGuide.managePoints.3'),
   ];
 
   return (
@@ -77,22 +79,22 @@ export default function ClusterGuideScreen({ onBack }: Props) {
           <ArrowLeft size={18} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.headerTextWrap}>
-          <Text style={[styles.title, { color: colors.text }]}>CheckPay Modes Guide</Text>
-          <Text style={[styles.sub, { color: colors.textSecondary }]}>How single, cluster, and transferable setups work in practice</Text>
+          <Text style={[styles.title, { color: colors.text }]}>{t('clusterGuide.title')}</Text>
+          <Text style={[styles.sub, { color: colors.textSecondary }]}>{t('clusterGuide.subtitle')}</Text>
         </View>
       </View>
 
       <View style={[styles.heroCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <View style={[styles.heroBadge, { backgroundColor: colors.primary + '18' }]}>
           <ShieldCheck size={16} color={colors.primary} />
-          <Text style={[styles.heroBadgeText, { color: colors.primary }]}>Operational Guide</Text>
+          <Text style={[styles.heroBadgeText, { color: colors.primary }]}>{t('clusterGuide.operationalGuide')}</Text>
         </View>
-        <Text style={[styles.heroTitle, { color: colors.text }]}>Choose the project mode based on ownership, control, and handover needs.</Text>
-        <Text style={[styles.heroBody, { color: colors.textSecondary }]}>Single is direct ownership, Cluster is shared owner-developer linkage, and Transferable is structured for future reassignment.</Text>
+        <Text style={[styles.heroTitle, { color: colors.text }]}>{t('clusterGuide.heroTitle')}</Text>
+        <Text style={[styles.heroBody, { color: colors.textSecondary }]}>{t('clusterGuide.heroBody')}</Text>
       </View>
 
       <View style={styles.sectionWrap}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Project Modes</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('clusterGuide.projectModes')}</Text>
         {modeCards.map((card) => {
           const Icon = card.icon;
           return (
@@ -104,9 +106,9 @@ export default function ClusterGuideScreen({ onBack }: Props) {
                 <Text style={[styles.modeTitle, { color: colors.text }]}>{card.title}</Text>
               </View>
               <Text style={[styles.modeSummary, { color: colors.textSecondary }]}>{card.summary}</Text>
-              <Text style={[styles.modeLabel, { color: colors.text }]}>Best for</Text>
+              <Text style={[styles.modeLabel, { color: colors.text }]}>{t('clusterGuide.bestFor')}</Text>
               <Text style={[styles.modeBody, { color: colors.textSecondary }]}>{card.bestFor}</Text>
-              <Text style={[styles.modeLabel, { color: colors.text }]}>How it works</Text>
+              <Text style={[styles.modeLabel, { color: colors.text }]}>{t('clusterGuide.howItWorks')}</Text>
               <Text style={[styles.modeBody, { color: colors.textSecondary }]}>{card.howItWorks}</Text>
             </View>
           );
@@ -116,7 +118,7 @@ export default function ClusterGuideScreen({ onBack }: Props) {
       <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <View style={styles.infoHeader}>
           <GitBranch size={18} color={colors.primary} />
-          <Text style={[styles.infoTitle, { color: colors.text }]}>Cluster Workflow</Text>
+          <Text style={[styles.infoTitle, { color: colors.text }]}>{t('clusterGuide.clusterWorkflow')}</Text>
         </View>
         {workflowSteps.map((step, index) => (
           <View key={step} style={styles.stepRow}>
@@ -131,7 +133,7 @@ export default function ClusterGuideScreen({ onBack }: Props) {
       <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <View style={styles.infoHeader}>
           <Briefcase size={18} color={colors.primary} />
-          <Text style={[styles.infoTitle, { color: colors.text }]}>When Transferable Matters</Text>
+          <Text style={[styles.infoTitle, { color: colors.text }]}>{t('clusterGuide.whenTransferableMatters')}</Text>
         </View>
         {transferNotes.map((item) => (
           <View key={item} style={styles.bulletRow}>
@@ -144,7 +146,7 @@ export default function ClusterGuideScreen({ onBack }: Props) {
       <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <View style={styles.infoHeader}>
           <Link2 size={18} color={colors.primary} />
-          <Text style={[styles.infoTitle, { color: colors.text }]}>Where To Manage It In The App</Text>
+          <Text style={[styles.infoTitle, { color: colors.text }]}>{t('clusterGuide.whereToManage')}</Text>
         </View>
         {managePoints.map((item) => (
           <View key={item} style={styles.bulletRow}>

@@ -1,0 +1,903 @@
+import { Response } from 'express';
+import * as jwt from 'jsonwebtoken';
+import { SignOptions } from 'jsonwebtoken';
+import { z } from 'zod';
+import * as bcrypt from 'bcryptjs';
+import prisma from '../utils/prisma';
+import { generateApiKey } from '../utils/generateApiKey';
+import { generateOwnerCode } from '../utils/ownerCodeGenerator';
+import { maskPhone } from '../utils/maskPhone';
+import { AppError } from '../middleware/errorHandler';
+import { AuthRequest } from '../middleware/auth';
+
+const registerSchema = z.object({
+  username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores').optional(),
+  phone: z.string().min(10).optional(),
+  password: z.string().optional(),
+  role: z.enum(['USER', 'BUSINESS_OWNER', 'EMPLOYEE', 'DEVELOPER', 'ADMIN']).optional().default('USER'),
+  country: z.string().optional(), // Allow any length for country code
+}).refine((data: { username?: string; phone?: string }) => data.username || data.phone, {
+  message: 'Either username or phone is required',
+});
+
+const loginSchema = z.object({
+  username: z.string().min(3).optional(),
+  phone: z.string().min(10).optional(),
+  email: z.string().email().optional(),
+  password: z.string().min(6),
+}).refine((data: { username?: string; phone?: string; email?: string }) => data.username || data.phone || data.email, {
+  message: 'Either username, phone, or email is required',
+});
+
+function signToken(userId: string) {
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    throw new Error('JWT_SECRET environment variable is not configured');
+  }
+  const expiresIn = process.env.JWT_EXPIRES_IN || '7d';
+  return jwt.sign({ userId }, jwtSecret, { expiresIn } as SignOptions);
+}
+
+/**
+ * Register a new user
+ */
+export async function register(req: AuthRequest, res: Response) {
+  const data = registerSchema.parse(req.body);
+
+  // Check if username already exists
+  if (data.username) {
+    const existing = await prisma.user.findUnique({
+      where: { username: data.username },
+    });
+    if (existing) {
+      throw new AppError(400, 'Username already taken. Please choose another.');
+    }
+  }
+
+  // Check if phone already exists
+  if (data.phone) {
+    const existing = await prisma.user.findUnique({
+      where: { phone: data.phone },
+    });
+    if (existing) {
+      throw new AppError(400, 'Phone number already registered.');
+    }
+  }
+
+  // Generate API key
+  let apiKey = generateApiKey();
+  let keyExists = await prisma.user.findUnique({ where: { apiKey } });
+  while (keyExists) {
+    apiKey = generateApiKey();
+    keyExists = await prisma.user.findUnique({ where: { apiKey } });
+  }
+
+  const shouldAssignOwnerCode = data.role === 'BUSINESS_OWNER';
+  let ownerCode: string | null = null;
+  if (shouldAssignOwnerCode) {
+    for (let i = 0; i < 20; i++) {
+      const candidate = generateOwnerCode();
+      const existingOwnerCode = await prisma.user.findUnique({
+        where: { ownerCode: candidate },
+        select: { id: true },
+      });
+      if (!existingOwnerCode) {
+        ownerCode = candidate;
+        break;
+      }
+    }
+    if (!ownerCode) {
+      throw new AppError(500, 'Failed to allocate owner ID. Please try again.');
+    }
+  }
+
+  const passwordToStore = (typeof data.password === 'string' ? data.password : '').trim();
+  const hashedPassword = await bcrypt.hash(passwordToStore, 10);
+
+  // Create user
+  const user = await prisma.user.create({
+    data: {
+      username: data.username || null,
+      phone: data.phone || null,
+      password: hashedPassword,
+      country: data.country || null,
+      role: data.role as any,
+      apiKey,
+      ownerCode: ownerCode || null,
+      ownerCodeAssignedAt: ownerCode ? new Date() : null,
+      usageStats: {
+        create: {
+          appRequestsToday: 0,
+          appRequestsMonth: 0,
+          devRequestsToday: 0,
+          devRequestsMonth: 0,
+        },
+      },
+    },
+    select: {
+      id: true,
+      username: true,
+      phone: true,
+      apiKey: true,
+      plan: true,
+      role: true,
+      country: true,
+      ownerCode: true,
+      createdAt: true,
+    },
+  });
+
+  // Assign free package to new user (unless admin)
+  if (user.role !== 'ADMIN' && user.role !== 'SUPER_ADMIN') {
+    const { assignFreePackageToUser } = await import('../utils/tokenUsage');
+    try {
+      await assignFreePackageToUser(user.id);
+    } catch (error) {
+      // Log error but don't fail registration if package assignment fails
+      console.error('Failed to assign free package to user:', error);
+    }
+  }
+
+  // Generate JWT token
+  const token = signToken(user.id);
+
+  res.status(201).json({
+    success: true,
+    data: {
+      user: {
+        ...user,
+        phone: user.phone ? maskPhone(user.phone) : null,
+      },
+      token,
+    },
+  });
+}
+
+/**
+ * Login with username/phone and password
+ */
+export async function login(req: AuthRequest, res: Response) {
+  const { username, phone, email, password } = loginSchema.parse(req.body);
+
+  // Find user by username, phone, or email
+  let user = null;
+  if (username) {
+    user = await prisma.user.findUnique({
+      where: { username },
+      select: {
+        id: true, username: true, email: true, phone: true, password: true, apiKey: true,
+        plan: true, role: true, country: true, createdAt: true,
+      },
+    });
+  } else if (phone) {
+    user = await prisma.user.findUnique({
+      where: { phone },
+      select: {
+        id: true, username: true, email: true, phone: true, password: true, apiKey: true,
+        plan: true, role: true, country: true, createdAt: true,
+      },
+    });
+  } else if (email) {
+    user = await prisma.user.findFirst({
+      where: { email },
+      select: {
+        id: true, username: true, email: true, phone: true, password: true, apiKey: true,
+        plan: true, role: true, country: true, createdAt: true,
+      },
+    });
+  }
+
+  if (!user) {
+    throw new AppError(401, 'Invalid username/phone or password');
+  }
+
+  // Check if user has password set
+  if (!user.password) {
+    throw new AppError(400, 'Please set a password first');
+  }
+
+  // Verify password
+  const isValidPassword = await bcrypt.compare(password, user.password);
+  if (!isValidPassword) {
+    throw new AppError(401, 'Invalid username/phone or password');
+  }
+
+  // Generate JWT token
+  const token = signToken(user.id);
+
+  res.json({
+    success: true,
+    data: {
+      user: {
+        ...user,
+        password: undefined,
+        phone: user.phone ? maskPhone(user.phone) : null,
+      },
+      token,
+    },
+  });
+}
+
+/**
+ * Start Google OAuth flow - redirects to Google
+ */
+export async function startGoogleAuth(req: AuthRequest, res: Response) {
+  // Passport handles the redirect automatically
+  // This endpoint is handled by passport.authenticate middleware in routes
+}
+
+/**
+ * Google OAuth callback - handled by Passport
+ * This function is called after Passport authenticates the user
+ */
+export async function googleCallback(req: AuthRequest, res: Response, next: any) {
+  // Check for errors from Google
+  const error = req.query.error as string;
+  if (error) {
+    const errorDescription = req.query.error_description as string || '';
+    const frontendBase = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const redirectUrl = new URL('/auth/google/callback', frontendBase);
+    redirectUrl.searchParams.set('error', error);
+    redirectUrl.searchParams.set('error_description', errorDescription);
+    return res.redirect(redirectUrl.toString());
+  }
+
+  // Passport middleware handles authentication
+  // After successful auth, req.user will contain { user, token }
+  // This is handled in the route with passport.authenticate callback
+}
+
+/**
+ * Handle successful Google authentication
+ */
+export async function handleGoogleAuthSuccess(req: AuthRequest, res: Response) {
+  const authResult = (req as any).user as { user: any; token: string } | undefined;
+
+  if (!authResult || !authResult.user || !authResult.token) {
+    // Check for mobile redirect_uri in state parameter
+    const state = req.query.state as string;
+    let redirectUri: string | null = null;
+
+    if (state) {
+      try {
+        const decoded = Buffer.from(state, 'base64').toString('utf-8');
+        const stateData = JSON.parse(decoded);
+        redirectUri = stateData.redirect_uri || null;
+      } catch (e) {
+        // Invalid state, ignore
+      }
+    }
+
+    if (redirectUri) {
+      const redirectUrl = new URL(redirectUri);
+      redirectUrl.searchParams.set('error', 'authentication_failed');
+      redirectUrl.searchParams.set('error_description', 'Failed to authenticate with Google');
+      return res.redirect(redirectUrl.toString());
+    }
+
+    const frontendBase = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const redirectUrl = new URL('/auth/google/callback', frontendBase);
+    redirectUrl.searchParams.set('error', 'authentication_failed');
+    redirectUrl.searchParams.set('error_description', 'Failed to authenticate with Google');
+    return res.redirect(redirectUrl.toString());
+  }
+
+  const { user, token } = authResult;
+
+  // Check for mobile redirect_uri in state parameter
+  const state = req.query.state as string;
+  let redirectUri: string | null = null;
+
+  if (state) {
+    try {
+      const decoded = Buffer.from(state, 'base64').toString('utf-8');
+      const stateData = JSON.parse(decoded);
+      redirectUri = stateData.redirect_uri || null;
+    } catch (e) {
+      // Invalid state, ignore
+    }
+  }
+
+  // Use mobile redirect_uri if provided, otherwise use default frontend URL
+  if (redirectUri) {
+    const redirectUrl = new URL(redirectUri);
+    redirectUrl.searchParams.set('token', token);
+    redirectUrl.searchParams.set('user', Buffer.from(JSON.stringify(user)).toString('base64url'));
+    return res.redirect(redirectUrl.toString());
+  }
+
+  // Default: Redirect to frontend with token + user
+  const frontendBase = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const redirectUrl = new URL('/auth/google/callback', frontendBase);
+  redirectUrl.searchParams.set('token', token);
+  redirectUrl.searchParams.set('user', Buffer.from(JSON.stringify(user)).toString('base64url'));
+
+  res.redirect(redirectUrl.toString());
+}
+
+/**
+ * Handle Google authentication failure
+ */
+export async function handleGoogleAuthFailure(req: AuthRequest, res: Response) {
+  // Check for mobile redirect_uri in state parameter
+  const state = req.query.state as string;
+  let redirectUri: string | null = null;
+
+  if (state) {
+    try {
+      const decoded = Buffer.from(state, 'base64').toString('utf-8');
+      const stateData = JSON.parse(decoded);
+      redirectUri = stateData.redirect_uri || null;
+    } catch (e) {
+      // Invalid state, ignore
+    }
+  }
+
+  if (redirectUri) {
+    const redirectUrl = new URL(redirectUri);
+    redirectUrl.searchParams.set('error', 'authentication_failed');
+    redirectUrl.searchParams.set('error_description', 'Google authentication failed. Please try again.');
+    return res.redirect(redirectUrl.toString());
+  }
+
+  const frontendBase = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const redirectUrl = new URL('/auth/google/callback', frontendBase);
+  redirectUrl.searchParams.set('error', 'authentication_failed');
+  redirectUrl.searchParams.set('error_description', 'Google authentication failed. Please try again.');
+  res.redirect(redirectUrl.toString());
+}
+
+/**
+ * Update user role (for Google OAuth users who need to select role)
+ */
+export async function updateRole(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const schema = z.object({
+    role: z.enum(['DEVELOPER', 'BUSINESS_OWNER', 'USER', 'EMPLOYEE']),
+    username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores').optional(),
+    country: z.string().optional(),
+  });
+
+  const data = schema.parse(req.body);
+
+  // Only allow updating if current role is USER (new Google OAuth users)
+  const currentUser = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { role: true },
+  });
+
+  if (!currentUser) {
+    throw new AppError(404, 'User not found');
+  }
+
+  // Allow role update if current role is USER, or if admin
+  if (currentUser.role !== 'USER' && req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+    throw new AppError(403, 'Cannot change role. You can only set your role once.');
+  }
+
+  // Check if username is already taken
+  if (data.username) {
+    const existing = await prisma.user.findUnique({
+      where: { username: data.username },
+    });
+    if (existing && existing.id !== req.user.id) {
+      throw new AppError(400, 'Username already taken. Please choose another.');
+    }
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: req.user.id },
+    data: {
+      role: data.role,
+      username: data.username || undefined,
+      country: data.country || undefined,
+    },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      phone: true,
+      apiKey: true,
+      plan: true,
+      role: true,
+      country: true,
+      createdAt: true,
+    },
+  });
+
+  // Clear user cache to ensure fresh data on next request
+  const cache = (await import('../utils/redis')).default;
+  const cacheKey = `user:${req.user.id}`;
+  await cache.del(cacheKey).catch(() => {
+    // Ignore cache errors - not critical
+  });
+
+  res.json({
+    success: true,
+    data: updated,
+    message: 'Role updated successfully',
+  });
+}
+
+/**
+ * Get current user info
+ */
+export async function getMe(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  let user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      phone: true,
+      apiKey: true,
+      plan: true,
+      role: true,
+      country: true,
+      ownerCode: true,
+      customerOnboardingProfile: {
+        select: {
+          region: true,
+          city: true,
+          subCity: true,
+          latitude: true,
+          longitude: true,
+          businessType: true,
+          updatedAt: true,
+        },
+      },
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  if (!user) {
+    throw new AppError(404, 'User not found');
+  }
+
+
+  if (user.role === 'BUSINESS_OWNER' && !user.ownerCode) {
+    for (let i = 0; i < 20; i++) {
+      const candidate = generateOwnerCode();
+      const existingOwnerCode = await prisma.user.findUnique({
+        where: { ownerCode: candidate },
+        select: { id: true },
+      });
+      if (!existingOwnerCode) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { ownerCode: candidate, ownerCodeAssignedAt: new Date() },
+          select: {
+            id: true,
+            username: true,
+            email: true,
+            phone: true,
+            apiKey: true,
+            plan: true,
+            role: true,
+            country: true,
+            ownerCode: true,
+            customerOnboardingProfile: {
+              select: {
+                region: true,
+                city: true,
+                subCity: true,
+                latitude: true,
+                longitude: true,
+                businessType: true,
+                updatedAt: true,
+              },
+            },
+            createdAt: true,
+            updatedAt: true,
+          },
+        });
+        break;
+      }
+    }
+  }
+
+  // Get employee info if user is an employee
+  let employee = null;
+  if (user.role === 'EMPLOYEE') {
+    employee = await prisma.employee.findFirst({
+      where: {
+        userId: user.id,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        businessId: true,
+        name: true,
+        business: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+  }
+
+  res.json({
+    success: true,
+    data: {
+      ...user,
+      phone: user.phone ? maskPhone(user.phone) : null,
+      customerOnboardingProfile: user.customerOnboardingProfile,
+      employee: employee ? {
+        id: employee.id,
+        businessId: employee.businessId,
+        name: employee.name,
+        business: employee.business,
+      } : null,
+    },
+  });
+}
+
+/**
+ * Save customer onboarding business profile details
+ */
+export async function updateBusinessProfile(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const schema = z.object({
+    region: z.string().min(2, 'Region is required').max(100),
+    city: z.string().min(2, 'City is required').max(100),
+    subCity: z.string().max(100).optional().nullable(),
+    latitude: z.number().min(-90).max(90).optional().nullable(),
+    longitude: z.number().min(-180).max(180).optional().nullable(),
+    businessType: z.string().min(2, 'Business type is required').max(100),
+  });
+
+  const data = schema.parse(req.body);
+
+  const profile = await prisma.customerOnboardingProfile.upsert({
+    where: { userId: req.user.id },
+    create: {
+      userId: req.user.id,
+      region: data.region.trim(),
+      city: data.city.trim(),
+      subCity: data.subCity?.trim() || null,
+      latitude: data.latitude ?? null,
+      longitude: data.longitude ?? null,
+      businessType: data.businessType.trim(),
+    },
+    update: {
+      region: data.region.trim(),
+      city: data.city.trim(),
+      subCity: data.subCity?.trim() || null,
+      latitude: data.latitude ?? null,
+      longitude: data.longitude ?? null,
+      businessType: data.businessType.trim(),
+    },
+    select: {
+      region: true,
+      city: true,
+      subCity: true,
+      latitude: true,
+      longitude: true,
+      businessType: true,
+      updatedAt: true,
+    },
+  });
+
+  res.json({
+    success: true,
+    data: profile,
+    message: 'Business profile saved successfully',
+  });
+}
+
+/**
+ * Update password
+ */
+export async function updatePassword(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const schema = z.object({
+    currentPassword: z.string().min(1, 'Current password is required'),
+    newPassword: z.string().min(6, 'New password must be at least 6 characters'),
+  });
+
+  const data = schema.parse(req.body);
+
+  // Get user with password
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { id: true, password: true },
+  });
+
+  if (!user) {
+    throw new AppError(404, 'User not found');
+  }
+
+  if (!user.password) {
+    throw new AppError(400, 'No password set. Please set a password first.');
+  }
+
+  // Verify current password
+  const isValidPassword = await bcrypt.compare(data.currentPassword, user.password);
+  if (!isValidPassword) {
+    throw new AppError(401, 'Current password is incorrect');
+  }
+
+  // Hash new password
+  const hashedPassword = await bcrypt.hash(data.newPassword, 10);
+
+  // Update password
+  await prisma.user.update({
+    where: { id: req.user.id },
+    data: { password: hashedPassword },
+  });
+
+  res.json({
+    success: true,
+    message: 'Password updated successfully',
+  });
+}
+
+/**
+ * Update profile (username, phone, country)
+ */
+export async function updateProfile(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const schema = z.object({
+    username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores').optional(),
+    phone: z.string().min(10).optional(),
+    country: z.string().optional(),
+  });
+
+  const data = schema.parse(req.body);
+
+  // Build update data
+  const updateData: any = {};
+  if (data.username !== undefined) updateData.username = data.username;
+  if (data.phone !== undefined) updateData.phone = data.phone;
+  if (data.country !== undefined) updateData.country = data.country;
+
+  if (Object.keys(updateData).length === 0) {
+    throw new AppError(400, 'No fields to update');
+  }
+
+  // Check for duplicate username
+  if (data.username) {
+    const existing = await prisma.user.findUnique({
+      where: { username: data.username },
+    });
+    if (existing && existing.id !== req.user.id) {
+      throw new AppError(400, 'Username already taken. Please choose another.');
+    }
+  }
+
+  // Check for duplicate phone
+  if (data.phone) {
+    const existing = await prisma.user.findUnique({
+      where: { phone: data.phone },
+    });
+    if (existing && existing.id !== req.user.id) {
+      throw new AppError(400, 'Phone number already registered.');
+    }
+  }
+
+  // Update user
+  const updated = await prisma.user.update({
+    where: { id: req.user.id },
+    data: updateData,
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      phone: true,
+      apiKey: true,
+      plan: true,
+      role: true,
+      country: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  res.json({
+    success: true,
+    data: {
+      ...updated,
+      phone: updated.phone ? maskPhone(updated.phone) : null,
+    },
+    message: 'Profile updated successfully',
+  });
+}
+
+/**
+ * Reset password by phone number
+ */
+export async function resetPasswordByPhone(req: AuthRequest, res: Response) {
+  const schema = z.object({
+    phone: z.string().min(10, 'Phone number is required'),
+    newPassword: z.string().min(6, 'Password must be at least 6 characters'),
+    otp: z.string().optional(), // Placeholder for future OTP verification
+  });
+
+  const data = schema.parse(req.body);
+
+  // Find user by phone
+  const user = await prisma.user.findUnique({
+    where: { phone: data.phone },
+    select: { id: true },
+  });
+
+  if (!user) {
+    throw new AppError(404, 'No account found with this phone number');
+  }
+
+  // TODO: Implement OTP verification here
+  // if (data.otp) {
+  //   const isValidOtp = await verifyOtp(data.phone, data.otp);
+  //   if (!isValidOtp) {
+  //     throw new AppError(401, 'Invalid OTP');
+  //   }
+  // }
+
+  // Hash new password
+  const hashedPassword = await bcrypt.hash(data.newPassword, 10);
+
+  // Update password
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { password: hashedPassword },
+  });
+
+  res.json({
+    success: true,
+    message: 'Password reset successfully',
+  });
+}
+
+/**
+ * Regenerate API key
+ */
+export async function regenerateKey(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  // Generate new unique API key
+  let newApiKey = generateApiKey();
+  let keyExists = await prisma.user.findUnique({ where: { apiKey: newApiKey } });
+  while (keyExists) {
+    newApiKey = generateApiKey();
+    keyExists = await prisma.user.findUnique({ where: { apiKey: newApiKey } });
+  }
+
+  // Update user with new API key
+  const updated = await prisma.user.update({
+    where: { id: req.user.id },
+    data: { apiKey: newApiKey },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      phone: true,
+      apiKey: true,
+      plan: true,
+      role: true,
+      country: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  res.json({
+    success: true,
+    data: {
+      ...updated,
+      phone: updated.phone ? maskPhone(updated.phone) : null,
+    },
+    message: 'API key regenerated successfully',
+  });
+}
+
+
+/**
+ * Complete profile for social auth users
+ * Used after Google/Telegram registration to collect country and optional details
+ */
+export async function completeProfile(req: AuthRequest, res: Response) {
+  if (!req.user) {
+    throw new AppError(401, 'Not authenticated');
+  }
+
+  const schema = z.object({
+    country: z.string().min(2).max(3, 'Country code must be 2-3 characters'),
+    firstName: z.string().max(50).optional().nullable(),
+    lastName: z.string().max(50).optional().nullable(),
+    role: z.enum(['BUSINESS_OWNER', 'DEVELOPER']).optional(),
+  });
+
+  const data = schema.parse(req.body);
+
+  // Get current user to check profileComplete status
+  const currentUser = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { profileComplete: true, role: true },
+  });
+
+  if (!currentUser) {
+    throw new AppError(404, 'User not found');
+  }
+
+  // Build update data
+  const updateData: any = {
+    country: data.country.toUpperCase(),
+    profileComplete: true,
+  };
+
+  // Only update name fields if provided
+  if (data.firstName !== undefined && data.firstName !== null) {
+    updateData.firstName = data.firstName;
+  }
+  if (data.lastName !== undefined && data.lastName !== null) {
+    updateData.lastName = data.lastName;
+  }
+
+  // Only allow role change if profile is incomplete (first-time setup)
+  // and user provided a role
+  if (!currentUser.profileComplete && data.role) {
+    updateData.role = data.role;
+  }
+
+  // Update user
+  const updated = await prisma.user.update({
+    where: { id: req.user.id },
+    data: updateData,
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      phone: true,
+      firstName: true,
+      lastName: true,
+      apiKey: true,
+      plan: true,
+      role: true,
+      country: true,
+      profileComplete: true,
+      telegramId: true,
+      telegramUsername: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  // Clear user cache (ignore errors)
+  try {
+    const cache = (await import('../utils/redis')).default;
+    const cacheKey = `user:${req.user.id}`;
+    await cache.del(cacheKey);
+  } catch (e) {
+    // Ignore cache errors
+  }
+
+  res.json({
+    success: true,
+    data: {
+      ...updated,
+      phone: updated.phone ? maskPhone(updated.phone) : null,
+    },
+    message: 'Profile completed successfully',
+  });
+}

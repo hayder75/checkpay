@@ -3,9 +3,11 @@ import { View, Text, FlatList, StyleSheet, TouchableOpacity, RefreshControl, Act
 import { useTheme } from '../contexts/ThemeContext';
 import { notificationAPI } from '../services/NotificationService';
 import { Bell, CheckCircle, AlertTriangle, Info, ArrowLeft } from 'lucide-react-native';
+import { useTranslation } from 'react-i18next';
 
 export default function NotificationsScreen({ onBack }: { onBack: () => void }) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const [notifications, setNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -111,7 +113,7 @@ export default function NotificationsScreen({ onBack }: { onBack: () => void }) 
         <TouchableOpacity onPress={onBack} style={styles.backButton}>
           <ArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Notifications</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>{t('notifications.title')}</Text>
       </View>
 
       {loading ? (
@@ -134,7 +136,7 @@ export default function NotificationsScreen({ onBack }: { onBack: () => void }) 
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Bell size={48} color={colors.textSecondary} />
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No notifications yet</Text>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('notifications.empty')}</Text>
             </View>
           }
           contentContainerStyle={notifications.length === 0 ? styles.emptyList : styles.listContent}

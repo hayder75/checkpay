@@ -177,7 +177,8 @@ export const securityService = {
    */
   getBiometricTypeName(types: LocalAuthentication.AuthenticationType[]): string {
     // Use generic "Biometrics" label to cover all authentication types
-    return 'Biometrics';
+    const i18next = require('i18next');
+    return i18next.t('common.biometrics');
   },
 
   /**

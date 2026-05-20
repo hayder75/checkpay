@@ -123,14 +123,16 @@ export default function PremiumScreen({ apiKey }: Props) {
     loadData();
   };
 
-  const handlePurchaseSubmit = async (transactionNumber: string) => {
+  const handlePurchaseSubmit = async (payload: { transactionNumber: string; channel: string; screenshotUrl?: string }) => {
     if (!selectedPackage) return;
 
     setPurchasing(true);
     try {
       const response = await packageAPI.purchasePackage({
         packageId: selectedPackage.id,
-        transactionNumber,
+        transactionNumber: payload.transactionNumber,
+        channel: payload.channel,
+        screenshotUrl: payload.screenshotUrl,
       });
 
       if (response.success) {

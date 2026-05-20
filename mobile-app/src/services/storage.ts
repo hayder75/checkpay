@@ -206,6 +206,16 @@ export const storage = {
     await AsyncStorage.setItem('onboarding_completed', completed ? 'true' : 'false');
   },
 
+  // Customer Onboarding
+  async getCustomerOnboardingCompleted(): Promise<boolean> {
+    const completed = await AsyncStorage.getItem('customer_onboarding_completed');
+    return completed === 'true';
+  },
+
+  async setCustomerOnboardingCompleted(completed: boolean): Promise<void> {
+    await AsyncStorage.setItem('customer_onboarding_completed', completed ? 'true' : 'false');
+  },
+
   // User Country
   async getUserCountry(): Promise<string | null> {
     return await AsyncStorage.getItem('user_country');
@@ -449,6 +459,7 @@ export const storage = {
         'processed_sms_ids',
         'last_processed_sms_timestamp',
         'pending_background_sms',
+        'customer_onboarding_completed',
       ]);
       
       log.info('Storage', 'All data cleared');

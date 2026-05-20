@@ -415,6 +415,17 @@ export const authAPI = {
     const response = await api.post('/auth/complete-profile', data);
     return response;
   },
+  updateBusinessProfile: async (data: {
+    region?: string;
+    city?: string;
+    subCity?: string;
+    latitude?: number;
+    longitude?: number;
+    businessType?: string;
+  }) => {
+    const response = await api.put('/auth/business-profile', data);
+    return response.data;
+  },
 };
 
 // OTP Auth API (Passwordless login via Telegram)
@@ -1032,7 +1043,14 @@ export const packageAPI = {
     return response.data;
   },
   // Purchase a package
-  purchasePackage: async (data: { packageId: string; transactionNumber: string }) => {
+  purchasePackage: async (data: {
+    packageId: string;
+    transactionNumber: string;
+    channel?: string;
+    screenshotUrl?: string;
+    ocrOutput?: string;
+    confidence?: number;
+  }) => {
     const response = await api.post('/user-packages/purchase', data);
     return response.data;
   },

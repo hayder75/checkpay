@@ -16,6 +16,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { Pattern } from '../types';
 import { authAPI } from '../services/api';
 import { patternsAPI } from '../services/api';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   phone: string;
@@ -25,6 +26,7 @@ interface Props {
 
 export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResendOTP }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -41,12 +43,12 @@ export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResend
 
   const handleVerify = async () => {
     if (!code.trim()) {
-      Alert.alert('Error', 'Please enter the OTP code');
+      Alert.alert(t('common.error'), t('verifyOtp.enterOtpCode', { defaultValue: 'Please enter the OTP code' }));
       return;
     }
 
     if (password.trim() && password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
+      Alert.alert(t('common.error'), t('verifyOtp.passwordsDoNotMatch', { defaultValue: 'Passwords do not match' }));
       return;
     }
 
@@ -63,7 +65,7 @@ export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResend
         const { token, user } = response.data;
         
         if (!token) {
-          Alert.alert('Error', 'No token received from server');
+          Alert.alert(t('common.error'), t('verifyOtp.noTokenReceived', { defaultValue: 'No token received from server' }));
           return;
         }
         
@@ -76,7 +78,7 @@ export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResend
         const savedToken = await storage.getToken();
         if (!savedToken || savedToken !== token) {
           console.error('❌ [VerifyOTP] Token was not saved correctly');
-          Alert.alert('Error', 'Failed to save authentication token');
+          Alert.alert(t('common.error'), t('verifyOtp.failedSaveAuthToken', { defaultValue: 'Failed to save authentication token' }));
           return;
         }
         
@@ -89,7 +91,7 @@ export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResend
           const savedApiKey = await storage.getApiKey();
           if (!savedApiKey || savedApiKey !== apiKey) {
             console.error('❌ [VerifyOTP] API key was not saved correctly');
-            Alert.alert('Error', 'Failed to save API key');
+            Alert.alert(t('common.error'), t('verifyOtp.failedSaveApiKey', { defaultValue: 'Failed to save API key' }));
             return;
           }
           
@@ -113,14 +115,14 @@ export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResend
           }
         } else {
           console.error('❌ [VerifyOTP] No API key in user object:', user);
-          Alert.alert('Error', 'No API key found for this account. Please contact support.');
+          Alert.alert(t('common.error'), t('verifyOtp.noApiKeySupport', { defaultValue: 'No API key found for this account. Please contact support.' }));
         }
       } else {
-        Alert.alert('Error', response.message || 'OTP verification failed');
+        Alert.alert(t('common.error'), response.message || t('verifyOtp.verificationFailed', { defaultValue: 'OTP verification failed' }));
       }
     } catch (error: any) {
       console.error('Verify OTP error:', error);
-      Alert.alert('Error', error.message || 'OTP verification failed');
+      Alert.alert(t('common.error'), error.message || t('verifyOtp.verificationFailed', { defaultValue: 'OTP verification failed' }));
     } finally {
       setLoading(false);
     }
@@ -135,17 +137,20 @@ export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResend
         // Show OTP code if in debug mode
         const otpCode = response.data?.debug?.otp;
         if (otpCode) {
-          Alert.alert('Success', `OTP resent! Check console for OTP code: ${otpCode}`);
+          Alert.alert(
+            t('common.success'),
+            t('verifyOtp.otpResentWithCode', { defaultValue: 'OTP resent! Check console for OTP code: {{otpCode}}', otpCode })
+          );
         } else {
-          Alert.alert('Success', 'OTP resent! Please check your phone or email.');
+          Alert.alert(t('common.success'), t('verifyOtp.otpResent', { defaultValue: 'OTP resent! Please check your phone or email.' }));
         }
         setCountdown(60);
       } else {
-        Alert.alert('Error', response.message || 'Failed to resend OTP');
+        Alert.alert(t('common.error'), response.message || t('verifyOtp.failedResendOtp', { defaultValue: 'Failed to resend OTP' }));
       }
     } catch (error: any) {
       console.error('Resend OTP error:', error);
-      Alert.alert('Error', error.message || 'Failed to resend OTP');
+      Alert.alert(t('common.error'), error.message || t('verifyOtp.failedResendOtp', { defaultValue: 'Failed to resend OTP' }));
     } finally {
       setResending(false);
     }
@@ -161,18 +166,18 @@ export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResend
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.text }]}>Verify OTP</Text>
+          <Text style={[styles.title, { color: colors.text }]}>{t('verifyOtp.title', { defaultValue: 'Verify OTP' })}</Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            Enter the code sent to {phone}
+            {t('verifyOtp.subtitle', { defaultValue: 'Enter the code sent to {{phone}}', phone })}
           </Text>
         </View>
 
         <View style={styles.form}>
           <View style={styles.inputGroup}>
-            <Text style={[styles.label, { color: colors.text }]}>OTP Code</Text>
+            <Text style={[styles.label, { color: colors.text }]}>{t('verifyOtp.otpCode', { defaultValue: 'OTP Code' })}</Text>
             <TextInput
               style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-              placeholder="123456"
+              placeholder={t('verifyOtp.otpPlaceholder', { defaultValue: '123456' })}
               placeholderTextColor={colors.textSecondary}
               value={code}
               onChangeText={(text) => setCode(text.replace(/[^0-9]/g, '').substring(0, 6))}
@@ -180,15 +185,15 @@ export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResend
               maxLength={6}
             />
             <Text style={[styles.hint, { color: colors.textSecondary }]}>
-              Check console (F12) for OTP code
+              {t('verifyOtp.debugHint', { defaultValue: 'Check console (F12) for OTP code' })}
             </Text>
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={[styles.label, { color: colors.text }]}>Password (Optional)</Text>
+            <Text style={[styles.label, { color: colors.text }]}>{t('verifyOtp.passwordOptional', { defaultValue: 'Password (Optional)' })}</Text>
             <TextInput
               style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-              placeholder="Set a password for future logins"
+              placeholder={t('verifyOtp.passwordOptionalPlaceholder', { defaultValue: 'Set a password for future logins' })}
               placeholderTextColor={colors.textSecondary}
               value={password}
               onChangeText={setPassword}
@@ -198,10 +203,10 @@ export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResend
 
           {password.trim() && (
             <View style={styles.inputGroup}>
-              <Text style={[styles.label, { color: colors.text }]}>Confirm Password</Text>
+              <Text style={[styles.label, { color: colors.text }]}>{t('verifyOtp.confirmPassword', { defaultValue: 'Confirm Password' })}</Text>
               <TextInput
                 style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-                placeholder="Confirm password"
+                placeholder={t('verifyOtp.confirmPasswordPlaceholder', { defaultValue: 'Confirm password' })}
                 placeholderTextColor={colors.textSecondary}
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
@@ -219,7 +224,7 @@ export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResend
               <ActivityIndicator color={colors.primaryText} />
             ) : (
               <Text style={[styles.buttonText, { color: colors.primaryText }]}>
-                Verify OTP
+                {t('verifyOtp.verifyButton', { defaultValue: 'Verify OTP' })}
               </Text>
             )}
           </TouchableOpacity>
@@ -233,7 +238,9 @@ export default function VerifyOTPScreen({ phone, onVerificationSuccess, onResend
               <ActivityIndicator color={colors.primary} />
             ) : (
               <Text style={[styles.resendText, { color: colors.primary }]}>
-                {countdown > 0 ? `Resend OTP (${countdown}s)` : 'Resend OTP'}
+                {countdown > 0
+                  ? t('verifyOtp.resendCountdown', { defaultValue: 'Resend OTP ({{countdown}}s)', countdown })
+                  : t('verifyOtp.resend', { defaultValue: 'Resend OTP' })}
               </Text>
             )}
           </TouchableOpacity>

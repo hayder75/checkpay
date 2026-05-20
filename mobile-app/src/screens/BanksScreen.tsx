@@ -14,6 +14,7 @@ import { Building2, X, Plus, RefreshCw } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { storage } from '../services/storage';
 import { patternsAPI, institutionPatternsAPI } from '../services/api';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   apiKey?: string | null;
@@ -29,6 +30,7 @@ let banksScreenMemoryCache: {
 
 export default function BanksScreen({ apiKey }: Props) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const [banks, setBanks] = useState<string[]>(() => banksScreenMemoryCache?.banks || []);
   const [availableInstitutions, setAvailableInstitutions] = useState<string[]>(() => banksScreenMemoryCache?.availableInstitutions || []);
   const [loading, setLoading] = useState(() => !banksScreenMemoryCache || banksScreenMemoryCache.availableInstitutions.length === 0);
@@ -186,8 +188,8 @@ export default function BanksScreen({ apiKey }: Props) {
     } catch (error: any) {
       console.error('❌ [BanksScreen] Error loading institutions from backend:', error.message || error);
       Alert.alert(
-        'Error',
-        `Failed to load institutions from backend: ${error.message || 'Unknown error'}. Please check your connection and try again.`
+        t('common.error'),
+        t('banks.loadFailed', { error: error.message || 'Unknown error' })
       );
     } finally {
       setLoading(false);
@@ -203,12 +205,12 @@ export default function BanksScreen({ apiKey }: Props) {
 
   const handleRemoveBank = async (bankName: string) => {
     Alert.alert(
-      'Remove Bank',
-      `Are you sure you want to remove ${bankName}?`,
+      t('banks.removeBankTitle'),
+      t('banks.removeBankMessage', { bank: bankName }),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Remove',
+          text: t('common.remove'),
           style: 'destructive',
           onPress: async () => {
             const updatedBanks = banks.filter((b) => b !== bankName);
@@ -247,7 +249,7 @@ export default function BanksScreen({ apiKey }: Props) {
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
-          <Text style={[styles.title, { color: colors.text }]}>My Banks</Text>
+          <Text style={[styles.title, { color: colors.text }]}>{t('banks.title')}</Text>
           <View style={styles.headerActions}>
             <TouchableOpacity
               onPress={onRefresh}
@@ -263,7 +265,9 @@ export default function BanksScreen({ apiKey }: Props) {
           </View>
         </View>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-          {banks.length} bank{banks.length !== 1 ? 's' : ''} selected
+          {banks.length === 1
+            ? t('banks.selectedCount', { count: banks.length })
+            : t('banks.selectedCountPlural', { count: banks.length })}
         </Text>
       </View>
 
@@ -271,7 +275,7 @@ export default function BanksScreen({ apiKey }: Props) {
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
           <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
-            Loading institutions from backend...
+            {t('banks.loadingInstitutions')}
           </Text>
         </View>
       ) : (
@@ -288,11 +292,11 @@ export default function BanksScreen({ apiKey }: Props) {
         >
         {/* Selected Banks */}
         <View style={styles.listSection}>
-          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Selected Banks ({banks.length})</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t('banks.selectedBanks', { count: banks.length })}</Text>
           {banks.length === 0 ? (
             <View style={styles.emptyState}>
               <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                No banks selected yet.
+                {t('banks.noneSelectedYet')}
               </Text>
             </View>
           ) : (
@@ -307,11 +311,11 @@ export default function BanksScreen({ apiKey }: Props) {
 
         {/* Available Banks */}
         <View style={styles.listSection}>
-          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>Available Banks</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t('banks.availableBanks')}</Text>
 
           {availableInstitutions.length === 0 ? (
             <View style={styles.emptyState}>
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No banks available right now. Pull to refresh.</Text>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('banks.noneAvailable')}</Text>
             </View>
           ) : (
             <View style={styles.availableList}>
@@ -348,7 +352,7 @@ export default function BanksScreen({ apiKey }: Props) {
 
         {availableInstitutions.length > 0 && (
           <View style={styles.listSection}>
-            <Text style={[styles.moreText, { color: colors.textSecondary }]}>Tap a bank above to add it to your selected list.</Text>
+            <Text style={[styles.moreText, { color: colors.textSecondary }]}>{t('banks.tapToAdd')}</Text>
           </View>
         )}
       </ScrollView>

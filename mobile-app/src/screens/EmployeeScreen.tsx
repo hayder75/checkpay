@@ -17,6 +17,7 @@ import OCRScreen from './OCRScreen';
 import TransactionsScreen from './TransactionsScreen';
 import BottomNavigation, { Tab } from '../components/BottomNavigation';
 import { getDisplayName, getUserInitials } from '../utils/userUtils';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   onLogout: () => void;
@@ -28,6 +29,7 @@ const { width } = Dimensions.get('window');
 
 export default function EmployeeScreen({ onLogout }: Props) {
   const { colors, theme } = useTheme();
+  const { t } = useTranslation();
   const { showConfirm } = usePopup();
   const [currentView, setCurrentView] = useState<EmployeeView>('ocr');
   const [user, setUser] = useState<any>(null);
@@ -106,8 +108,8 @@ export default function EmployeeScreen({ onLogout }: Props) {
 
   const handleLogout = () => {
     showConfirm(
-      'Logout',
-      'Are you sure you want to logout?',
+      t('employee.logoutTitle'),
+      t('employee.logoutMessage'),
       onLogout
     );
   };
@@ -161,12 +163,12 @@ export default function EmployeeScreen({ onLogout }: Props) {
           {getDisplayName(employee || user)}
         </Text>
         <Text style={[styles.profileRole, { color: colors.textSecondary }]}>
-          {employee?.business?.name ? `${employee.business.name} • ` : ''}Employee Account
+          {employee?.business?.name ? `${employee.business.name} • ` : ''}{t('employee.account')}
         </Text>
       </View>
 
       <View style={styles.sectionContainer}>
-        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>ACCOUNT DETAILS</Text>
+        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t('employee.accountDetails')}</Text>
         
         <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           {(employee?.name || user?.name) && (
@@ -175,7 +177,7 @@ export default function EmployeeScreen({ onLogout }: Props) {
                 <User size={18} color={colors.primary} />
               </View>
               <View style={styles.infoContent}>
-                <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Full Name</Text>
+                <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>{t('employee.fullName')}</Text>
                 <Text style={[styles.infoValue, { color: colors.text }]}>{employee?.name || user?.name}</Text>
               </View>
             </View>
@@ -187,7 +189,7 @@ export default function EmployeeScreen({ onLogout }: Props) {
                 <Building2 size={18} color={colors.primary} />
               </View>
               <View style={styles.infoContent}>
-                <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Business</Text>
+                <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>{t('employee.business')}</Text>
                 <Text style={[styles.infoValue, { color: colors.text }]}>{employee.business.name}</Text>
               </View>
             </View>
@@ -199,7 +201,7 @@ export default function EmployeeScreen({ onLogout }: Props) {
                 <Phone size={18} color={colors.primary} />
               </View>
               <View style={styles.infoContent}>
-                <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Phone / Username</Text>
+                <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>{t('employee.phoneOrUsername')}</Text>
                 <Text style={[styles.infoValue, { color: colors.text }]}>{user?.phone || user?.username}</Text>
               </View>
             </View>
@@ -211,7 +213,7 @@ export default function EmployeeScreen({ onLogout }: Props) {
                 <Mail size={18} color={colors.primary} />
               </View>
               <View style={styles.infoContent}>
-                <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Email</Text>
+                <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>{t('employee.email')}</Text>
                 <Text style={[styles.infoValue, { color: colors.text }]}>{user.email}</Text>
               </View>
             </View>
@@ -220,7 +222,7 @@ export default function EmployeeScreen({ onLogout }: Props) {
       </View>
 
       <View style={styles.sectionContainer}>
-        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>ACTIONS</Text>
+        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t('employee.actions')}</Text>
         
         <TouchableOpacity
           style={[styles.actionButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
@@ -229,7 +231,7 @@ export default function EmployeeScreen({ onLogout }: Props) {
           <View style={[styles.actionIconCircle, { backgroundColor: '#fee2e2' }]}>
             <LogOut size={20} color="#ef4444" />
           </View>
-          <Text style={[styles.actionButtonText, { color: '#ef4444' }]}>Log Out</Text>
+          <Text style={[styles.actionButtonText, { color: '#ef4444' }]}>{t('employee.logOut')}</Text>
           <ChevronRight size={20} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>

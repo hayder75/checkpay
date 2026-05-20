@@ -8,7 +8,8 @@ import { log } from '../utils/logger';
 // Configure notification handler
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
   }),
@@ -112,9 +113,11 @@ export function setupNotificationListeners() {
     // Foreground listener
     const notificationListener = Notifications.addNotificationReceivedListener(notification => {
         log.debug('Notification', 'Notification received in foreground', notification);
-        
+
+    const data = (notification.request.content.data || {}) as Record<string, unknown>;
+    const notificationId = typeof data.notificationId === 'string' ? data.notificationId : undefined;
+
         // Mark as read if notification has an ID
-        const notificationId = notification.request.content.data?.notificationId;
         if (notificationId) {
             notificationAPI.markAsRead(notificationId).catch(err => {
                 log.error('Notification', 'Failed to mark notification as read', err);
@@ -125,9 +128,11 @@ export function setupNotificationListeners() {
     // Response listener (user tapped notification)
     const responseListener = Notifications.addNotificationResponseReceivedListener(response => {
         log.debug('Notification', 'Notification tapped', response);
-        
-        const data = response.notification.request.content.data || {};
-        const notificationId = data.notificationId;
+
+      const data = (response.notification.request.content.data || {}) as Record<string, unknown>;
+      const notificationId = typeof data.notificationId === 'string' ? data.notificationId : undefined;
+      const txnId = typeof data.txnId === 'string' ? data.txnId : undefined;
+      const typeFromData = typeof data.type === 'string' ? data.type : undefined;
         
         // Mark as read
         if (notificationId) {
@@ -141,8 +146,8 @@ export function setupNotificationListeners() {
             try {
                 navigationCallback({
                     notificationId,
-                    txnId: data.txnId,
-                    type: data.type || response.notification.request.content.data?.type,
+                txnId,
+                type: typeFromData,
                     ...data,
                 });
             } catch (error) {
@@ -154,8 +159,8 @@ export function setupNotificationListeners() {
     });
 
     return () => {
-        Notifications.removeNotificationSubscription(notificationListener);
-        Notifications.removeNotificationSubscription(responseListener);
+    notificationListener.remove();
+    responseListener.remove();
     };
 }
 

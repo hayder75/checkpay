@@ -23,6 +23,7 @@ import NotificationsScreen from './src/screens/NotificationsScreen';
 import LockScreen from './src/screens/LockScreen';
 import PINSetupScreen from './src/screens/PINSetupScreen';
 import ProfileCompletionScreen from './src/screens/ProfileCompletionScreen';
+import CustomerOnboardingScreen, { CustomerOnboardingData } from './src/screens/CustomerOnboardingScreen';
 import { storage } from './src/services/storage';
 import { smsService } from './src/services/smsService';
 import { securityService } from './src/services/securityService';
@@ -30,11 +31,13 @@ import { checkAndPromptNotificationAccess, isNotificationAccessEnabled, openNoti
 import { Pattern } from './src/types';
 import { authAPI } from './src/services/api';
 import { patternsAPI, telegramAuthAPI, subscribeNetworkStatus } from './src/services/api';
+import { useTranslation } from 'react-i18next';
 import 'react-native-url-polyfill/auto';
 
 const PENDING_TELEGRAM_AUTH_TOKEN_KEY = 'pending_telegram_auth_token';
 
 function AppContent() {
+  const { t } = useTranslation();
   const { colors } = useTheme();
   const [user, setUser] = useState<any>(null);
   const [apiKey, setApiKey] = useState<string | null>(null);
@@ -55,10 +58,12 @@ function AppContent() {
   const [showPINSetupFromPrompt, setShowPINSetupFromPrompt] = useState(false);
   const [biometricAvailableForPrompt, setBiometricAvailableForPrompt] = useState(false);
   const [showProfileCompletion, setShowProfileCompletion] = useState(false);
+  const [showCustomerOnboarding, setShowCustomerOnboarding] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const appState = useRef(AppState.currentState);
   const backgroundTimestamp = useRef<number | null>(null);
   const notificationReminderShownThisLaunch = useRef(false);
+  const notificationListenersCleanupRef = useRef<(() => void) | null>(null);
 
   // Check if user is employee (only OCR access)
   const isEmployee = user?.role === 'EMPLOYEE';
@@ -161,12 +166,12 @@ function AppContent() {
 
     notificationReminderShownThisLaunch.current = true;
     Alert.alert(
-      'Enable Notification Access',
-      'To auto-detect CBE and Telebirr transactions, enable Notification Access for CheckPay.',
+      t('app.enableNotificationAccessTitle'),
+      t('app.enableNotificationAccessMessage'),
       [
-        { text: 'Not Now', style: 'cancel' },
+        { text: t('common.notNow'), style: 'cancel' },
         {
-          text: 'Open Settings',
+          text: t('common.openSettings'),
           onPress: () => {
             openNotificationAccessSettings().catch((error) => {
               console.error('Error opening notification access settings:', error);
@@ -269,6 +274,65 @@ function AppContent() {
     setupNotifications();
   };
 
+  // Handle customer onboarding completion
+  const handleCustomerOnboardingComplete = async (data: CustomerOnboardingData) => {
+    console.log('✅ [App] Customer onboarding completed:', data);
+    setShowCustomerOnboarding(false);
+
+    // Persist locally first so the flow stays non-blocking if connectivity is poor.
+    await storage.setCustomerOnboardingCompleted(true);
+
+    // Save to backend for server-side profile completeness.
+    try {
+      await authAPI.updateBusinessProfile({
+        region: data.region,
+        city: data.city,
+        subCity: data.subCity,
+        latitude: data.latitude,
+        longitude: data.longitude,
+        businessType: data.businessType,
+      });
+      console.log('✅ [App] Business profile saved to backend');
+    } catch (error) {
+      console.warn('⚠️ [App] Could not sync business profile to backend right now:', error);
+    }
+  };
+
+  const hasBackendCustomerOnboardingProfile = (userData: any): boolean => {
+    const profile = userData?.customerOnboardingProfile;
+    return !!(
+      profile &&
+      typeof profile.region === 'string' &&
+      profile.region.trim().length > 0 &&
+      typeof profile.city === 'string' &&
+      profile.city.trim().length > 0 &&
+      typeof profile.businessType === 'string' &&
+      profile.businessType.trim().length > 0
+    );
+  };
+
+  const syncCustomerOnboardingState = async (userData: any, context: string): Promise<boolean> => {
+    const backendCompleted = hasBackendCustomerOnboardingProfile(userData);
+
+    if (backendCompleted) {
+      await storage.setCustomerOnboardingCompleted(true);
+      setShowCustomerOnboarding(false);
+      console.log(`✅ [App] Customer onboarding completed from backend (${context})`);
+      return true;
+    }
+
+    const localCompleted = await storage.getCustomerOnboardingCompleted();
+    if (!localCompleted) {
+      console.log(`🔄 [App] Customer onboarding required (${context})`);
+      setShowCustomerOnboarding(true);
+      return false;
+    }
+
+    setShowCustomerOnboarding(false);
+    console.log(`ℹ️ [App] Customer onboarding marked complete locally (${context})`);
+    return true;
+  };
+
   useEffect(() => {
     initializeApp();
     requestPermissions();
@@ -296,6 +360,10 @@ function AppContent() {
     return () => {
       clearTimeout(timer);
       smsService.stopMonitoring();
+      if (notificationListenersCleanupRef.current) {
+        notificationListenersCleanupRef.current();
+        notificationListenersCleanupRef.current = null;
+      }
     };
   }, []);
 
@@ -446,6 +514,11 @@ function AppContent() {
         setupNotificationListeners,
         setNotificationNavigationCallback 
       } = await import('./src/services/NotificationService');
+
+      if (notificationListenersCleanupRef.current) {
+        notificationListenersCleanupRef.current();
+        notificationListenersCleanupRef.current = null;
+      }
       
       const token = await registerForPushNotificationsAsync();
       if (token) {
@@ -469,7 +542,7 @@ function AppContent() {
         }
       });
       
-      setupNotificationListeners();
+      notificationListenersCleanupRef.current = setupNotificationListeners();
     } catch (error) {
       console.error('Error setting up notifications:', error);
     }
@@ -504,6 +577,9 @@ function AppContent() {
             
             // Check security state to show lock screen if needed
             await refreshSecurityState();
+
+            // Prefer backend onboarding state for returning users.
+            await syncCustomerOnboardingState(response.data, 'startup');
             
             // Load patterns and country patterns in parallel (non-blocking)
             Promise.all([
@@ -621,6 +697,9 @@ function AppContent() {
       setShowProfileCompletion(true);
       return; // Don't proceed with rest of login flow until profile is complete
     }
+
+    // Prefer backend onboarding state and fall back to local storage.
+    await syncCustomerOnboardingState(userData, 'login');
     
     // Check if security is enabled (for lock screen) or prompt setup
     const enabled = await securityService.isSecurityEnabled();
@@ -932,6 +1011,9 @@ function AppContent() {
       setShowProfileCompletion(true);
       return; // Don't proceed until profile is complete
     }
+
+    // Prefer backend onboarding state and fall back to local storage.
+    await syncCustomerOnboardingState(userData, 'register');
     
     // Check if security is enabled (for lock screen) or prompt setup
     const enabled = await securityService.isSecurityEnabled();
@@ -1222,6 +1304,8 @@ function AppContent() {
 
       {showProfileCompletion && user ? (
         <ProfileCompletionScreen user={user} onComplete={handleProfileComplete} />
+      ) : showCustomerOnboarding ? (
+        <CustomerOnboardingScreen onComplete={handleCustomerOnboardingComplete} />
       ) : shouldShowLockScreen ? (
         <LockScreen onUnlock={handleUnlock} />
       ) : shouldShowOnboarding ? (

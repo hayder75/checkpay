@@ -31,6 +31,7 @@ import {
   X,
   ChevronLeft,
 } from 'lucide-react-native';
+import { useTranslation } from 'react-i18next';
 
 interface OCRScreenProps {
   patterns?: Pattern[];
@@ -93,6 +94,7 @@ const getUniqueInstitutionPatterns = (patterns: Pattern[]): Pattern[] => {
 
 export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenProps) {
   const { theme, colors } = useTheme();
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [result, setResult] = useState<OCRResult | null>(null);
@@ -154,7 +156,7 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
       setResult(ocrResult);
       await processOCRResult(ocrResult);
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to scan image');
+      Alert.alert(t('common.error'), error.message || 'Failed to scan image');
     } finally {
       setLoading(false);
     }
@@ -168,7 +170,7 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
 
   const processOCRResult = async (ocrResult: OCRResult) => {
     if (!selectedInstitution) {
-      Alert.alert('Error', 'Please select an institution first');
+      Alert.alert(t('common.error'), t('ocr.selectInstitutionFirst'));
       return;
     }
 
@@ -246,7 +248,7 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
     try {
       const token = await storage.getToken();
       if (!token) {
-        Alert.alert('Error', 'Authentication required. Please log in again.');
+        Alert.alert(t('common.error'), t('ocr.authRequired'));
         setLoading(false);
         return;
       }
@@ -263,7 +265,7 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
       console.log('✅ [OCR] Verification attempt recorded successfully');
       
       // Success Animation/Feedback
-      Alert.alert('Success', 'Transaction ID submitted successfully!');
+      Alert.alert(t('common.success'), t('ocr.submittedSuccess'));
       
       // Reset state with animation
       animateTransition(() => {
@@ -307,7 +309,7 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
       } else if (errorStatus === 401) {
         Alert.alert('Authentication Required', 'Your session has expired. Please log in again.');
       } else {
-        Alert.alert('Error', errorMessage || 'Failed to save transaction');
+        Alert.alert(t('common.error'), errorMessage || 'Failed to save transaction');
       }
     } finally {
       setLoading(false);
@@ -371,12 +373,12 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
   const handleManualInput = () => {
     const trimmedTxnId = manualTxnId.trim();
     if (!trimmedTxnId) {
-      Alert.alert('Error', 'Please enter a transaction ID');
+      Alert.alert(t('common.error'), t('ocr.enterTransactionId'));
       return;
     }
 
     if (trimmedTxnId.length < 6) {
-      Alert.alert('Error', 'Transaction ID must be at least 6 characters');
+      Alert.alert(t('common.error'), t('ocr.transactionIdMinLength'));
       return;
     }
 
@@ -769,11 +771,11 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
               </TouchableOpacity>
             )}
           </View>
-          <Text style={[styles.title, { color: colors.text }]}>Verify Transaction</Text>
+          <Text style={[styles.title, { color: colors.text }]}>{t('ocr.verifyTransaction')}</Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             {selectedInstitution 
-              ? `Scanning for ${selectedInstitution.bank || selectedInstitution.name}`
-              : 'Select an institution to start scanning.'}
+              ? t('ocr.scanningFor', { institution: selectedInstitution.bank || selectedInstitution.name })
+              : t('ocr.selectInstitutionToStart')}
           </Text>
         </View>
 
@@ -783,7 +785,7 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
         }}>
         {showInstitutionPicker && !extractedTransaction ? (
           <View style={styles.actionCardsContainer}>
-            <Text style={styles.sectionTitle}>Select Institution</Text>
+            <Text style={styles.sectionTitle}>{t('ocr.selectInstitution')}</Text>
             <View style={styles.institutionGrid}>
               {institutionOptions.map((pattern) => (
                 <TouchableOpacity 
@@ -812,7 +814,7 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
               >
                 <ChevronLeft color={colors.primary} size={24} />
               </TouchableOpacity>
-              <Text style={[styles.sectionTitle, { marginBottom: 0, marginTop: 0 }]}>Choose Method</Text>
+              <Text style={[styles.sectionTitle, { marginBottom: 0, marginTop: 0 }]}>{t('ocr.chooseMethod')}</Text>
             </View>
 
             <TouchableOpacity 
@@ -823,8 +825,8 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
                 <Camera color={colors.primary} size={32} />
               </View>
               <View style={styles.actionCardContent}>
-                <Text style={styles.actionCardTitle}>Use Camera</Text>
-                <Text style={styles.actionCardSubtext}>Scan physical receipts or documents</Text>
+                <Text style={styles.actionCardTitle}>{t('ocr.useCamera')}</Text>
+                <Text style={styles.actionCardSubtext}>{t('ocr.scanPhysicalReceipts')}</Text>
               </View>
             </TouchableOpacity>
 
@@ -836,8 +838,8 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
                 <ImageIcon color="#4CAF50" size={32} />
               </View>
               <View style={styles.actionCardContent}>
-                <Text style={styles.actionCardTitle}>From Gallery</Text>
-                <Text style={styles.actionCardSubtext}>Import screenshots or saved images</Text>
+                <Text style={styles.actionCardTitle}>{t('ocr.fromGallery')}</Text>
+                <Text style={styles.actionCardSubtext}>{t('ocr.importScreenshots')}</Text>
               </View>
             </TouchableOpacity>
 
@@ -849,8 +851,8 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
                 <Keyboard color="#2196F3" size={32} />
               </View>
               <View style={styles.actionCardContent}>
-                <Text style={styles.actionCardTitle}>Manual Entry</Text>
-                <Text style={styles.actionCardSubtext}>Type in the transaction ID manually</Text>
+                <Text style={styles.actionCardTitle}>{t('ocr.manualEntry')}</Text>
+                <Text style={styles.actionCardSubtext}>{t('ocr.typeTransactionIdManually')}</Text>
               </View>
             </TouchableOpacity>
           </View>
@@ -858,17 +860,17 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
           <View style={styles.receiptContainer}>
             <View style={styles.receiptHeader}>
               <View style={[styles.receiptBadge, { backgroundColor: colors.primary + '15' }]}>
-                <Text style={[styles.receiptBadgeText, { color: colors.primary }]}>Digital Receipt</Text>
+                <Text style={[styles.receiptBadgeText, { color: colors.primary }]}>{t('ocr.digitalReceipt')}</Text>
               </View>
               <View style={styles.receiptIconContainer}>
                 <CheckCircle color={colors.primary} size={32} />
               </View>
-              <Text style={styles.receiptTitle}>Transaction Detected</Text>
-              <Text style={styles.receiptSubtitle}>Extracted from {extractedTransaction.source}</Text>
+              <Text style={styles.receiptTitle}>{t('ocr.transactionDetected')}</Text>
+              <Text style={styles.receiptSubtitle}>{t('ocr.extractedFrom', { source: extractedTransaction.source })}</Text>
             </View>
 
             <View style={styles.receiptAmountContainer}>
-              <Text style={styles.receiptAmountLabel}>Transaction ID</Text>
+              <Text style={styles.receiptAmountLabel}>{t('ocr.transactionId')}</Text>
               <Text style={styles.receiptAmount}>{extractedTransaction.txnId}</Text>
             </View>
 
@@ -876,12 +878,12 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
 
             <View style={styles.receiptBody}>
               <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Institution</Text>
+                <Text style={styles.receiptLabel}>{t('ocr.institution')}</Text>
                 <Text style={styles.receiptValue}>{extractedTransaction.institution}</Text>
               </View>
 
               <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Confidence Score</Text>
+                <Text style={styles.receiptLabel}>{t('ocr.confidenceScore')}</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   <View style={{ 
                     width: 60, 
@@ -911,14 +913,14 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
                 style={styles.secondaryButton}
                 onPress={handleRejectTransaction}
               >
-                <Text style={styles.secondaryButtonText}>Discard</Text>
+                <Text style={styles.secondaryButtonText}>{t('ocr.discard')}</Text>
               </TouchableOpacity>
               <TouchableOpacity 
                 style={styles.primaryButton}
                 onPress={handleConfirmTransaction}
               >
                 <CheckCircle color="#fff" size={20} />
-                <Text style={styles.primaryButtonText}>Confirm</Text>
+                <Text style={styles.primaryButtonText}>{t('register.confirm')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -927,16 +929,16 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
             <View style={styles.errorIconContainer}>
               <AlertTriangle color="#FF9800" size={32} />
             </View>
-            <Text style={styles.errorTitle}>No Transaction Found</Text>
+            <Text style={styles.errorTitle}>{t('ocr.noTransactionFound')}</Text>
             <Text style={styles.errorText}>
-              We couldn't find a valid transaction ID for {extractedTransaction.institution}. Please try again with a clearer image or enter it manually.
+              {t('ocr.noTransactionFoundMessage', { institution: extractedTransaction.institution })}
             </Text>
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <TouchableOpacity 
                 style={styles.secondaryButton}
                 onPress={handleRejectTransaction}
               >
-                <Text style={styles.secondaryButtonText}>Try Again</Text>
+                <Text style={styles.secondaryButtonText}>{t('ocr.tryAgain')}</Text>
               </TouchableOpacity>
               <TouchableOpacity 
                 style={[styles.primaryButton, { backgroundColor: '#2196F3' }]}
@@ -946,7 +948,7 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
                 }}
               >
                 <Keyboard color="#fff" size={20} />
-                <Text style={styles.primaryButtonText}>Manual</Text>
+                <Text style={styles.primaryButtonText}>{t('ocr.manual')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -967,17 +969,17 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
         >
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Manual Entry</Text>
+              <Text style={styles.modalTitle}>{t('ocr.manualEntry')}</Text>
               <TouchableOpacity onPress={() => setShowManualInput(false)}>
                 <X color={colors.text} size={24} />
               </TouchableOpacity>
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Transaction ID</Text>
+              <Text style={styles.inputLabel}>{t('ocr.transactionId')}</Text>
               <TextInput
                 style={styles.input}
-                placeholder="Enter ID (e.g. 09A1B2C3)"
+                placeholder={t('ocr.enterIdPlaceholder')}
                 placeholderTextColor={colors.textSecondary}
                 value={manualTxnId}
                 onChangeText={setManualTxnId}
@@ -991,7 +993,7 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
               onPress={handleManualInput}
               disabled={!manualTxnId.trim()}
             >
-              <Text style={styles.primaryButtonText}>Continue</Text>
+              <Text style={styles.primaryButtonText}>{t('onboarding.continue')}</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>

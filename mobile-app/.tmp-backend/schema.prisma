@@ -1,0 +1,727 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserPlan {
+  FREE
+  PREMIUM
+}
+
+enum UserRole {
+  USER
+  BUSINESS_OWNER
+  EMPLOYEE
+  DEVELOPER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum BillingCycle {
+  ONE_TIME
+  MONTHLY
+  SIX_MONTH
+  QUARTERLY
+  YEARLY
+}
+
+enum ProjectStatus {
+  SETUP
+  READY
+  HANDED_OVER
+  ACTIVE
+}
+
+enum TransactionSource {
+  SMS
+  OCR
+  MANUAL
+}
+
+enum NotificationType {
+  TRANSACTION_VERIFIED
+  TRANSACTION_RECEIVED
+  TOKEN_LOW
+  TOKEN_DEPLETED
+}
+
+enum ProjectType {
+  STANDALONE
+  CLUSTER
+  TRANSFERABLE
+}
+
+enum ClusterRequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELED
+  EXPIRED
+}
+
+model User {
+  id               String    @id @default(cuid())
+  username         String?   @unique
+  email            String?   @unique
+  phone            String?   @unique
+  googleId         String?   @unique
+  telegramId       String?   @unique // Telegram user ID for authentication
+  telegramUsername String?            // Telegram @username (optional)
+  telegramLinkedAt DateTime?          // When Telegram account was linked
+  password         String?
+  apiKey           String   @unique @default(cuid())
+  devApiKey        String?  @unique // Developer API key for backend integrations
+  plan             UserPlan @default(FREE)
+  role             UserRole @default(USER)
+  country          String?
+  firstName        String?            // User's first name
+  lastName         String?            // User's last name
+  profileComplete  Boolean  @default(true) // False for social auth until profile completion
+  ownerCode        String?  @unique // 6-digit owner identifier for cluster linking
+  ownerCodeAssignedAt DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Existing relations
+  createdPatterns  Pattern[]         @relation("PatternCreator") // Patterns created by this user
+  userPatterns     UserPattern[] // Patterns linked to user's personal list
+  transactions     Transaction[]
+  auditLogs        AuditLog[]
+  usageStats       UsageStats?
+  userInstitutions UserInstitution[]
+
+  // New relations
+  ownedBusinesses      Business[]            @relation("BusinessOwner")
+  developedBusinesses  Business[]            @relation("BusinessDeveloper")
+  employeeProfiles     Employee[]
+  projects             Project[]
+  ingestProjects       Project[]             @relation("ProjectIngestUser")
+  ocrPatternRequests   OCRPatternRequest[]
+  userPackages         UserPackage[]
+  packagePurchases     PackagePurchase[]
+  pendingVerifications PendingVerification[]
+  notifications        Notification[]
+  pushTokens           PushToken[]
+  sentClusterRequests  ClusterRequest[]      @relation("ClusterRequester")
+  receivedClusterRequests ClusterRequest[]   @relation("ClusterRecipient")
+  acceptedClusterRequests ClusterRequest[]   @relation("ClusterAcceptor")
+  customerOnboardingProfile CustomerOnboardingProfile?
+
+  @@index([apiKey])
+  @@index([username])
+  @@index([email])
+  @@index([phone])
+  @@index([telegramId])
+  @@index([country])
+  @@index([role])
+  @@index([ownerCode])
+}
+
+model CustomerOnboardingProfile {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  region       String
+  city         String
+  subCity      String?
+  latitude     Float?
+  longitude    Float?
+  businessType String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Business {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  logo        String?
+  ownerId     String
+  developerId String?
+  packageId   String?
+  apiKey      String   @unique @default(cuid())
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner                User                  @relation("BusinessOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  developer            User?                 @relation("BusinessDeveloper", fields: [developerId], references: [id], onDelete: SetNull)
+  package              Package?              @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  employees            Employee[]
+  transactions         Transaction[]
+  businessPatterns     BusinessPattern[]
+  institutions         BusinessInstitution[]
+  accessCodes          AccessCode[]
+  projects             Project[]
+  pendingVerifications PendingVerification[]
+
+  @@index([ownerId])
+  @@index([developerId])
+  @@index([apiKey])
+  @@index([isActive])
+}
+
+model Vendor {
+  id          String   @id @default(cuid())
+  projectId   String
+  name        String
+  phone       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+model Employee {
+  id         String   @id @default(cuid())
+  userId     String
+  businessId String
+  name       String
+  accessCode String?
+  isActive   Boolean  @default(true)
+  allowAccessAllTransactions Boolean @default(false) // Allow this employee to access all picked (validated) transactions
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@unique([userId, businessId])
+  @@index([businessId])
+  @@index([userId])
+}
+
+model Package {
+  id               String        @id @default(cuid())
+  name             String
+  description      String?       @db.Text
+  transactionLimit Int?
+  employeeLimit    Int?
+  businessLimit    Int?
+  features         Json
+  price            Decimal?
+  isCustom         Boolean       @default(false)
+  isActive         Boolean       @default(true)
+  billingCycle     BillingCycle? // ONE_TIME, MONTHLY, SIX_MONTH, QUARTERLY, YEARLY
+  durationDays     Int? // For ONE_TIME duration (e.g., 365 for 1 year)
+  isDeveloperToken Boolean       @default(false)
+  isFreePackage    Boolean       @default(false) // True for free trial package
+  tier             String? // STARTER, PROFESSIONAL, BUSINESS, ENTERPRISE
+  maxPhoneTxns     Int? // Token quota: phone-sent transactions
+  maxVerifiedTxns  Int? // Token quota: end-user verified transactions
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  businesses       Business[]
+  userPackages     UserPackage[]
+  packagePurchases PackagePurchase[]
+
+  @@index([isActive])
+}
+
+model UserPackage {
+  id                    String    @id @default(cuid())
+  userId                String
+  packageId             String
+  status                String    @default("ACTIVE") // ACTIVE, EXPIRED, CANCELED
+  startsAt              DateTime  @default(now())
+  endsAt                DateTime?
+  phoneTxnsRemaining    Int?
+  verifiedTxnsRemaining Int?
+  phoneTxnsUsed         Int       @default(0)
+  verifiedTxnsUsed      Int       @default(0)
+  notes                 String?
+  billingMode         String    @default("COUNT_BASED") // COUNT_BASED or FIXED_PRICE
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([packageId])
+  @@index([status])
+  @@index([endsAt])
+}
+
+model PackagePurchase {
+  id                String    @id @default(cuid())
+  userId            String
+  packageId         String
+  transactionNumber String // User-provided transaction number for payment verification
+  status            String    @default("PENDING") // PENDING, VERIFIED, REJECTED
+  verifiedAt        DateTime?
+  verifiedBy        String? // Admin user ID who verified
+  adminNotes        String? // Admin notes about verification
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([packageId])
+  @@index([status])
+  @@index([transactionNumber])
+}
+
+model Project {
+  id                    String        @id @default(cuid())
+  name                  String
+  description           String?
+  developerId           String
+  businessId            String?
+  isOwnProject          Boolean       @default(false) // true = developer's own project, false = client project (needs handover)
+  status                ProjectStatus @default(SETUP)
+  type                  ProjectType    @default(STANDALONE)
+  handoverDate          DateTime?
+  // Transfer code system
+  transferCode          String?       @unique
+  transferCodeExpiresAt DateTime?
+  transferPhone         String? // Phone used for testing
+  transferredToUserId   String? // Who accepted the transfer
+  transferredAt         DateTime?
+  // API keys for project
+  projectApiKey         String?       @unique // Developer API key for backend integration
+  mobileApiKey          String?       @unique // Deprecated: kept for backward compatibility
+  ingestUserId          String? // Which user's phone to use for ingest (null = developer's phone)
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  developer            User                  @relation(fields: [developerId], references: [id], onDelete: Cascade)
+  business             Business?             @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  ingestUser           User?                 @relation("ProjectIngestUser", fields: [ingestUserId], references: [id], onDelete: SetNull)
+  projectPatterns      ProjectPattern[]
+  transactions         Transaction[]
+  pendingVerifications PendingVerification[]
+  vendors              Vendor[]
+  clusterRequests      ClusterRequest[]
+
+  @@index([developerId])
+  @@index([businessId])
+  @@index([ingestUserId])
+  @@index([status])
+  @@index([transferCode])
+  @@index([projectApiKey])
+  @@index([mobileApiKey])
+}
+
+model ClusterRequest {
+  id                String               @id @default(cuid())
+  developerId       String
+  ownerId           String
+  projectId         String?
+  ownerCode         String
+  status            ClusterRequestStatus @default(PENDING)
+  message           String?
+  requestedAt       DateTime             @default(now())
+  respondedAt       DateTime?
+  expiresAt         DateTime?
+  acceptedByOwnerId String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  developer         User                 @relation("ClusterRequester", fields: [developerId], references: [id], onDelete: Cascade)
+  owner             User                 @relation("ClusterRecipient", fields: [ownerId], references: [id], onDelete: Cascade)
+  project           Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  acceptedByOwner   User?                @relation("ClusterAcceptor", fields: [acceptedByOwnerId], references: [id], onDelete: SetNull)
+
+  @@index([developerId])
+  @@index([ownerId])
+  @@index([projectId])
+  @@index([status])
+  @@index([ownerCode])
+  @@index([expiresAt])
+}
+
+model ProjectPattern {
+  id          String   @id @default(cuid())
+  projectId   String
+  patternId   String?
+  institution String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+model BusinessPattern {
+  id          String   @id @default(cuid())
+  businessId  String
+  patternId   String?
+  institution String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([institution])
+}
+
+model BusinessInstitution {
+  id          String   @id @default(cuid())
+  businessId  String
+  institution String
+  isPrimary   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, institution])
+  @@index([businessId])
+  @@index([isPrimary])
+}
+
+model AccessCode {
+  id               String    @id @default(cuid())
+  businessId       String
+  code             String    @unique
+  qrCode           String?
+  usedBy           String?
+  targetEmployeeId String?
+  expiresAt        DateTime?
+  isUsed           Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  usedAt           DateTime?
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([code])
+  @@index([isUsed])
+  @@index([expiresAt])
+}
+
+model Pattern {
+  id                        String    @id @default(cuid())
+  userId                    String? // Legacy field - kept for backward compatibility
+  creatorId                 String? // Original creator (user who first created this pattern) - NEVER CHANGES
+  name                      String
+  regex                     String // Primary regex pattern
+  extractFields             Json
+  bank                      String?
+  currency                  String?
+  countryCode               String? // Country code from creator's registration
+  description               String?
+  isFlagged                 Boolean   @default(false)
+  flaggedAt                 DateTime?
+  adminNotes                String?
+  usageCount                Int       @default(1)
+  // Admin pattern management fields
+  isTemplate                Boolean   @default(false) // Admin-created patterns (creatorId = null)
+  isApproved                Boolean   @default(false)
+  reviewStatus              String?   @default("PENDING")
+  reviewedBy                String?
+  reviewedAt                DateTime?
+  // Security fields for sender verification
+  allowedSenders            Json? // Array of allowed sender addresses/names
+  requireSenderVerification Boolean   @default(true) // Enable/disable sender check
+  senderVerificationMode    String    @default("STRICT") // STRICT, WARN, NONE
+  maxAmountThreshold        Float? // Require confirmation above this amount
+  requireContactCheck       Boolean   @default(true) // Reject SMS from contacts
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  // Relations
+  creator          User?             @relation("PatternCreator", fields: [creatorId], references: [id], onDelete: SetNull)
+  userPatterns     UserPattern[] // Users who have this pattern in their list
+  transactions     Transaction[]
+  userInstitutions UserInstitution[]
+
+  @@index([userId])
+  @@index([creatorId])
+  @@index([isFlagged])
+  @@index([bank, currency])
+  @@index([isTemplate])
+  @@index([isApproved])
+  @@index([reviewStatus])
+  @@index([countryCode])
+  @@index([regex]) // For duplicate checking
+}
+
+// Many-to-many relationship: Users can link to patterns without creating copies
+// This enables the marketplace model where patterns persist and users add/remove them
+model UserPattern {
+  id        String   @id @default(cuid())
+  userId    String // User who added this pattern to their list
+  patternId String // Pattern they linked to
+  isActive  Boolean  @default(true) // Can be deactivated without deleting
+  addedAt   DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pattern Pattern @relation(fields: [patternId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, patternId]) // One link per user-pattern combination
+  @@index([userId])
+  @@index([patternId])
+  @@index([isActive])
+}
+
+model Transaction {
+  id             String            @id @default(cuid())
+  userId         String
+  businessId     String?
+  employeeId     String?
+  projectId      String? // Link transaction to project (when using projectApiKey)
+  txnId          String
+  referenceTxnId String? // Alternative transaction ID (e.g., bank reference when wallet sends both)
+  amount         Float
+  sender         String
+  sendFrom       String?
+  sendTo         String?
+  bank           String?
+  senderBank     String?
+  receiverBank   String?
+  patternId      String?
+  source         TransactionSource @default(SMS)
+  isValidated    Boolean           @default(false)
+  verifiedAt     DateTime? // Timestamp when transaction was verified via /api/verify
+  receivedAt     DateTime
+  createdAt      DateTime          @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business Business? @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  employee Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  project  Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  pattern  Pattern?  @relation(fields: [patternId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, txnId, businessId])
+  @@index([userId])
+  @@index([businessId])
+  @@index([employeeId])
+  @@index([projectId])
+  @@index([txnId])
+  @@index([referenceTxnId])
+  @@index([source])
+  @@index([isValidated])
+  @@index([verifiedAt])
+}
+
+model OTP {
+  id         String   @id @default(cuid())
+  phone      String?           // Optional - for phone-based lookup
+  telegramId String?           // For Telegram-based OTP delivery
+  code       String
+  expiresAt  DateTime
+  used       Boolean  @default(false)
+  purpose    String   @default("LOGIN") // LOGIN, RESET_PASSWORD, LINK_TELEGRAM
+  createdAt  DateTime @default(now())
+
+  @@index([phone, code])
+  @@index([telegramId, code])
+  @@index([expiresAt])
+}
+
+// Store pending Telegram auth tokens for deep link authentication
+model TelegramAuthToken {
+  id         String   @id @default(cuid())
+  token      String   @unique  // Unique auth token for deep link
+  telegramId String?           // Set when user clicks Start in Telegram
+  userId     String?           // Set when auth is completed (user found/created)
+  status     String   @default("PENDING") // PENDING, COMPLETED, EXPIRED
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([token])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  endpoint  String
+  ipAddress String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model UsageStats {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  appRequestsToday Int      @default(0)
+  appRequestsMonth Int      @default(0)
+  devRequestsToday Int      @default(0)
+  devRequestsMonth Int      @default(0)
+  lastResetDate    DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Country {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  name          String
+  banks         String[]
+  currencies    String[]
+  commonPhrases String[]
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([code])
+  @@index([isActive])
+}
+
+model UserInstitution {
+  id          String   @id @default(cuid())
+  userId      String
+  institution String
+  patternId   String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pattern Pattern? @relation(fields: [patternId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, institution])
+  @@index([userId])
+  @@index([institution])
+}
+
+// Universal OCR patterns stored in database
+// These patterns are used by all users for OCR transaction extraction
+model OCRPattern {
+  id             String   @id @default(cuid())
+  institution    String // Bank/institution name (e.g., "Telebirr", "CBE")
+  countryCode    String // Country code (e.g., "ET", "KE")
+  name           String // Pattern name (e.g., "Telebirr Transfer Receipt")
+  description    String? // Pattern description
+  regex          String // Regex pattern for matching OCR text
+  extractFields  Json // Field extraction mapping (e.g., {amount: 1, txnId: 5})
+  bank           String? // Bank name (same as institution usually)
+  currency       String? // Currency code (e.g., "ETB", "KES")
+  sampleImageUrl String? // URL/path to sample screenshot image
+  ocrExample     String? // Example OCR text extracted from sample image
+  isVerified     Boolean  @default(false) // Admin verified
+  isActive       Boolean  @default(true) // Active and available for use
+  usageCount     Int      @default(0) // How many times this pattern has been used
+  contributedBy  String? // User ID who contributed this pattern
+  adminNotes     String? // Admin notes/review comments
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  ocrPatternRequests OCRPatternRequest[]
+
+  @@unique([institution, countryCode, name]) // Unique per institution/country/name
+  @@index([institution])
+  @@index([countryCode])
+  @@index([isVerified])
+  @@index([isActive])
+  @@index([usageCount])
+}
+
+// User requests to create new OCR patterns
+// Users can submit sample images to request new patterns
+model OCRPatternRequest {
+  id             String   @id @default(cuid())
+  userId         String // User who requested the pattern
+  institution    String // Bank/institution name
+  countryCode    String // Country code
+  sampleImageUrl String // URL/path to uploaded sample image
+  ocrText        String? // OCR text extracted from the image (optional)
+  status         String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  adminNotes     String? // Admin review notes
+  ocrPatternId   String? // If approved, link to created OCRPattern
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ocrPattern OCRPattern? @relation(fields: [ocrPatternId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([institution, countryCode])
+  @@index([ocrPatternId])
+}
+
+model PendingVerification {
+  id         String    @id @default(cuid())
+  userId     String
+  businessId String?
+  projectId  String?
+  txnId      String
+  webhookUrl String? // Optional: if developer wants webhook notification
+  retryCount Int       @default(0)
+  maxRetries Int       @default(10)
+  status     String    @default("PENDING") // PENDING, VERIFIED, EXPIRED, FAILED
+  verifiedAt DateTime?
+  expiresAt  DateTime // Expires after 24 hours
+  metadata   Json? // Store any additional context (allowPartialMatch, etc.)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project  Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([userId, status])
+  @@index([businessId, status])
+  @@index([projectId, status])
+  @@index([txnId])
+  @@index([expiresAt])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String
+  data      Json?            // Additional metadata (txnId, amount, etc.)
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId, isRead])
+  @@index([createdAt])
+}
+
+model PushToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique  // Expo push token
+  platform  String?           // "ios" | "android"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+}

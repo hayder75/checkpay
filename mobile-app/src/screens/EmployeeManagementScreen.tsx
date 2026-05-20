@@ -17,6 +17,7 @@ import { storage } from '../services/storage';
 import { ArrowLeft, Users, User, CheckCircle2, XCircle, TrendingUp, UserPlus, QrCode, Copy, X as CloseIcon, Trash2, Wallet, BarChart3, Key, Plus } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 import QRCode from 'react-native-qrcode-svg';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   onBack: () => void;
@@ -26,6 +27,7 @@ interface Props {
 export default function EmployeeManagementScreen({ onBack, onViewTransactions }: Props) {
   console.log('EmployeeManagementScreen: Rendering...');
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const { showError, showSuccess, showConfirm } = usePopup();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -57,11 +59,11 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
       const defaultName = await buildDefaultBusinessName();
       const createResponse = await businessAPI.create({
         name: defaultName,
-        description: 'Default business created automatically',
+        description: t('employeeManagement.defaultBusinessDescription', { defaultValue: 'Default business created automatically' }),
       });
 
       if (!createResponse?.success) {
-        throw new Error(createResponse?.error || 'Failed to create default business');
+        throw new Error(createResponse?.error || t('employeeManagement.failedCreateDefaultBusiness', { defaultValue: 'Failed to create default business' }));
       }
 
       const refreshed = await businessAPI.getAll();
@@ -105,7 +107,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
       }
     } catch (error) {
       console.error('Error loading employee stats:', error);
-      showError('Error', 'Failed to load employee data');
+      showError(t('common.error'), t('employeeManagement.failedLoadEmployeeData', { defaultValue: 'Failed to load employee data' }));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -134,14 +136,14 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
       }
     } catch (error) {
       console.error('Error loading selected business stats:', error);
-      showError('Error', 'Failed to load selected business data');
+      showError(t('common.error'), t('employeeManagement.failedLoadSelectedBusinessData', { defaultValue: 'Failed to load selected business data' }));
     }
   };
 
   const handleCreateBusiness = async () => {
     const name = newBusinessName.trim();
     if (!name) {
-      showError('Error', 'Business name is required');
+      showError(t('common.error'), t('employeeManagement.businessNameRequired', { defaultValue: 'Business name is required' }));
       return;
     }
 
@@ -153,7 +155,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
       });
 
       if (!response?.success) {
-        showError('Error', response?.error || 'Failed to create business');
+        showError(t('common.error'), response?.error || t('employeeManagement.failedCreateBusiness', { defaultValue: 'Failed to create business' }));
         return;
       }
 
@@ -166,11 +168,11 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
         await handleBusinessSelect(resolved);
       }
 
-      showSuccess('Success', 'Business created successfully');
+      showSuccess(t('common.success'), t('employeeManagement.businessCreated', { defaultValue: 'Business created successfully' }));
       await loadData();
     } catch (error) {
       console.error('Error creating business:', error);
-      showError('Error', 'Failed to create business');
+      showError(t('common.error'), t('employeeManagement.failedCreateBusiness', { defaultValue: 'Failed to create business' }));
     } finally {
       setCreatingBusiness(false);
     }
@@ -181,7 +183,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
     try {
       const bId = businessId || await ensureBusinessContext(true);
       if (!bId) {
-        showError('Error', 'No business associated with this account');
+        showError(t('common.error'), t('employeeManagement.noBusinessAssociated', { defaultValue: 'No business associated with this account' }));
         return;
       }
       const response = await employeeAPI.generateCode(bId);
@@ -190,11 +192,11 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
         setIsReauthorizing(false);
         setShowAddEmployeeModal(true);
       } else {
-        showError('Error', 'Failed to generate access code');
+        showError(t('common.error'), t('employeeManagement.failedGenerateAccessCode', { defaultValue: 'Failed to generate access code' }));
       }
     } catch (error) {
       console.error('Error generating employee code:', error);
-      showError('Error', 'Failed to generate access code');
+      showError(t('common.error'), t('employeeManagement.failedGenerateAccessCode', { defaultValue: 'Failed to generate access code' }));
     } finally {
       setGeneratingOTP(false);
     }
@@ -205,7 +207,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
     try {
       const bId = businessId || await ensureBusinessContext(true);
       if (!bId) {
-        showError('Error', 'No business associated with this account');
+        showError(t('common.error'), t('employeeManagement.noBusinessAssociated', { defaultValue: 'No business associated with this account' }));
         return;
       }
       const response = await employeeAPI.reauthorize(bId, employeeId);
@@ -214,11 +216,11 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
         setIsReauthorizing(true);
         setShowAddEmployeeModal(true);
       } else {
-        showError('Error', 'Failed to generate login code');
+        showError(t('common.error'), t('employeeManagement.failedGenerateLoginCode', { defaultValue: 'Failed to generate login code' }));
       }
     } catch (error) {
       console.error('Error generating login code:', error);
-      showError('Error', 'Failed to generate login code');
+      showError(t('common.error'), t('employeeManagement.failedGenerateLoginCode', { defaultValue: 'Failed to generate login code' }));
     } finally {
       setGeneratingOTP(false);
     }
@@ -229,7 +231,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
     try {
       const bId = businessId || await ensureBusinessContext(true);
       if (!bId) {
-        showError('Error', 'No business associated with this account');
+        showError(t('common.error'), t('employeeManagement.noBusinessAssociated', { defaultValue: 'No business associated with this account' }));
         return;
       }
       const response = await employeeAPI.update(bId, employeeId, {
@@ -238,13 +240,21 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
       if (response.success) {
         // Reload data to get updated employee settings
         await loadData();
-        showSuccess('Success', `Employee access ${!currentValue ? 'enabled' : 'disabled'}`);
+        showSuccess(
+          t('common.success'),
+          t('employeeManagement.employeeAccessUpdated', {
+            defaultValue: 'Employee access {{status}}',
+            status: !currentValue
+              ? t('employeeManagement.enabled', { defaultValue: 'enabled' })
+              : t('employeeManagement.disabled', { defaultValue: 'disabled' }),
+          })
+        );
       } else {
-        showError('Error', response.message || 'Failed to update setting');
+        showError(t('common.error'), response.message || t('employeeManagement.failedUpdateSetting', { defaultValue: 'Failed to update setting' }));
       }
     } catch (error) {
       console.error('Error updating employee access setting:', error);
-      showError('Error', 'Failed to update setting');
+      showError(t('common.error'), t('employeeManagement.failedUpdateSetting', { defaultValue: 'Failed to update setting' }));
     } finally {
       setUpdatingSettings({ ...updatingSettings, [employeeId]: false });
     }
@@ -252,8 +262,11 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
 
   const handleDeleteEmployee = async (employeeId: string, employeeName: string) => {
     showConfirm(
-      'Delete Employee',
-      `Are you sure you want to delete ${employeeName}? This action cannot be undone.`,
+      t('employeeManagement.deleteEmployeeTitle', { defaultValue: 'Delete Employee' }),
+      t('employeeManagement.deleteEmployeeConfirm', {
+        defaultValue: 'Are you sure you want to delete {{employeeName}}? This action cannot be undone.',
+        employeeName,
+      }),
       async () => {
         try {
           const bId = businessId || await ensureBusinessContext(true);
@@ -261,14 +274,14 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
           
           const response = await employeeAPI.delete(bId, employeeId);
           if (response.success) {
-            showSuccess('Success', 'Employee deleted successfully');
+            showSuccess(t('common.success'), t('employeeManagement.employeeDeleted', { defaultValue: 'Employee deleted successfully' }));
             loadData();
           } else {
-            showError('Error', response.message || 'Failed to delete employee');
+            showError(t('common.error'), response.message || t('employeeManagement.failedDeleteEmployee', { defaultValue: 'Failed to delete employee' }));
           }
         } catch (error) {
           console.error('Error deleting employee:', error);
-          showError('Error', 'Failed to delete employee');
+          showError(t('common.error'), t('employeeManagement.failedDeleteEmployee', { defaultValue: 'Failed to delete employee' }));
         }
       }
     );
@@ -293,7 +306,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
           >
             <ArrowLeft size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Employees</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>{t('employeeManagement.title', { defaultValue: 'Employees' })}</Text>
         </View>
         <TouchableOpacity 
           style={styles.addButton}
@@ -305,7 +318,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
           ) : (
             <>
               <UserPlus size={20} color={colors.primary} />
-              <Text style={[styles.addButtonText, { color: colors.primary }]}>Add</Text>
+              <Text style={[styles.addButtonText, { color: colors.primary }]}>{t('employeeManagement.add', { defaultValue: 'Add' })}</Text>
             </>
           )}
         </TouchableOpacity>
@@ -338,7 +351,9 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
             onPress={() => setShowCreateBusinessModal(true)}
           >
             <Plus size={14} color={colors.primary} />
-            <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700', marginLeft: 6 }}>New Business</Text>
+            <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700', marginLeft: 6 }}>
+              {t('employeeManagement.newBusiness', { defaultValue: 'New Business' })}
+            </Text>
           </TouchableOpacity>
         </ScrollView>
       </View>
@@ -356,7 +371,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
               <Users size={18} color={colors.primary} />
             </View>
             <View>
-              <Text style={[styles.analyticsLabel, { color: colors.textSecondary }]}>Total Staff</Text>
+              <Text style={[styles.analyticsLabel, { color: colors.textSecondary }]}>{t('employeeManagement.totalStaff', { defaultValue: 'Total Staff' })}</Text>
               <Text style={[styles.analyticsValue, { color: colors.text }]}>
                 {stats?.summary?.totalEmployees || 0}
               </Text>
@@ -368,7 +383,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
               <CheckCircle2 size={18} color={colors.darkGreen} />
             </View>
             <View>
-              <Text style={[styles.analyticsLabel, { color: colors.textSecondary }]}>Active</Text>
+              <Text style={[styles.analyticsLabel, { color: colors.textSecondary }]}>{t('employeeManagement.active', { defaultValue: 'Active' })}</Text>
               <Text style={[styles.analyticsValue, { color: colors.text }]}>
                 {stats?.summary?.activeEmployees || 0}
               </Text>
@@ -380,7 +395,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
               <BarChart3 size={18} color="#8b5cf6" />
             </View>
             <View>
-              <Text style={[styles.analyticsLabel, { color: colors.textSecondary }]}>Total Txns</Text>
+              <Text style={[styles.analyticsLabel, { color: colors.textSecondary }]}>{t('employeeManagement.totalTxns', { defaultValue: 'Total Txns' })}</Text>
               <Text style={[styles.analyticsValue, { color: colors.text }]}>
                 {stats?.summary?.totalTransactions || 0}
               </Text>
@@ -392,7 +407,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
               <Wallet size={18} color="#f59e0b" />
             </View>
             <View>
-              <Text style={[styles.analyticsLabel, { color: colors.textSecondary }]}>Volume</Text>
+              <Text style={[styles.analyticsLabel, { color: colors.textSecondary }]}>{t('employeeManagement.volume', { defaultValue: 'Volume' })}</Text>
               <Text style={[styles.analyticsValue, { color: colors.text, fontSize: 14 }]}>
                 {(stats?.summary?.totalAmount || 0).toLocaleString()} Br
               </Text>
@@ -401,7 +416,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
         </View>
 
         {/* Employee List */}
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Employees</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('employeeManagement.title', { defaultValue: 'Employees' })}</Text>
         
         {stats?.employees?.length > 0 ? (
           stats.employees.map((employee: any) => (
@@ -424,7 +439,10 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
                       <View style={[styles.statusIndicator, { backgroundColor: employee.isActive ? colors.darkGreen : colors.textSecondary }]} />
                     </View>
                     <Text style={[styles.employeeRole, { color: colors.textSecondary }]}>
-                      Joined {new Date(employee.joinedAt).toLocaleDateString()}
+                      {t('employeeManagement.joinedDate', {
+                        defaultValue: 'Joined {{date}}',
+                        date: new Date(employee.joinedAt).toLocaleDateString(),
+                      })}
                     </Text>
                   </View>
                   <View style={styles.actionButtons}>
@@ -433,7 +451,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
                       onPress={() => handleReauthorizeEmployee(employee.id, employee.name)}
                     >
                       <Key size={16} color={colors.primary} />
-                      <Text style={[styles.reauthButtonText, { color: colors.primary }]}>Login Code</Text>
+                      <Text style={[styles.reauthButtonText, { color: colors.primary }]}>{t('employeeManagement.loginCode', { defaultValue: 'Login Code' })}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity 
                       style={[styles.actionButton, { backgroundColor: '#ef444415' }]}
@@ -451,10 +469,10 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
               <View style={styles.accessToggleRow}>
                 <View style={styles.accessToggleInfo}>
                   <Text style={[styles.accessToggleLabel, { color: colors.text }]}>
-                    Access All Picked Transactions
+                    {t('employeeManagement.accessAllPickedTransactions', { defaultValue: 'Access All Picked Transactions' })}
                   </Text>
                   <Text style={[styles.accessToggleDescription, { color: colors.textSecondary }]}>
-                    Allow this employee to view all picked transactions
+                    {t('employeeManagement.accessAllPickedTransactionsDesc', { defaultValue: 'Allow this employee to view all picked transactions' })}
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -487,26 +505,26 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
                   <Text style={[styles.statValue, { color: colors.text }]}>
                     {employee.stats.totalTransactions}
                   </Text>
-                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Transactions</Text>
+                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t('employeeManagement.transactions', { defaultValue: 'Transactions' })}</Text>
                 </View>
                 <View style={styles.statItem}>
                   <Text style={[styles.statValue, { color: colors.darkGreen }]}>
                     {employee.stats.verifiedTransactions}
                   </Text>
-                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Verified</Text>
+                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t('transactions.verified')}</Text>
                 </View>
                 <View style={styles.statItem}>
                   <Text style={[styles.statValue, { color: colors.primary }]}>
                     {employee.stats.totalAmount.toLocaleString()} Br
                   </Text>
-                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Total Volume</Text>
+                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t('employeeManagement.totalVolume', { defaultValue: 'Total Volume' })}</Text>
                 </View>
               </View>
             </TouchableOpacity>
           ))
         ) : (
           <View style={styles.emptyState}>
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No employees found</Text>
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('employeeManagement.noEmployeesFound', { defaultValue: 'No employees found' })}</Text>
           </View>
         )}
       </ScrollView>
@@ -522,7 +540,9 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
           <View style={[styles.modalContent, { backgroundColor: colors.background, height: 'auto', maxHeight: '80%', paddingBottom: 40 }]}>
             <View style={[styles.modalHeader, { borderBottomWidth: 0 }]}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>
-                {isReauthorizing ? 'Employee Login Code' : 'Add New Employee'}
+                {isReauthorizing
+                  ? t('employeeManagement.employeeLoginCode', { defaultValue: 'Employee Login Code' })
+                  : t('employeeManagement.addNewEmployee', { defaultValue: 'Add New Employee' })}
               </Text>
               <TouchableOpacity onPress={() => setShowAddEmployeeModal(false)}>
                 <CloseIcon size={24} color={colors.text} />
@@ -532,8 +552,8 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
             <View style={styles.modalBody}>
               <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
                 {isReauthorizing 
-                  ? 'Share this code or QR with your employee to log them in again.' 
-                  : 'Share this code or QR with your employee to register them.'}
+                  ? t('employeeManagement.shareCodeForLogin', { defaultValue: 'Share this code or QR with your employee to log them in again.' })
+                  : t('employeeManagement.shareCodeForRegister', { defaultValue: 'Share this code or QR with your employee to register them.' })}
               </Text>
 
               <View style={[styles.qrPlaceholder, { backgroundColor: '#fff', borderColor: colors.border }]}>
@@ -552,13 +572,17 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
                   <QrCode size={120} color={colors.primary} strokeWidth={1.5} />
                 )}
                 <Text style={[styles.qrHint, { color: colors.textSecondary }]}>
-                  {isReauthorizing ? 'Employee Login QR' : 'Employee Invite QR'}
+                  {isReauthorizing
+                    ? t('employeeManagement.employeeLoginQr', { defaultValue: 'Employee Login QR' })
+                    : t('employeeManagement.employeeInviteQr', { defaultValue: 'Employee Invite QR' })}
                 </Text>
               </View>
 
               <View style={styles.otpContainer}>
                 <Text style={[styles.otpLabel, { color: colors.textSecondary }]}> 
-                  {isReauthorizing ? 'Employee Login Code' : 'Invite Code'}
+                  {isReauthorizing
+                    ? t('employeeManagement.employeeLoginCode', { defaultValue: 'Employee Login Code' })
+                    : t('employeeManagement.inviteCode', { defaultValue: 'Invite Code' })}
                 </Text>
                 <View style={[styles.otpBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                   <Text style={[styles.otpText, { color: colors.primary }]}>{employeeOTP}</Text>
@@ -566,10 +590,13 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
                     onPress={async () => {
                       try {
                         await Clipboard.setStringAsync(employeeOTP);
-                        showSuccess('Copied', 'Invite code copied to clipboard');
+                        showSuccess(
+                          t('employeeManagement.copiedTitle', { defaultValue: 'Copied' }),
+                          t('employeeManagement.inviteCodeCopied', { defaultValue: 'Invite code copied to clipboard' })
+                        );
                       } catch (error) {
                         console.error('Error copying to clipboard:', error);
-                        showError('Error', 'Failed to copy to clipboard');
+                        showError(t('common.error'), t('employeeManagement.failedCopyClipboard', { defaultValue: 'Failed to copy to clipboard' }));
                       }
                     }}
                     style={styles.copyButton}
@@ -587,7 +614,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
                   loadData();
                 }}
               >
-                <Text style={[styles.doneButtonText, { color: colors.primaryText }]}>Done</Text>
+                <Text style={[styles.doneButtonText, { color: colors.primaryText }]}>{t('common.done')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -603,7 +630,7 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.background }]}> 
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Create Business</Text>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>{t('employeeManagement.createBusiness', { defaultValue: 'Create Business' })}</Text>
               <TouchableOpacity onPress={() => setShowCreateBusinessModal(false)}>
                 <CloseIcon size={24} color={colors.text} />
               </TouchableOpacity>
@@ -613,14 +640,14 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
               <TextInput
                 value={newBusinessName}
                 onChangeText={setNewBusinessName}
-                placeholder="Business name"
+                placeholder={t('employeeManagement.businessNamePlaceholder', { defaultValue: 'Business name' })}
                 placeholderTextColor={colors.textSecondary}
                 style={[styles.businessInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
               />
               <TextInput
                 value={newBusinessDescription}
                 onChangeText={setNewBusinessDescription}
-                placeholder="Description (optional)"
+                placeholder={t('employeeManagement.businessDescriptionPlaceholder', { defaultValue: 'Description (optional)' })}
                 placeholderTextColor={colors.textSecondary}
                 style={[styles.businessInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
               />
@@ -631,7 +658,9 @@ export default function EmployeeManagementScreen({ onBack, onViewTransactions }:
                 disabled={creatingBusiness}
               >
                 <Text style={[styles.doneButtonText, { color: colors.primaryText }]}> 
-                  {creatingBusiness ? 'Creating...' : 'Create Business'}
+                  {creatingBusiness
+                    ? t('employeeManagement.creating', { defaultValue: 'Creating...' })
+                    : t('employeeManagement.createBusiness', { defaultValue: 'Create Business' })}
                 </Text>
               </TouchableOpacity>
             </View>
