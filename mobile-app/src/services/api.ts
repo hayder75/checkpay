@@ -391,7 +391,7 @@ export const removeApiKey = () => {
 
 // Auth API
 export const authAPI = {
-  register: async (data: { username?: string; phone?: string; country?: string; password?: string; role?: string }) => {
+  register: async (data: { username?: string; phone?: string; country?: string; password?: string; role?: string; preferredLanguage?: string; referralCode?: string }) => {
     const response = await api.post('/auth/register', data);
     return response.data;
   },
@@ -411,9 +411,13 @@ export const authAPI = {
     const response = await api.get('/auth/me');
     return response.data;
   },
-  completeProfile: async (data: { country: string; firstName?: string; lastName?: string; role?: string }) => {
+  completeProfile: async (data: { country: string; firstName?: string; lastName?: string; role?: string; preferredLanguage?: string }) => {
     const response = await api.post('/auth/complete-profile', data);
     return response;
+  },
+  updateProfile: async (data: { username?: string; phone?: string; country?: string; preferredLanguage?: string }) => {
+    const response = await api.put('/auth/profile', data);
+    return response.data;
   },
   updateBusinessProfile: async (data: {
     region?: string;
@@ -660,6 +664,26 @@ export const dashboardAPI = {
   },
   getStats: async () => {
     const response = await api.get('/dashboard/stats');
+    return response.data;
+  },
+  getReports: async (params?: { businessId?: string }) => {
+    const response = await api.get('/dashboard/reports', { params });
+    return response.data;
+  },
+  getCashPayments: async (params?: { page?: number; limit?: number; businessId?: string; employeeId?: string }) => {
+    const response = await api.get('/dashboard/cash-payments', { params });
+    return response.data;
+  },
+  createCashPayment: async (data: {
+    amount: number;
+    side?: 'EMPLOYER' | 'EMPLOYEE';
+    businessId?: string | null;
+    employeeId?: string | null;
+    note?: string;
+    currency?: string;
+    paymentDate?: string;
+  }) => {
+    const response = await api.post('/dashboard/cash-payments', data);
     return response.data;
   },
 };
@@ -1020,6 +1044,35 @@ export const verifyTransaction = async (data: {
   return response.data;
 };
 
+export const normalizePackageStateResponse = (payload: any) => {
+  const envelope = payload?.data && typeof payload.data === 'object' ? payload.data : payload;
+
+  if (envelope && (envelope.state !== undefined || envelope.current !== undefined || envelope.latest !== undefined)) {
+    return {
+      state: envelope.state || 'NONE',
+      current: envelope.current || null,
+      latest: envelope.latest || null,
+      targetUserId: envelope.targetUserId || null,
+    };
+  }
+
+  if (envelope && typeof envelope === 'object' && (envelope.id || envelope.package)) {
+    return {
+      state: envelope.status === 'EXPIRED' ? 'EXPIRED' : 'ACTIVE',
+      current: envelope.status === 'EXPIRED' ? null : envelope,
+      latest: envelope,
+      targetUserId: envelope.userId || null,
+    };
+  }
+
+  return {
+    state: 'NONE',
+    current: null,
+    latest: null,
+    targetUserId: null,
+  };
+};
+
 // Package API
 export const packageAPI = {
   // Get current billing mode selected by admin
@@ -1030,7 +1083,23 @@ export const packageAPI = {
   // Get user's active package with usage stats
   getMyPackage: async () => {
     const response = await api.get('/user-packages/me');
-    return response.data;
+    const packageState = normalizePackageStateResponse(response.data);
+
+    return {
+      ...response.data,
+      data: packageState.current || packageState.latest || null,
+      meta: {
+        ...(response.data?.meta || {}),
+        packageState,
+      },
+    };
+  },
+  getMyPackageState: async () => {
+    const response = await api.get('/user-packages/me');
+    return {
+      ...response.data,
+      data: normalizePackageStateResponse(response.data),
+    };
   },
   // Get available packages (filtered by tier)
   getPackages: async (params?: { tier?: 'FREE' | 'BUSINESS' }) => {

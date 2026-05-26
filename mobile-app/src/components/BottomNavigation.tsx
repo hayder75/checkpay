@@ -1,16 +1,17 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Home, Building2, History, User, ScanLine } from 'lucide-react-native';
+import { Home, Building2, History, User, ScanLine, BarChart3 } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { useTranslation } from 'react-i18next';
 
-export type Tab = 'home' | 'banks' | 'transactions' | 'ocr' | 'profile' | 'employee-management';
+export type Tab = 'home' | 'banks' | 'transactions' | 'ocr' | 'reports' | 'profile' | 'employee-management';
 
 const allTabs: { id: Tab; label: string; Icon: any }[] = [
   { id: 'home', label: 'Home', Icon: Home },
   { id: 'banks', label: 'Banks', Icon: Building2 },
   { id: 'transactions', label: 'History', Icon: History },
   { id: 'ocr', label: 'Scan', Icon: ScanLine },
+  { id: 'reports', label: 'Reports', Icon: BarChart3 },
   { id: 'profile', label: 'Profile', Icon: User },
 ];
 
@@ -18,9 +19,10 @@ interface Props {
   currentTab: Tab;
   onTabChange: (tab: Tab) => void;
   isEmployee?: boolean;
+  isRestricted?: boolean;
 }
 
-export default function BottomNavigation({ currentTab, onTabChange, isEmployee = false }: Props) {
+export default function BottomNavigation({ currentTab, onTabChange, isEmployee = false, isRestricted = false }: Props) {
   const { colors } = useTheme();
   const { t } = useTranslation();
 
@@ -29,23 +31,34 @@ export default function BottomNavigation({ currentTab, onTabChange, isEmployee =
     banks: t('navigation.banks'),
     transactions: t('navigation.history'),
     ocr: t('navigation.scan'),
+    reports: 'Reports',
     profile: t('navigation.profile'),
     'employee-management': t('navigation.profile'),
   };
 
-  // For employees, show OCR, Transactions, and Profile
-  // For business owners, show all tabs except Profile
-  const tabs = isEmployee 
-    ? allTabs.filter(tab => ['ocr', 'transactions', 'profile'].includes(tab.id))
-    : allTabs.filter(tab => tab.id !== 'profile');
+  const employeeAllowedTabs = isRestricted
+    ? ['transactions', 'reports', 'profile']
+    : ['ocr', 'transactions', 'reports', 'profile'];
+  const ownerAllowedTabs = isRestricted
+    ? ['transactions', 'reports', 'profile']
+    : ['home', 'banks', 'transactions', 'ocr', 'reports', 'profile'];
+
+  const tabs = isEmployee
+    ? allTabs.filter(tab => employeeAllowedTabs.includes(tab.id))
+    : allTabs.filter(tab => ownerAllowedTabs.includes(tab.id));
 
   const handleTabChange = (tab: Tab) => {
-    // If employee tries to access restricted tabs, force OCR (though UI should prevent this now)
-    if (isEmployee && !['ocr', 'transactions', 'profile'].includes(tab)) {
-      onTabChange('ocr');
-    } else {
-      onTabChange(tab);
+    if (isEmployee && !employeeAllowedTabs.includes(tab)) {
+      onTabChange(isRestricted ? 'transactions' : 'ocr');
+      return;
     }
+
+    if (!isEmployee && !ownerAllowedTabs.includes(tab)) {
+      onTabChange('transactions');
+      return;
+    }
+
+    onTabChange(tab);
   };
 
   return (

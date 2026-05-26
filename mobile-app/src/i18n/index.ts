@@ -43,6 +43,19 @@ i18n.use(initReactI18next).init({
   resources,
   lng: 'en',
   fallbackLng: 'en',
+  parseMissingKeyHandler: (key: string) => {
+    const lastSegment = key.split('.').pop() || key;
+    const readable = lastSegment
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .replace(/[._-]+/g, ' ')
+      .trim();
+
+    if (!readable) {
+      return key;
+    }
+
+    return readable.charAt(0).toUpperCase() + readable.slice(1);
+  },
   interpolation: {
     escapeValue: false,
   },

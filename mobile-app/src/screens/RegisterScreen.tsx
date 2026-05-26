@@ -25,6 +25,7 @@ import { storage } from '../services/storage';
 import { signInWithGoogle, completeGoogleAuth } from '../services/googleAuth';
 import Svg, { Path } from 'react-native-svg';
 import { useTranslation } from 'react-i18next';
+import { AppLanguage } from '../i18n/resources';
 
 interface Props {
   onRegisterSuccess: (user: any, apiKey: string, patterns: Pattern[]) => void;
@@ -91,6 +92,8 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
   const { t } = useTranslation();
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
+  const [preferredLanguage, setPreferredLanguage] = useState<AppLanguage>('en');
+  const [referralCode, setReferralCode] = useState('');
   const [accountType, setAccountType] = useState<AccountType>('BUSINESS_OWNER');
   const [currentStep, setCurrentStep] = useState<RegisterStep>(0);
   const [selectedCountry, setSelectedCountry] = useState<CountryCode>(getCountryByCode('ET') || { code: 'ET', name: 'Ethiopia', callingCode: '+251', flag: '🇪🇹' });
@@ -149,7 +152,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
     } catch (error) {
       console.error('Error loading banks for registration:', error);
       setAvailableBanks(GLOBAL_BANK_FALLBACK);
-      setBanksError(t('register.builtinBanksNotice'));
+      setBanksError(t('register.builtinBanksNotice', { defaultValue: 'Showing a built-in bank list. You can continue and edit banks later in My Banks.' }));
     } finally {
       setBanksLoading(false);
     }
@@ -210,7 +213,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
   // Handle Telegram deep link authentication
   const handleTelegramAuth = async () => {
     if (!botUsername) {
-      Alert.alert(t('common.error'), t('register.telegramRegistrationNotConfigured'));
+      Alert.alert(t('common.error'), t('register.telegramRegistrationNotConfigured', { defaultValue: 'Telegram registration is not configured' }));
       return;
     }
 
@@ -219,7 +222,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
       // Get auth token from backend
       const initResponse = await telegramAuthAPI.init();
       if (!initResponse?.success || !initResponse?.data?.token) {
-        Alert.alert(t('common.error'), t('register.failedInitTelegramAuth'));
+        Alert.alert(t('common.error'), t('register.failedInitTelegramAuth', { defaultValue: 'Failed to initialize Telegram authentication' }));
         return;
       }
 
@@ -260,8 +263,8 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
             setTelegramLoading(false);
             if (attempts >= maxAttempts) {
               Alert.alert(
-                t('register.timeoutTitle'),
-                t('register.telegramAuthTimeout')
+                t('register.timeoutTitle', { defaultValue: 'Timeout' }),
+                t('register.telegramAuthTimeout', { defaultValue: 'Telegram authentication timed out. Please try again.' })
               );
             }
           }
@@ -273,7 +276,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
     } catch (error: any) {
       await storage.removeItem(PENDING_TELEGRAM_AUTH_TOKEN_KEY);
       setTelegramLoading(false);
-      Alert.alert(t('common.error'), error.message || t('register.failedStartTelegramAuth'));
+      Alert.alert(t('common.error'), error.message || t('register.failedStartTelegramAuth', { defaultValue: 'Failed to start Telegram authentication' }));
     }
   };
 
@@ -284,7 +287,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
     }
 
     if (!selectedCountry?.code) {
-      Alert.alert(t('common.error'), t('register.selectCountryFromPhoneField'));
+      Alert.alert(t('common.error'), t('register.selectCountryFromPhoneField', { defaultValue: 'Please select your country from the phone field' }));
       return;
     }
 
@@ -295,17 +298,21 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
         country?: string;
         password?: string;
         role?: AccountType;
+        preferredLanguage?: string;
+        referralCode?: string;
       } = {
         phone: phone.trim(),
         country: selectedCountry.code,
         password: password,
         role: accountType,
+        preferredLanguage,
+        referralCode: referralCode.trim() || undefined,
       };
 
       const cleanedPhone = phone.trim();
       const phoneWithoutCode = cleanedPhone.replace(/^\+\d{1,4}/, '');
       if (phoneWithoutCode.length < 7 && cleanedPhone.length < 10) {
-        Alert.alert(t('common.error'), t('register.phoneTooShort'));
+        Alert.alert(t('common.error'), t('register.phoneTooShort', { defaultValue: 'Phone number looks too short' }));
         setLoading(false);
         return;
       }
@@ -319,7 +326,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
         if (!token || !user) {
           Alert.alert(
             t('common.error'),
-            t('register.registrationAuthDataMissing')
+            t('register.registrationAuthDataMissing', { defaultValue: 'Registration successful but failed to get authentication data. Please try logging in.' })
           );
           return;
         }
@@ -349,8 +356,8 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
               } catch (patternError: any) {
                 console.error('Pattern creation during registration failed:', patternError);
                 Alert.alert(
-                  t('register.patternNotSavedTitle'),
-                  t('register.patternNotSavedMessage')
+                  t('register.patternNotSavedTitle', { defaultValue: 'Pattern Not Saved' }),
+                  t('register.patternNotSavedMessage', { defaultValue: 'Account created successfully, but we could not save the new bank pattern. You can add it later from the app.' })
                 );
               }
             }
@@ -372,7 +379,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
             onRegisterSuccess(user, apiKey, []);
           }
         } else {
-          Alert.alert(t('common.error'), t('register.noApiKeySupport'));
+          Alert.alert(t('common.error'), t('register.noApiKeySupport', { defaultValue: 'No API key found for this account. Please contact support.' }));
         }
       } else {
         Alert.alert(t('common.error'), response.message || t('auth.registrationFailed'));
@@ -411,11 +418,11 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
         // Complete authentication
         await completeGoogleAuth(result.token, result.user, onRegisterSuccess);
       } else {
-        Alert.alert(t('common.error'), result.error || t('register.googleSignInFailed'));
+        Alert.alert(t('common.error'), result.error || t('register.googleSignInFailed', { defaultValue: 'Google sign-in failed' }));
       }
     } catch (error: any) {
       console.error('Google sign-in error:', error);
-      Alert.alert(t('common.error'), error.message || t('register.googleSignInFailed'));
+      Alert.alert(t('common.error'), error.message || t('register.googleSignInFailed', { defaultValue: 'Google sign-in failed' }));
     } finally {
       setGoogleLoading(false);
     }
@@ -424,18 +431,18 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
   const validateStep = (step: RegisterStep) => {
     if (step === 0) {
       if (!phone.trim()) {
-        Alert.alert(t('common.error'), t('register.phoneRequired'));
+        Alert.alert(t('common.error'), t('register.phoneRequired', { defaultValue: 'Phone number is required' }));
         return false;
       }
 
       const cleanedPhone = phone.trim().replace(/^\+\d{1,4}/, '');
       if (cleanedPhone.length < 7) {
-        Alert.alert(t('common.error'), t('register.enterValidPhone'));
+        Alert.alert(t('common.error'), t('register.enterValidPhone', { defaultValue: 'Enter a valid phone number' }));
         return false;
       }
 
       if (!selectedCountry?.code) {
-        Alert.alert(t('common.error'), t('register.selectCountryFromPhoneField'));
+        Alert.alert(t('common.error'), t('register.selectCountryFromPhoneField', { defaultValue: 'Please select your country from the phone field' }));
         return false;
       }
 
@@ -465,24 +472,24 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
   const handleSavePatternDraft = () => {
     if (!patternInstitution.trim()) {
       Alert.alert(
-        t('register.bankNameRequiredTitle'),
-        t('register.bankNameRequiredMessage')
+        t('register.bankNameRequiredTitle', { defaultValue: 'Bank Name Required' }),
+        t('register.bankNameRequiredMessage', { defaultValue: 'Please enter the bank/institution name.' })
       );
       return;
     }
 
     if (!patternSMS.trim()) {
       Alert.alert(
-        t('register.sampleSmsRequiredTitle'),
-        t('register.sampleSmsRequiredMessage')
+        t('register.sampleSmsRequiredTitle', { defaultValue: 'Sample SMS Required' }),
+        t('register.sampleSmsRequiredMessage', { defaultValue: 'Please paste a sample SMS to continue.' })
       );
       return;
     }
 
     if (!patternTxnId.trim()) {
       Alert.alert(
-        t('register.transactionIdRequiredTitle'),
-        t('register.transactionIdRequiredMessage')
+        t('register.transactionIdRequiredTitle', { defaultValue: 'Transaction ID Required' }),
+        t('register.transactionIdRequiredMessage', { defaultValue: 'Please enter the transaction ID found in the sample SMS.' })
       );
       return;
     }
@@ -567,9 +574,9 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
                       {index + 1}
                     </Text>
                   </View>
-                    <Text style={[styles.stepTitle, { color: isActive ? colors.text : colors.textSecondary }]}>
-                      {t(step.titleKey)}
-                    </Text>
+                  <Text style={[styles.stepTitle, { color: isActive ? colors.text : colors.textSecondary }]}>
+                    {t(step.titleKey, { defaultValue: step.fallbackTitle })}
+                  </Text>
                 </View>
               );
             })}
@@ -577,10 +584,10 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
 
           <View style={[styles.stepCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Text style={[styles.stepCardTitle, { color: colors.text }]}>
-              {t(REGISTER_STEPS[currentStep].titleKey)}
+              {t(REGISTER_STEPS[currentStep].titleKey, { defaultValue: REGISTER_STEPS[currentStep].fallbackTitle })}
             </Text>
             <Text style={[styles.stepCardSubtitle, { color: colors.textSecondary }]}>
-              {t(REGISTER_STEPS[currentStep].subtitleKey)}
+              {t(REGISTER_STEPS[currentStep].subtitleKey, { defaultValue: REGISTER_STEPS[currentStep].fallbackSubtitle })}
             </Text>
 
             {currentStep === 0 && (
@@ -607,6 +614,48 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
                     <Text style={[styles.countrySelectorArrow, { color: colors.textSecondary }]}>▼</Text>
                   </TouchableOpacity>
                 </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.label, { color: colors.text }]}>{t('profile.language', { defaultValue: 'Language' })}</Text>
+                  <View style={styles.bankChipsContainer}>
+                    {[
+                      { code: 'en' as AppLanguage, label: t('language.english') },
+                      { code: 'am' as AppLanguage, label: t('language.amharic') },
+                      { code: 'om' as AppLanguage, label: t('language.afaanOromo') },
+                    ].map((language) => {
+                      const selected = preferredLanguage === language.code;
+                      return (
+                        <TouchableOpacity
+                          key={language.code}
+                          style={[
+                            styles.bankChip,
+                            {
+                              borderColor: selected ? colors.primary : colors.border,
+                              backgroundColor: selected ? colors.primary + '18' : colors.surface,
+                            },
+                          ]}
+                          onPress={() => setPreferredLanguage(language.code)}
+                        >
+                          <Text style={[styles.bankChipText, { color: selected ? colors.primary : colors.text }]}>
+                            {language.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.label, { color: colors.text }]}>Referral Code</Text>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+                    placeholder="Optional marketer referral code"
+                    placeholderTextColor={colors.textSecondary}
+                    value={referralCode}
+                    onChangeText={setReferralCode}
+                    autoCapitalize="characters"
+                  />
+                </View>
               </>
             )}
 
@@ -630,10 +679,11 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
               <>
                 <View style={[styles.summaryCard, { backgroundColor: colors.background, borderColor: colors.border, marginBottom: 20 }]}>
                   <Text style={[styles.summaryLine, { color: colors.text }]}>
-                    {t('register.summaryPhone', { phone })}
+                    {t('register.summaryPhone', { defaultValue: 'Phone: {{phone}}', phone })}
                   </Text>
                   <Text style={[styles.summaryLine, { color: colors.text }]}> 
                     {t('register.summaryCountry', {
+                      defaultValue: 'Country: {{country}} ({{code}})',
                       country: selectedCountry.name,
                       code: selectedCountry.code,
                     })}
@@ -698,6 +748,7 @@ export default function RegisterScreen({ onRegisterSuccess, onSwitchToLogin, onS
                     {patternDraft && (
                       <Text style={[styles.hint, { color: colors.textSecondary }]}> 
                         {t('register.newBankDraftReady', {
+                          defaultValue: 'New bank draft ready: {{institution}}',
                           institution: patternDraft.institution,
                         })}
                       </Text>

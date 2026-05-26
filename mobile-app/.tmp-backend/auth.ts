@@ -3,7 +3,7 @@ import passport from '../config/passport';
 import { z } from 'zod';
 import QRCode from 'qrcode';
 import jwt from 'jsonwebtoken';
-import { prisma } from '../utils/prisma';
+import prisma from '../utils/prisma';
 import { AppError } from '../middleware/errorHandler';
 import { 
   register, 

@@ -19,6 +19,7 @@ import OCRScreen from './src/screens/OCRScreen';
 import EmployeeScreen from './src/screens/EmployeeScreen';
 import EmployeeManagementScreen from './src/screens/EmployeeManagementScreen';
 import EmployeeTransactionsScreen from './src/screens/EmployeeTransactionsScreen';
+import ReportsCashScreen from './src/screens/ReportsCashScreen';
 import NotificationsScreen from './src/screens/NotificationsScreen';
 import LockScreen from './src/screens/LockScreen';
 import PINSetupScreen from './src/screens/PINSetupScreen';
@@ -29,7 +30,7 @@ import { smsService } from './src/services/smsService';
 import { securityService } from './src/services/securityService';
 import { checkAndPromptNotificationAccess, isNotificationAccessEnabled, openNotificationAccessSettings } from './src/utils/notificationListener';
 import { Pattern } from './src/types';
-import { authAPI } from './src/services/api';
+import { authAPI, packageAPI } from './src/services/api';
 import { patternsAPI, telegramAuthAPI, subscribeNetworkStatus } from './src/services/api';
 import { useTranslation } from 'react-i18next';
 import 'react-native-url-polyfill/auto';
@@ -60,22 +61,44 @@ function AppContent() {
   const [showProfileCompletion, setShowProfileCompletion] = useState(false);
   const [showCustomerOnboarding, setShowCustomerOnboarding] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
+  const [packageAccessState, setPackageAccessState] = useState<{
+    restricted: boolean;
+    state: string;
+    current: any;
+    latest: any;
+  }>({
+    restricted: false,
+    state: 'NONE',
+    current: null,
+    latest: null,
+  });
+  const [showPackageRestrictedModal, setShowPackageRestrictedModal] = useState(false);
   const appState = useRef(AppState.currentState);
   const backgroundTimestamp = useRef<number | null>(null);
   const notificationReminderShownThisLaunch = useRef(false);
   const notificationListenersCleanupRef = useRef<(() => void) | null>(null);
+  const packageRestrictionKeyRef = useRef<string | null>(null);
+  const wasPackageRestrictedRef = useRef(false);
 
   // Check if user is employee (only OCR access)
   const isEmployee = user?.role === 'EMPLOYEE';
+  const isPackageRestricted = packageAccessState.restricted;
 
   // For employees, force OCR tab and prevent access to other features
   useEffect(() => {
     if (isEmployee) {
-      if (currentTab !== 'ocr') {
-        setCurrentTab('ocr');
+      const targetTab = isPackageRestricted ? 'transactions' : 'ocr';
+      if (currentTab !== targetTab) {
+        setCurrentTab(targetTab);
       }
     }
-  }, [isEmployee, currentTab]);
+  }, [isEmployee, currentTab, isPackageRestricted]);
+
+  useEffect(() => {
+    if (!isEmployee && isPackageRestricted && !['transactions', 'reports', 'profile'].includes(currentTab)) {
+      setCurrentTab('transactions');
+    }
+  }, [currentTab, isEmployee, isPackageRestricted]);
 
   // Track previous tab to detect when leaving profile screen
   const previousTab = useRef<Tab>('home');
@@ -100,6 +123,33 @@ function AppContent() {
 
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const startPolling = async () => {
+      const token = await storage.getToken();
+      if (!token) {
+        return;
+      }
+
+      intervalId = setInterval(() => {
+        refreshPackageAccess({ showModal: false }).catch((error) => {
+          console.error('Error polling package access:', error);
+        });
+      }, 45000);
+    };
+
+    startPolling().catch((error) => {
+      console.error('Error starting package access polling:', error);
+    });
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [user?.id]);
 
   // App state change listener for lock screen
   useEffect(() => {
@@ -143,6 +193,7 @@ function AppContent() {
         }
       }
       await remindNotificationAccessIfNeeded();
+      await refreshPackageAccess({ showModal: true });
       backgroundTimestamp.current = null;
     }
     appState.current = nextAppState;
@@ -180,6 +231,87 @@ function AppContent() {
         },
       ]
     );
+  };
+
+  const getPackageRestrictionMessage = () => {
+    if (isEmployee) {
+      return 'Package renewal is required for this business. You can still view transaction history and reports, but new transactions will not be picked until the package is renewed.';
+    }
+
+    return 'Your package has expired. You can still view transaction history and reports, but CheckPay will stop picking new transactions until payment is confirmed.';
+  };
+
+  const startMonitoringIfAllowed = async (accessState?: { restricted: boolean }) => {
+    const resolvedAccessState = accessState || (await refreshPackageAccess({ showModal: true }));
+    if (resolvedAccessState.restricted) {
+      console.log('ℹ️ [App] Skipping SMS monitoring because package access is restricted');
+      return;
+    }
+
+    try {
+      await smsService.startMonitoring();
+    } catch (error) {
+      console.error('Error starting SMS monitoring:', error);
+    }
+  };
+
+  const syncUnsyncedTransactionsIfAllowed = async (accessState?: { restricted: boolean }) => {
+    const resolvedAccessState = accessState || (await refreshPackageAccess({ showModal: false }));
+    if (resolvedAccessState.restricted) {
+      console.log('ℹ️ [App] Skipping unsynced transaction flush because package access is restricted');
+      return;
+    }
+
+    smsService.syncAllUnsyncedTransactions().catch((error) => {
+      const errorMsg = error?.message || 'Unknown error';
+      console.warn('⚠️ [App] Some transactions failed to sync:', errorMsg);
+    });
+  };
+
+  const refreshPackageAccess = async ({ showModal = true }: { showModal?: boolean } = {}) => {
+    const token = await storage.getToken();
+    if (!token) {
+      const nextState = { restricted: false, state: 'NONE', current: null, latest: null };
+      setPackageAccessState(nextState);
+      wasPackageRestrictedRef.current = false;
+      return nextState;
+    }
+
+    try {
+      const response = await packageAPI.getMyPackageState();
+      const normalizedState = response?.data || { state: 'NONE', current: null, latest: null, targetUserId: null };
+      const restricted = normalizedState.state === 'EXPIRED';
+      const nextState = {
+        restricted,
+        state: normalizedState.state || 'NONE',
+        current: normalizedState.current || null,
+        latest: normalizedState.latest || null,
+      };
+
+      setPackageAccessState(nextState);
+
+      const latestId = nextState.latest?.id || nextState.current?.id || 'none';
+      const restrictionKey = `${nextState.state}:${latestId}`;
+
+      if (restricted) {
+        smsService.stopMonitoring();
+        if (showModal && packageRestrictionKeyRef.current !== restrictionKey) {
+          packageRestrictionKeyRef.current = restrictionKey;
+          setShowPackageRestrictedModal(true);
+        }
+      } else if (wasPackageRestrictedRef.current) {
+        packageRestrictionKeyRef.current = null;
+        setShowPackageRestrictedModal(false);
+        await startMonitoringIfAllowed(nextState);
+        await syncUnsyncedTransactionsIfAllowed(nextState);
+      }
+
+      wasPackageRestrictedRef.current = restricted;
+      return nextState;
+    } catch (error) {
+      console.error('Error refreshing package access:', error);
+      return packageAccessState;
+    }
   };
 
   const handleUnlock = () => {
@@ -263,12 +395,8 @@ function AppContent() {
       }
     }
     
-    // Start SMS monitoring
-    try {
-      await smsService.startMonitoring();
-    } catch (error) {
-      console.error('Error starting SMS monitoring:', error);
-    }
+    await refreshPackageAccess({ showModal: true });
+    await startMonitoringIfAllowed();
     
     // Setup notifications
     setupNotifications();
@@ -343,8 +471,8 @@ function AppContent() {
         const onboardingCompleted = await storage.getOnboardingCompleted();
         const token = await storage.getToken();
         if (onboardingCompleted && token) {
-          // Delay SMS monitoring to not block app startup
-          await smsService.startMonitoring();
+          await refreshPackageAccess({ showModal: false });
+          await startMonitoringIfAllowed();
         } else if (onboardingCompleted && !token) {
           console.log('ℹ️ [App] Skipping SMS monitoring startup: user is not authenticated yet');
         }
@@ -578,6 +706,8 @@ function AppContent() {
             // Check security state to show lock screen if needed
             await refreshSecurityState();
 
+            await refreshPackageAccess({ showModal: false });
+
             // Prefer backend onboarding state for returning users.
             await syncCustomerOnboardingState(response.data, 'startup');
             
@@ -700,6 +830,7 @@ function AppContent() {
 
     // Prefer backend onboarding state and fall back to local storage.
     await syncCustomerOnboardingState(userData, 'login');
+    const accessState = await refreshPackageAccess({ showModal: true });
     
     // Check if security is enabled (for lock screen) or prompt setup
     const enabled = await securityService.isSecurityEnabled();
@@ -799,20 +930,10 @@ function AppContent() {
       console.warn('⚠️ No country code available - SMS monitoring may not work properly');
     }
     
-    // Start SMS monitoring after successful login
-    try {
-      console.log('🔄 Starting SMS monitoring after login...');
-      await smsService.startMonitoring();
-      console.log('✅ SMS monitoring started');
-    } catch (error) {
-      console.error('Error starting SMS monitoring after login:', error);
-    }
-    
-    // Sync any unsynced transactions after login (non-blocking)
-    smsService.syncAllUnsyncedTransactions().catch((error) => {
-      const errorMsg = error?.message || 'Unknown error';
-      console.warn('⚠️ [App] Some transactions failed to sync after login:', errorMsg);
-    });
+    console.log('🔄 Starting SMS monitoring after login...');
+    await startMonitoringIfAllowed(accessState);
+    console.log('✅ SMS monitoring state updated after login');
+    await syncUnsyncedTransactionsIfAllowed(accessState);
 
     // Setup notifications
     setupNotifications();
@@ -869,6 +990,10 @@ function AppContent() {
       setLoading(false);
       setIsLocked(false);
       setSecurityEnabled(false);
+      setPackageAccessState({ restricted: false, state: 'NONE', current: null, latest: null });
+      setShowPackageRestrictedModal(false);
+      packageRestrictionKeyRef.current = null;
+      wasPackageRestrictedRef.current = false;
       
       console.log('✅ [App] Logout completed, showing login screen');
     } catch (error) {
@@ -883,7 +1008,7 @@ function AppContent() {
     console.log('App.tsx: renderScreen called with currentTab:', currentTab);
     // For employees, show employee screen (no bottom nav)
     if (isEmployee) {
-      return <EmployeeScreen onLogout={handleLogout} />;
+      return <EmployeeScreen onLogout={handleLogout} packageRestricted={isPackageRestricted} />;
     }
 
     switch (currentTab) {
@@ -919,6 +1044,8 @@ function AppContent() {
         return <TransactionsScreen apiKey={apiKey} />;
       case 'ocr':
         return <OCRScreen patterns={patterns} />;
+      case 'reports':
+        return <ReportsCashScreen />;
       case 'profile':
         return (
           <ProfileScreen 
@@ -1014,6 +1141,7 @@ function AppContent() {
 
     // Prefer backend onboarding state and fall back to local storage.
     await syncCustomerOnboardingState(userData, 'register');
+    const accessState = await refreshPackageAccess({ showModal: true });
     
     // Check if security is enabled (for lock screen) or prompt setup
     const enabled = await securityService.isSecurityEnabled();
@@ -1043,21 +1171,10 @@ function AppContent() {
         console.error('Error downloading institution patterns:', error);
       }
       
-      // Start SMS monitoring after successful authentication
-      try {
-        console.log('🔄 Starting SMS monitoring after authentication...');
-        await smsService.startMonitoring();
-        console.log('✅ SMS monitoring started');
-      } catch (error) {
-        console.error('Error starting SMS monitoring after auth:', error);
-      }
-      
-      // Sync any unsynced transactions after login (non-blocking)
-      smsService.syncAllUnsyncedTransactions().catch((error) => {
-        const errorMsg = error?.message || 'Unknown error';
-        console.warn('⚠️ [App] Some transactions failed to sync after verification:', errorMsg);
-        console.warn('⚠️ [App] Transactions are saved locally and will be synced later');
-      });
+      console.log('🔄 Starting SMS monitoring after authentication...');
+      await startMonitoringIfAllowed(accessState);
+      console.log('✅ SMS monitoring state updated after authentication');
+      await syncUnsyncedTransactionsIfAllowed(accessState);
       return;
     }
     
@@ -1088,20 +1205,10 @@ function AppContent() {
       console.warn('⚠️ No country code available - SMS monitoring may not work properly');
     }
     
-    // Start SMS monitoring after successful registration
-    try {
-      console.log('🔄 Starting SMS monitoring after registration...');
-      await smsService.startMonitoring();
-      console.log('✅ SMS monitoring started');
-    } catch (error) {
-      console.error('Error starting SMS monitoring after registration:', error);
-    }
-    
-    // Sync any unsynced transactions after registration (non-blocking)
-    smsService.syncAllUnsyncedTransactions().catch((error) => {
-      const errorMsg = error?.message || 'Unknown error';
-      console.warn('⚠️ [App] Some transactions failed to sync after registration:', errorMsg);
-    });
+    console.log('🔄 Starting SMS monitoring after registration...');
+    await startMonitoringIfAllowed(accessState);
+    console.log('✅ SMS monitoring state updated after registration');
+    await syncUnsyncedTransactionsIfAllowed(accessState);
 
     // Setup notifications
     setupNotifications();
@@ -1265,6 +1372,42 @@ function AppContent() {
           </View>
         </View>
       )}
+
+      <Modal
+        visible={showPackageRestrictedModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPackageRestrictedModal(false)}
+      >
+        <View style={styles.securityPromptOverlay}>
+          <View style={[styles.securityPromptCard, { backgroundColor: colors.surface }]}> 
+            <View style={[styles.securityPromptIcon, { backgroundColor: '#f59e0b20' }]}> 
+              <Text style={{ fontSize: 40 }}>⏳</Text>
+            </View>
+            <Text style={[styles.securityPromptTitle, { color: colors.text }]}>Payment Required</Text>
+            <Text style={[styles.securityPromptSubtitle, { color: colors.textSecondary }]}> 
+              {getPackageRestrictionMessage()}
+            </Text>
+            {!isEmployee && (
+              <TouchableOpacity
+                style={[styles.securityPromptButton, { backgroundColor: colors.primary }]}
+                onPress={() => {
+                  setShowPackageRestrictedModal(false);
+                  setCurrentTab('profile');
+                }}
+              >
+                <Text style={styles.securityPromptButtonText}>Open Payment</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={styles.securityPromptSkip}
+              onPress={() => setShowPackageRestrictedModal(false)}
+            >
+              <Text style={[styles.securityPromptSkipText, { color: colors.textSecondary }]}>Dismiss</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
       
       {/* Security Setup Prompt Modal */}
       <Modal
@@ -1327,6 +1470,7 @@ function AppContent() {
               currentTab={currentTab} 
               onTabChange={setCurrentTab}
               isEmployee={isEmployee}
+              isRestricted={isPackageRestricted}
             />
           )}
         </View>

@@ -13,6 +13,7 @@ import {
 import { X, CheckCircle2, AlertCircle, Building2, User, Phone, Calendar, Hash, MessageSquare, Share2 } from 'lucide-react-native';
 import { useTranslation } from 'react-i18next';
 import { LocalTransaction } from '../services/smsService';
+import { useTheme } from '../contexts/ThemeContext';
 
 interface Props {
   visible: boolean;

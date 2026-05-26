@@ -15,23 +15,25 @@ import { usePopup } from '../contexts/PopupContext';
 import { storage } from '../services/storage';
 import OCRScreen from './OCRScreen';
 import TransactionsScreen from './TransactionsScreen';
+import ReportsCashScreen from './ReportsCashScreen';
 import BottomNavigation, { Tab } from '../components/BottomNavigation';
 import { getDisplayName, getUserInitials } from '../utils/userUtils';
 import { useTranslation } from 'react-i18next';
 
 interface Props {
   onLogout: () => void;
+  packageRestricted?: boolean;
 }
 
-type EmployeeView = Tab;
+type EmployeeView = 'ocr' | 'transactions' | 'reports' | 'profile';
 
 const { width } = Dimensions.get('window');
 
-export default function EmployeeScreen({ onLogout }: Props) {
+export default function EmployeeScreen({ onLogout, packageRestricted = false }: Props) {
   const { colors, theme } = useTheme();
   const { t } = useTranslation();
   const { showConfirm } = usePopup();
-  const [currentView, setCurrentView] = useState<EmployeeView>('ocr');
+  const [currentView, setCurrentView] = useState<EmployeeView>(packageRestricted ? 'transactions' : 'ocr');
   const [user, setUser] = useState<any>(null);
   const [employee, setEmployee] = useState<any>(null);
   const [patterns, setPatterns] = useState<any[]>([]);
@@ -43,6 +45,12 @@ export default function EmployeeScreen({ onLogout }: Props) {
     loadUser();
     loadPatterns();
   }, []);
+
+  useEffect(() => {
+    if (packageRestricted && currentView === 'ocr') {
+      setCurrentView('transactions');
+    }
+  }, [packageRestricted, currentView]);
 
   const loadUser = async () => {
     try {
@@ -140,10 +148,12 @@ export default function EmployeeScreen({ onLogout }: Props) {
         return <OCRScreen patterns={patterns} />;
       case 'transactions':
         return <TransactionsScreen apiKey={null} />;
+      case 'reports':
+        return <ReportsCashScreen isEmployee={true} />;
       case 'profile':
         return renderProfile();
       default:
-        return <OCRScreen patterns={patterns} />;
+        return packageRestricted ? <TransactionsScreen apiKey={null} /> : <OCRScreen patterns={patterns} />;
     }
   };
 
@@ -254,6 +264,7 @@ export default function EmployeeScreen({ onLogout }: Props) {
         currentTab={currentView} 
         onTabChange={(tab) => switchTab(tab as EmployeeView)}
         isEmployee={true}
+        isRestricted={packageRestricted}
       />
     </View>
   );
