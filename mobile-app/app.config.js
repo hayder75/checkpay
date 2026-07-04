@@ -19,6 +19,11 @@ const filteredPlugins = isProduction
 module.exports = {
   expo: {
     ...config,
+    extra: {
+      eas: {
+        projectId: 'e0506a8f-9598-4bb7-8cee-4b94d6c8a45e',
+      },
+    },
     plugins: filteredPlugins,
     android: {
       ...config.android,
