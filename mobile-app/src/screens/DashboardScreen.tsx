@@ -16,6 +16,7 @@ import { smsService, LocalTransaction } from '../services/smsService';
 import { Pattern } from '../types';
 import { dedupeTransactionsByIdentity } from '../utils/transactionDedup';
 import { useTranslation } from 'react-i18next';
+import { useTheme } from '../contexts/ThemeContext';
 
 interface Props {
   apiKey?: string | null;
@@ -355,7 +356,7 @@ export default function DashboardScreen({ apiKey, patterns, onNavigate }: Props)
         <View style={styles.headerRight}>
           {isAuthenticated && unsyncedCount > 0 && (
             <TouchableOpacity
-              onPress={syncUnsyncedTransactions}
+              onPress={() => syncUnsyncedTransactions()}
               style={[styles.syncButtonHeader, { backgroundColor: colors.primary }]}
             >
               <Text style={styles.syncButtonHeaderText}>{t('dashboard.sync')}</Text>
@@ -787,17 +788,6 @@ const styles = StyleSheet.create({
   },
   detailSection: {
     marginBottom: 20,
-  },
-  detailLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  detailValue: {
-    fontSize: 16,
-    fontWeight: '500',
   },
   smsTextContainer: {
     padding: 12,

@@ -133,7 +133,7 @@ export default function PatternBuilderScreen({ apiKey, onPatternCreated, onPatte
       
       const response = await patternsAPI.create(requestData);
       
-      let createdPattern = null;
+      createdPattern = null;
       let method = 'rule-based';
       
       if (response.success) {

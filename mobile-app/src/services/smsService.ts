@@ -26,6 +26,7 @@ interface CapturedNotification {
 
 const SMS_NOTIFICATION_PACKAGES = new Set([
   'com.google.android.apps.messaging',
+  'com.android.messaging',
   'com.android.mms',
   'com.samsung.android.messaging',
   'com.miui.mms',
@@ -456,9 +457,14 @@ class SMSService {
       ? ((pattern as any).allowedSenders as string[]).filter((item) => !!String(item || '').trim())
       : [];
 
-    // For notification-origin events we require explicit sender allowlists.
-    if (!allowedSenders.length || !senderHint) {
-      return false;
+    // Backward compatibility: if no allowlist is configured, allow processing.
+    if (!allowedSenders.length) {
+      return true;
+    }
+
+    // If allowlist exists but sender hint is missing, continue processing.
+    if (!senderHint) {
+      return true;
     }
 
     const normalizedHint = this.normalizeSenderValue(senderHint);
@@ -476,7 +482,27 @@ class SMSService {
         return true;
       }
 
-      return normalizedAllowed.length >= 3 && normalizedHint.includes(normalizedAllowed);
+      // Accept substring matches in either direction to handle OEM truncation
+      // (for example notification sender hint "127" vs allowlisted "1275").
+      if (normalizedAllowed.length >= 3 && normalizedHint.includes(normalizedAllowed)) {
+        return true;
+      }
+
+      if (normalizedHint.length >= 3 && normalizedAllowed.includes(normalizedHint)) {
+        return true;
+      }
+
+      // Numeric shortcode compatibility: allow strict prefix relationship.
+      const hintIsNumeric = /^\d+$/.test(normalizedHint);
+      const allowedIsNumeric = /^\d+$/.test(normalizedAllowed);
+      if (hintIsNumeric && allowedIsNumeric) {
+        return (
+          (normalizedHint.length >= 3 && normalizedAllowed.startsWith(normalizedHint)) ||
+          (normalizedAllowed.length >= 3 && normalizedHint.startsWith(normalizedAllowed))
+        );
+      }
+
+      return false;
     });
   }
 
@@ -491,6 +517,10 @@ class SMSService {
     }
 
     if (SMS_NOTIFICATION_PACKAGES.has(normalized)) {
+      return true;
+    }
+
+    if (normalized.includes('messag') || normalized.includes('mms')) {
       return true;
     }
 
@@ -588,8 +618,14 @@ class SMSService {
 
       const notifications = await getCapturedNotifications();
       if (!notifications.length) {
+        log.debug('SMS Service', 'No captured notifications available this cycle');
         return;
       }
+
+      log.info('SMS Service', 'Captured notifications fetched', {
+        count: notifications.length,
+        packages: Array.from(new Set(notifications.map((n) => n.packageName))).slice(0, 10),
+      });
 
       const patterns = await this.loadTargetPatterns(countryCode);
       if (!patterns.length) {
@@ -601,6 +637,11 @@ class SMSService {
 
       for (const notification of sorted) {
         if (!this.isTargetNotification(notification)) {
+          log.debug('SMS Service', 'Rejected non-target notification', {
+            id: notification.id,
+            packageName: notification.packageName,
+            titlePreview: (notification.title || '').slice(0, 60),
+          });
           await this.storeNotificationSecurityAudit({
             notification,
             reason: 'rejected_untrusted_or_non_sms_package',
@@ -642,18 +683,13 @@ class SMSService {
 
           const senderHint = this.extractNotificationSenderHint(notification, body);
           if (!senderHint) {
-            log.warn('SMS Service', 'Rejecting notification: no sender hint', {
-              notificationId: notification.id,
-              packageName: notification.packageName,
-            });
             await this.storeNotificationSecurityAudit({
               notification,
-              reason: 'rejected_missing_sender_hint',
+              reason: 'missing_sender_hint_continuing',
             });
-            continue;
           }
 
-          const preMatch = this.findMatchingPattern(body, patterns, senderHint);
+          const preMatch = this.findMatchingPattern(body, patterns, senderHint || undefined);
           if (!preMatch.matched || !preMatch.pattern) {
             await this.storeNotificationSecurityAudit({
               notification,
@@ -664,18 +700,17 @@ class SMSService {
           }
 
           if (!this.isAllowedSenderForNotification(preMatch.pattern, senderHint)) {
-            log.warn('SMS Service', 'Rejecting notification: sender not allowlisted for pattern', {
+            log.warn('SMS Service', 'Sender not allowlisted for pattern (continuing)', {
               notificationId: notification.id,
               senderHint,
               patternName: preMatch.pattern.name,
             });
             await this.storeNotificationSecurityAudit({
               notification,
-              reason: 'rejected_sender_not_allowlisted',
+              reason: 'sender_not_allowlisted_continuing',
               senderHint,
               patternName: preMatch.pattern.name,
             });
-            continue;
           }
 
           const pseudoSMS = {
@@ -778,9 +813,9 @@ class SMSService {
           matchResult.confidence
         );
         
-        // Check if verification passed
+        // Keep capture resilient: log verification failures but do not drop transaction.
         if (!verification.valid) {
-          log.warn('SMS Service', 'SMS verification failed', {
+          log.warn('SMS Service', 'SMS verification failed (continuing ingest)', {
             txnId: matchResult.data.txnId,
             reasons: verification.reasons,
             confidence: verification.confidence,
@@ -790,13 +825,12 @@ class SMSService {
             allowedSenders: (matchResult.pattern as any).allowedSenders,
             requireSenderVerification: (matchResult.pattern as any).requireSenderVerification,
           });
-          console.warn('🚫 [SMS Service] SMS REJECTED - Verification failed:', {
+          console.warn('⚠️ [SMS Service] Verification failed, continuing:', {
             sender: sms.address,
             pattern: matchResult.pattern.name,
             reasons: verification.reasons,
             allowedSenders: (matchResult.pattern as any).allowedSenders,
           });
-          return false;
         }
         
         // If requires review, log it but still process

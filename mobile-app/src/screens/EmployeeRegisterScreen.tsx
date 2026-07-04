@@ -655,7 +655,7 @@ export default function EmployeeRegisterScreen({ onRegistrationSuccess, onCancel
                   opacity: loading || (currentStep === 0 ? !hasInvite : inviteFlow === 'new' && (!name.trim() || (!hasAuthToken && password.trim().length < 6))) ? 0.6 : 1,
                 }
               ]}
-              onPress={currentStep === 0 ? handleContinue : handleRegister}
+              onPress={currentStep === 0 ? handleContinue : () => handleRegister()}
               disabled={loading || (currentStep === 0 ? !hasInvite : inviteFlow === 'new' && (!name.trim() || (!hasAuthToken && password.trim().length < 6)))}
             >
               {loading ? (

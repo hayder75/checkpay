@@ -902,7 +902,7 @@ export default function SettingsScreen({ apiKey, onLogout }: Props) {
       <PaymentModal
         visible={showPaymentModal}
         selectedPackage={selectedPackage}
-        onSubmit={handlePurchaseSubmit}
+        onSubmit={(payload) => handlePurchaseSubmit(payload.transactionNumber)}
         onClose={() => setShowPaymentModal(false)}
         isSubmitting={purchasing}
       />

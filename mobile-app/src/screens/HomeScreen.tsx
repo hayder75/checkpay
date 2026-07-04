@@ -12,7 +12,7 @@ import {
   Image,
   Alert,
 } from 'react-native';
-import { ArrowDown, ArrowUp, ChevronDown, Settings, Users, X, Bell } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, ChevronDown, Settings, Users, X, Bell, Plus } from 'lucide-react-native';
 import { LineChart } from 'react-native-chart-kit';
 import { useTheme } from '../contexts/ThemeContext';
 import { storage } from '../services/storage';
@@ -20,9 +20,12 @@ import { smsService, LocalTransaction } from '../services/smsService';
 import { dashboardAPI } from '../services/api';
 import { log } from '../utils/logger';
 import TransactionDetailsModal from '../components/TransactionDetailsModal';
+import CashEntryModal from '../components/CashEntryModal';
 import { getDisplayName } from '../utils/userUtils';
 import { useTranslation } from 'react-i18next';
 import { getCurrentAppLanguage } from '../i18n';
+import BankLogo from '../components/BankLogo';
+import { getBankLogosMap } from '../utils/bankLogoHelpers';
 
 interface Props {
   apiKey?: string | null;
@@ -52,6 +55,8 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
   const [paymentTotal, setPaymentTotal] = useState(0);
   const [showDropdown, setShowDropdown] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<LocalTransaction | null>(null);
+  const [showCashModal, setShowCashModal] = useState(false);
+  const [logosMap, setLogosMap] = useState<Record<string, string>>({});
 
   const timeFilterOptions = [
     { value: '1d' as const, labelKey: 'home.filters.oneDay' },
@@ -214,11 +219,22 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
   useEffect(() => {
     loadData();
     
+    const loadLogos = async () => {
+      try {
+        const map = await getBankLogosMap();
+        setLogosMap(map);
+      } catch (err) {
+        console.error('Failed to load bank logos map', err);
+      }
+    };
+    loadLogos();
+    
     // Refresh when app comes to foreground
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active') {
         log.debug('HomeScreen', 'App came to foreground, refreshing transactions');
         loadData();
+        loadLogos();
       }
     });
     
@@ -465,7 +481,8 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
   }, [extractSenderFromSMS, safeString, t]);
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} showsVerticalScrollIndicator={false}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <ScrollView showsVerticalScrollIndicator={false}>
       {/* Header (Separate) */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
@@ -682,13 +699,12 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
               onPress={() => setSelectedTransaction(tx)}
             >
               <View style={styles.transactionLeft}>
-                <View style={[styles.transactionIcon, { backgroundColor: isIncome ? colors.lightGreen + '20' : '#fee2e2' }]}>
-                  {isIncome ? (
-                    <ArrowDown size={20} color={colors.darkGreen} />
-                  ) : (
-                    <ArrowUp size={20} color="#ef4444" />
-                  )}
-                </View>
+                <BankLogo
+                  bankName={tx.bank}
+                  logoUrl={logosMap[tx.bank?.toLowerCase() || '']}
+                  size={40}
+                  containerStyle={{ marginRight: 12 }}
+                />
                 <View style={styles.transactionInfo}>
                   <Text style={[styles.transactionBank, { color: colors.text }]}>
                     {displayName}
@@ -733,7 +749,31 @@ export default function HomeScreen({ onNavigateToProfile, onNavigateToTransactio
         transaction={selectedTransaction}
         onClose={() => setSelectedTransaction(null)}
       />
-    </ScrollView>
+      </ScrollView>
+
+      {/* Cash Entry Floating Action Button */}
+      <TouchableOpacity
+        style={[
+          styles.fab,
+          {
+            backgroundColor: colors.primary,
+            shadowColor: colors.primary,
+          },
+        ]}
+        onPress={() => setShowCashModal(true)}
+        activeOpacity={0.85}
+      >
+        <Plus size={20} color={colors.primaryText || '#fff'} />
+        <Text style={{ color: colors.primaryText || '#fff', fontSize: 14, fontWeight: '700', marginLeft: 6 }}>Cash</Text>
+      </TouchableOpacity>
+
+      {/* Cash Entry Modal */}
+      <CashEntryModal
+        visible={showCashModal}
+        onClose={() => setShowCashModal(false)}
+        onSuccess={() => loadData(true)}
+      />
+    </View>
   );
 }
 
@@ -970,6 +1010,23 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '600',
     textTransform: 'capitalize',
+  },
+  fab: {
+    position: 'absolute',
+    bottom: 24,
+    right: 24,
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 999,
   },
 });
 

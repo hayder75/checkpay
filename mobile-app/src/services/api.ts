@@ -391,7 +391,18 @@ export const removeApiKey = () => {
 
 // Auth API
 export const authAPI = {
-  register: async (data: { username?: string; phone?: string; country?: string; password?: string; role?: string; preferredLanguage?: string; referralCode?: string }) => {
+  register: async (data: {
+    username?: string;
+    phone?: string;
+    country?: string;
+    password?: string;
+    role?: string;
+    preferredLanguage?: string;
+    referralCode?: string;
+    name?: string;
+    firstName?: string;
+    lastName?: string;
+  }) => {
     const response = await api.post('/auth/register', data);
     return response.data;
   },
@@ -658,7 +669,7 @@ export const employeeAPI = {
 
 // Dashboard API
 export const dashboardAPI = {
-  getTransactions: async (params?: { page?: number; limit?: number; employeeId?: string }) => {
+  getTransactions: async (params?: { page?: number; limit?: number; employeeId?: string; businessId?: string; bank?: string; startDate?: string; endDate?: string }) => {
     const response = await api.get('/dashboard/transactions', { params });
     return response.data;
   },
@@ -670,7 +681,7 @@ export const dashboardAPI = {
     const response = await api.get('/dashboard/reports', { params });
     return response.data;
   },
-  getCashPayments: async (params?: { page?: number; limit?: number; businessId?: string; employeeId?: string }) => {
+  getCashPayments: async (params?: { page?: number; limit?: number; businessId?: string; employeeId?: string; side?: 'EMPLOYER' | 'EMPLOYEE'; startDate?: string; endDate?: string }) => {
     const response = await api.get('/dashboard/cash-payments', { params });
     return response.data;
   },

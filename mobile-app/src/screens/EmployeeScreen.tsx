@@ -102,7 +102,7 @@ export default function EmployeeScreen({ onLogout, packageRestricted = false }: 
         const loadedPatterns = Array.isArray(response.data) ? response.data : [];
         setPatterns(loadedPatterns);
         console.log(`✅ [EmployeeScreen] Loaded ${loadedPatterns.length} patterns`, {
-          patterns: loadedPatterns.map(p => ({ id: p.id, name: p.name, bank: p.bank })),
+          patterns: loadedPatterns.map((p: any) => ({ id: p.id, name: p.name, bank: p.bank })),
         });
       } else {
         console.warn('⚠️ [EmployeeScreen] No patterns in response', response);

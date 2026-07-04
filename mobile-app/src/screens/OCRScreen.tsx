@@ -16,12 +16,13 @@ import {
   Dimensions,
 } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
-import { scanImageFromGallery, OCRResult } from '../services/ocrService';
+import { scanImageFromGallery, OCRResult, isOCRAvailable } from '../services/ocrService';
 import { ingestTransaction, verifyTransaction } from '../services/api';
 import { matchInstitutionPattern, InstitutionPattern, findMatchingInstitutionPattern } from '../utils/patternMatcher';
 import { Pattern } from '../types';
 import { storage } from '../services/storage';
 import CameraOCRScanner from '../components/CameraOCRScanner';
+import BankLogo from '../components/BankLogo';
 import { 
   Camera, 
   Image as ImageIcon, 
@@ -106,6 +107,7 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
   const [showInstitutionPicker, setShowInstitutionPicker] = useState(true);
   const [fadeAnim] = useState(new Animated.Value(1));
   const [slideAnim] = useState(new Animated.Value(0));
+  const [ocrAvailable] = useState(isOCRAvailable);
   const institutionOptions = getUniqueInstitutionPatterns(patterns);
 
   // Load patterns from backend if not provided
@@ -796,8 +798,12 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
                   ]}
                   onPress={() => selectInstitution(pattern)}
                 >
-                  <View style={[styles.institutionIconContainer, { backgroundColor: colors.primary + '15' }]}>
-                    <ImageIcon color={colors.primary} size={24} />
+                  <View style={styles.institutionIconContainer}>
+                    <BankLogo
+                      bankName={pattern.bank || pattern.name}
+                      logoUrl={(pattern as any).logoUrl || (pattern as any).bankLogo || (pattern as any).logo}
+                      size={42}
+                    />
                   </View>
                   <Text style={styles.institutionName} numberOfLines={1}>{pattern.bank || pattern.name}</Text>
                   <Text style={styles.institutionType}>{pattern.name.split(' ')[0]}</Text>
@@ -817,31 +823,49 @@ export default function OCRScreen({ patterns: propsPatterns = [] }: OCRScreenPro
               <Text style={[styles.sectionTitle, { marginBottom: 0, marginTop: 0 }]}>{t('ocr.chooseMethod')}</Text>
             </View>
 
-            <TouchableOpacity 
-              style={styles.actionCard}
-              onPress={() => setShowCamera(true)}
-            >
-              <View style={[styles.actionCardIconContainer, { backgroundColor: colors.primary + '15' }]}>
-                <Camera color={colors.primary} size={32} />
+            {!ocrAvailable && (
+              <View style={[styles.actionCard, { backgroundColor: '#FFF3E0', borderColor: '#FFE0B2' }]}>
+                <View style={[styles.actionCardIconContainer, { backgroundColor: '#FF980015' }]}>
+                  <AlertTriangle color="#FF9800" size={32} />
+                </View>
+                <View style={styles.actionCardContent}>
+                  <Text style={[styles.actionCardTitle, { color: '#E65100' }]}>{t('ocr.ocrNotSupported')}</Text>
+                  <Text style={[styles.actionCardSubtext, { color: '#BF360C' }]}>
+                    Text recognition is not available on this device. Use Manual Entry instead.
+                  </Text>
+                </View>
               </View>
-              <View style={styles.actionCardContent}>
-                <Text style={styles.actionCardTitle}>{t('ocr.useCamera')}</Text>
-                <Text style={styles.actionCardSubtext}>{t('ocr.scanPhysicalReceipts')}</Text>
-              </View>
-            </TouchableOpacity>
+            )}
 
-            <TouchableOpacity 
-              style={styles.actionCard}
-              onPress={handleScanFromGallery}
-            >
-              <View style={[styles.actionCardIconContainer, { backgroundColor: '#4CAF5015' }]}>
-                <ImageIcon color="#4CAF50" size={32} />
-              </View>
-              <View style={styles.actionCardContent}>
-                <Text style={styles.actionCardTitle}>{t('ocr.fromGallery')}</Text>
-                <Text style={styles.actionCardSubtext}>{t('ocr.importScreenshots')}</Text>
-              </View>
-            </TouchableOpacity>
+            {ocrAvailable && (
+              <TouchableOpacity 
+                style={styles.actionCard}
+                onPress={() => setShowCamera(true)}
+              >
+                <View style={[styles.actionCardIconContainer, { backgroundColor: colors.primary + '15' }]}>
+                  <Camera color={colors.primary} size={32} />
+                </View>
+                <View style={styles.actionCardContent}>
+                  <Text style={styles.actionCardTitle}>{t('ocr.useCamera')}</Text>
+                  <Text style={styles.actionCardSubtext}>{t('ocr.scanPhysicalReceipts')}</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            {ocrAvailable && (
+              <TouchableOpacity 
+                style={styles.actionCard}
+                onPress={handleScanFromGallery}
+              >
+                <View style={[styles.actionCardIconContainer, { backgroundColor: '#4CAF5015' }]}>
+                  <ImageIcon color="#4CAF50" size={32} />
+                </View>
+                <View style={styles.actionCardContent}>
+                  <Text style={styles.actionCardTitle}>{t('ocr.fromGallery')}</Text>
+                  <Text style={styles.actionCardSubtext}>{t('ocr.importScreenshots')}</Text>
+                </View>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity 
               style={styles.actionCard}

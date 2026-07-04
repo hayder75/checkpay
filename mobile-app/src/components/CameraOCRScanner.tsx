@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Linking,
   Platform,
   StatusBar,
   Animated,
@@ -14,6 +15,7 @@ import {
 import { Camera, useCameraDevice } from 'react-native-vision-camera';
 import { scanImageFromGallery, OCRResult, performOCR } from '../services/ocrService';
 import { useTheme } from '../contexts/ThemeContext';
+import * as Device from 'expo-device';
 import { X, Zap, ZapOff, Image as ImageIcon, Camera as CameraIcon, Info } from 'lucide-react-native';
 
 const { width, height } = Dimensions.get('window');
@@ -70,20 +72,38 @@ export default function CameraOCRScanner({ onTextDetected, onClose }: Props) {
     }
   };
 
+  const toFileUri = (path: string): string => {
+    if (path.startsWith('file://') || path.startsWith('content://')) {
+      return path;
+    }
+    return `file://${path}`;
+  };
+
   const handleCapture = async () => {
     if (!camera.current || isProcessing) return;
 
     try {
       setIsProcessing(true);
-      
+
+      console.log('[Camera] Starting photo capture...', {
+        deviceModel: Device.modelName,
+        osVersion: Device.osVersion,
+        osName: Device.osName,
+      });
+
       // Take a photo
       const photo = await camera.current.takePhoto({
         flash: flash,
         enableShutterSound: true,
       });
 
-      const imageUri = `file://${photo.path}`;
-      
+      if (!photo?.path) {
+        throw new Error('Camera returned no photo path');
+      }
+
+      const imageUri = toFileUri(photo.path);
+      console.log('[Camera] Photo captured at:', imageUri);
+
       // Process with ML Kit (full image, no cropping)
       const result = await performOCR(imageUri);
 
@@ -92,9 +112,34 @@ export default function CameraOCRScanner({ onTextDetected, onClose }: Props) {
       } else {
         Alert.alert('No Text Found', 'Could not detect any text in the image. Please try again.');
       }
-    } catch (error) {
-      console.error('Capture error:', error);
-      Alert.alert('Error', 'Failed to capture and scan the image.');
+    } catch (error: any) {
+      console.error('[Camera] Capture error:', error?.message || error);
+
+      const msg = error?.message || '';
+      if (msg.includes('Google Play Services') || msg.includes('play services') || msg.includes('ML Kit')) {
+        Alert.alert(
+          'OCR Unavailable',
+          'Text recognition is not available on this device. Please use the Gallery or Manual Entry option instead.',
+          [{ text: 'OK', onPress: onClose }]
+        );
+      } else if (msg.includes('camera') || msg.includes('Camera')) {
+        Alert.alert(
+          'Camera Error',
+          'Could not access the camera on this device. Please use the Gallery or Manual Entry option.',
+          [{ text: 'OK', onPress: onClose }]
+        );
+      } else if (msg.includes('permission')) {
+        Alert.alert(
+          'Permission Denied',
+          'Camera permission is required. Please enable it in Settings.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Settings', onPress: () => Linking.openSettings() },
+          ]
+        );
+      } else {
+        Alert.alert('Scan Failed', 'Failed to capture and scan the image. Try the Gallery or Manual Entry option.');
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -107,8 +152,9 @@ export default function CameraOCRScanner({ onTextDetected, onClose }: Props) {
       if (result) {
         onTextDetected(result);
       }
-    } catch (error) {
-      console.error(error);
+    } catch (error: any) {
+      console.error('[Camera] Gallery pick error:', error?.message || error);
+      Alert.alert('Error', error?.message || 'Failed to pick image from gallery.');
     } finally {
       setIsProcessing(false);
     }
@@ -116,10 +162,20 @@ export default function CameraOCRScanner({ onTextDetected, onClose }: Props) {
 
   if (!device) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <Text style={{ color: colors.text }}>No camera device found</Text>
-        <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-          <Text style={{ color: colors.primary }}>Close</Text>
+      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center', padding: 24 }]}>
+        <CameraIcon size={48} color={colors.textSecondary} style={{ marginBottom: 16 }} />
+        <Text style={{ color: colors.text, fontSize: 18, fontWeight: '600', marginBottom: 8, textAlign: 'center' }}>
+          Camera Not Available
+        </Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: 'center', marginBottom: 24, lineHeight: 20 }}>
+          This device does not have a supported back-facing camera. You can use the Gallery or Manual Entry instead.
+        </Text>
+        <TouchableOpacity onPress={handleGalleryPick} style={[styles.iconButton, { width: 200, backgroundColor: colors.primary, borderRadius: 16, paddingVertical: 14 }]}>
+          <ImageIcon color="#fff" size={20} style={{ marginRight: 8 }} />
+          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>Pick from Gallery</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onClose} style={{ marginTop: 12, padding: 10 }}>
+          <Text style={{ color: colors.primary, fontSize: 15 }}>Close</Text>
         </TouchableOpacity>
       </View>
     );

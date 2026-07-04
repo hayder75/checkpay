@@ -3,7 +3,12 @@ import { Platform } from 'react-native';
 
 // Import ML Kit Text Recognition
 // Note: This requires native modules to be linked - app must be rebuilt with: pnpm run android
-import TextRecognition from '@react-native-ml-kit/text-recognition';
+let TextRecognition: any;
+try {
+  TextRecognition = require('@react-native-ml-kit/text-recognition').default;
+} catch {
+  console.warn('⚠️ ML Kit Text Recognition module not available at import');
+}
 
 export interface OCRResult {
   text: string;
@@ -18,6 +23,15 @@ export interface OCRResult {
     };
     confidence?: number;
   }>;
+}
+
+/**
+ * Check if OCR is available on this device.
+ * ML Kit relies on Google Play Services, which may be absent on some
+ * devices (Huawei, Amazon Fire, some Chinese OEM phones).
+ */
+export function isOCRAvailable(): boolean {
+  return !!TextRecognition && typeof TextRecognition.recognize === 'function';
 }
 
 /**
@@ -103,11 +117,11 @@ export async function performOCR(imageUri: string): Promise<OCRResult | null> {
     console.log('🔍 Starting OCR on image:', imageUri);
     
     // Check if TextRecognition is available
-    if (!TextRecognition || !TextRecognition.recognize) {
+    if (!TextRecognition || typeof TextRecognition.recognize !== 'function') {
       throw new Error(
-        'ML Kit Text Recognition is not available. Please rebuild the app with native modules:\n' +
-        '1. Run: pnpm run android (or pnpm run ios)\n' +
-        '2. Or run: npx expo prebuild && pnpm run android'
+        'Google Play Services / ML Kit is not available on this device. ' +
+        'This usually happens on devices without Google Play Services (e.g., Huawei, Amazon Fire). ' +
+        'Please use the Gallery or Manual Entry option instead.'
       );
     }
     
@@ -120,7 +134,7 @@ export async function performOCR(imageUri: string): Promise<OCRResult | null> {
 
     // Extract text and blocks
     const fullText = result.text.trim();
-    const blocks = result.blocks?.map((block) => {
+    const blocks = result.blocks?.map((block: any) => {
       // Normalize bounding box format (ML Kit uses frame with x, y, width, height)
       const frame = block.frame || {};
       return {
@@ -136,12 +150,12 @@ export async function performOCR(imageUri: string): Promise<OCRResult | null> {
     }) || [];
 
     // Calculate average confidence from blocks
-    const confidences = result.blocks
-      ?.map((block) => block.confidence || 0)
-      .filter((conf) => conf > 0) || [];
+    const confidences: number[] = result.blocks
+      ?.map((block: any) => block.confidence || 0)
+      .filter((conf: number) => conf > 0) || [];
     
     const avgConfidence = confidences.length > 0
-      ? confidences.reduce((sum, conf) => sum + conf, 0) / confidences.length
+      ? confidences.reduce((sum: number, conf: number) => sum + conf, 0) / confidences.length
       : 0.85; // Default confidence if not available
 
     console.log('✅ OCR Result:', {

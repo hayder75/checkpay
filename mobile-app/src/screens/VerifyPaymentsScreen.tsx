@@ -15,6 +15,8 @@ import { useTheme } from '../contexts/ThemeContext';
 import { dashboardAPI, verifyTransaction } from '../services/api';
 import { dedupeTransactionsByIdentity } from '../utils/transactionDedup';
 import { useTranslation } from 'react-i18next';
+import BankLogo from '../components/BankLogo';
+import { getBankLogosMap } from '../utils/bankLogoHelpers';
 
 interface Props {
   apiKey?: string | null;
@@ -95,10 +97,21 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
   const [verifyingIds, setVerifyingIds] = useState<Set<string>>(new Set());
   const [recentlyVerifiedTxnIds, setRecentlyVerifiedTxnIds] = useState<Set<string>>(new Set());
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [logosMap, setLogosMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
     checkAuth();
     loadTransactions();
+
+    const loadLogos = async () => {
+      try {
+        const map = await getBankLogosMap();
+        setLogosMap(map);
+      } catch (err) {
+        console.error('Failed to load bank logos in VerifyPaymentsScreen', err);
+      }
+    };
+    loadLogos();
 
     // Fast local refresh so newly captured transactions appear quickly.
     const interval = setInterval(() => {
@@ -381,13 +394,12 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
     return (
       <View style={[styles.transactionItem, { borderBottomColor: colors.border || '#f0f0f0' }]}>
         <View style={styles.transactionLeft}>
-          <View style={[styles.transactionIcon, { backgroundColor: isIncome ? colors.lightGreen : '#fee2e2' }]}>
-            {isIncome ? (
-              <ArrowDown size={20} color={colors.darkGreen} />
-            ) : (
-              <ArrowUp size={20} color="#ef4444" />
-            )}
-          </View>
+          <BankLogo
+            bankName={item.bank}
+            logoUrl={logosMap[item.bank?.toLowerCase() || '']}
+            size={44}
+            containerStyle={{ marginRight: 16 }}
+          />
           <View style={styles.transactionInfo}>
             {item.sender && item.sender !== 'Unknown' && (
               <Text style={[styles.transactionSender, { color: colors.text }]}>
@@ -457,16 +469,13 @@ export default function VerifyPaymentsScreen({ apiKey }: Props) {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={[styles.title, { color: colors.text }]}>{t('verifyPayments.title', { defaultValue: 'Verify Payments' })}</Text>
-        </View>
-        <View style={styles.headerRight}>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            {t('verifyPayments.pendingCount', { defaultValue: '{{count}} pending', count: transactions.length })}
+      {transactions.length > 0 && (
+        <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 4 }}>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary }}>
+            {t('verifyPayments.pendingCount', { defaultValue: '{{count}} pending payments', count: transactions.length })}
           </Text>
         </View>
-      </View>
+      )}
 
       {transactions.length === 0 ? (
         <View style={styles.emptyState}>

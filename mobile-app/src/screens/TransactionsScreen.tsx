@@ -12,7 +12,7 @@ import {
   AppState,
   AppStateStatus,
 } from 'react-native';
-import { RefreshCw, ArrowDown, ArrowUp, X, CheckCircle2, Filter } from 'lucide-react-native';
+import { RefreshCw, ArrowDown, ArrowUp, X, CheckCircle2, Filter, BarChart3, Coins } from 'lucide-react-native';
 import { storage } from '../services/storage';
 import { smsService, LocalTransaction } from '../services/smsService';
 import { useTheme } from '../contexts/ThemeContext';
@@ -21,12 +21,15 @@ import TransactionDetailsModal from '../components/TransactionDetailsModal';
 import VerifyPaymentsScreen from './VerifyPaymentsScreen';
 import { dedupeTransactionsByIdentity } from '../utils/transactionDedup';
 import { useTranslation } from 'react-i18next';
+import BankLogo from '../components/BankLogo';
+import { getBankLogosMap } from '../utils/bankLogoHelpers';
 
 interface Props {
   apiKey?: string | null;
+  onNavigateToReports?: () => void;
 }
 
-type TransactionsTab = 'transactions' | 'verify';
+type TransactionsTab = 'transactions' | 'verify' | 'cash';
 
 type LocalTransactionWithMeta = LocalTransaction & {
   businessId?: string | null;
@@ -40,7 +43,7 @@ let transactionsScreenMemoryCache: {
   cachedAt: number;
 } | null = null;
 
-export default function TransactionsScreen({ apiKey }: Props) {
+export default function TransactionsScreen({ apiKey, onNavigateToReports }: Props) {
   const { colors } = useTheme();
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<TransactionsTab>('verify');
@@ -51,16 +54,34 @@ export default function TransactionsScreen({ apiKey }: Props) {
   const [syncing, setSyncing] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<LocalTransactionWithMeta | null>(null);
+  const [showBankPicker, setShowBankPicker] = useState(false);
+  const [showBusinessPicker, setShowBusinessPicker] = useState(false);
+  const [cashPayments, setCashPayments] = useState<any[]>([]);
+  const [cashLoading, setCashLoading] = useState(false);
+  const [logosMap, setLogosMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
     checkAuth();
     loadTransactions();
+    loadCashPayments();
+    
+    const loadLogos = async () => {
+      try {
+        const map = await getBankLogosMap();
+        setLogosMap(map);
+      } catch (err) {
+        console.error('Failed to load bank logos in TransactionsScreen', err);
+      }
+    };
+    loadLogos();
     
     // Refresh when app comes to foreground
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active') {
         console.log('🔄 [TransactionsScreen] App came to foreground, refreshing transactions');
         loadTransactions();
+        loadCashPayments();
+        loadLogos();
       }
     });
     
@@ -72,6 +93,26 @@ export default function TransactionsScreen({ apiKey }: Props) {
   const checkAuth = async () => {
     const token = await storage.getToken();
     setIsAuthenticated(!!token);
+  };
+
+  const loadCashPayments = async () => {
+    setCashLoading(true);
+    try {
+      const businessId = await storage.getBusinessId();
+      const response = await dashboardAPI.getCashPayments(
+        businessId ? { businessId, limit: 50 } : { limit: 50 }
+      );
+      if (response?.success) {
+        const items = Array.isArray(response.data)
+          ? response.data
+          : response.data?.items || [];
+        setCashPayments(items);
+      }
+    } catch (error) {
+      console.error('Error loading cash payments:', error);
+    } finally {
+      setCashLoading(false);
+    }
   };
 
   const loadTransactions = async (forceRefresh: boolean = false) => {
@@ -187,12 +228,15 @@ export default function TransactionsScreen({ apiKey }: Props) {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadTransactions(true);
+    await Promise.all([
+      loadTransactions(true),
+      loadCashPayments()
+    ]);
     if (smsService.isActive()) {
       try {
         await smsService.manualCheck();
       } catch (error) {
-        console.error('Error checking SMS:', error);
+        console.log('Error checking SMS:', error);
       }
     }
     if (isAuthenticated) {
@@ -308,29 +352,29 @@ export default function TransactionsScreen({ apiKey }: Props) {
   };
 
   const availableBanks = Array.from(
-    new Set(transactions.map(t => (t.bank && t.bank.trim() ? t.bank.trim() : t('transactions.unknownBank'))))
+    new Set(transactions.map(tx => (tx.bank && tx.bank.trim() ? tx.bank.trim() : t('transactions.unknownBank'))))
   ).sort((a, b) => a.localeCompare(b));
 
   const availableBusinesses = Array.from(
     new Set(
       transactions
-        .map(t => {
-          if (t.businessName && t.businessName.trim()) return t.businessName.trim();
-          if (t.businessId && t.businessId.trim()) return `Business ${t.businessId.slice(0, 6)}`;
+        .map(tx => {
+          if (tx.businessName && tx.businessName.trim()) return tx.businessName.trim();
+          if (tx.businessId && tx.businessId.trim()) return `Business ${tx.businessId.slice(0, 6)}`;
           return 'No Business';
         })
     )
   ).sort((a, b) => a.localeCompare(b));
 
-  const filteredTransactions = transactions.filter((t) => {
+  const filteredTransactions = transactions.filter((tx) => {
     // Only show verified transactions in the Transactions tab
-    if (!t.isValidated) return false;
+    if (!tx.isValidated) return false;
 
-    const txBank = t.bank && t.bank.trim() ? t.bank.trim() : t('transactions.unknownBank');
-    const txBusiness = t.businessName && t.businessName.trim()
-      ? t.businessName.trim()
-      : t.businessId && t.businessId.trim()
-      ? `Business ${t.businessId.slice(0, 6)}`
+    const txBank = tx.bank && tx.bank.trim() ? tx.bank.trim() : t('transactions.unknownBank');
+    const txBusiness = tx.businessName && tx.businessName.trim()
+      ? tx.businessName.trim()
+      : tx.businessId && tx.businessId.trim()
+      ? `Business ${tx.businessId.slice(0, 6)}`
       : 'No Business';
 
     const bankOk = bankFilter === 'all' || txBank === bankFilter;
@@ -351,13 +395,12 @@ export default function TransactionsScreen({ apiKey }: Props) {
         activeOpacity={0.7}
       >
         <View style={styles.transactionLeft}>
-            <View style={[styles.transactionIcon, { backgroundColor: isIncome ? colors.lightGreen : '#fee2e2' }]}>
-                {isIncome ? (
-                <ArrowDown size={20} color={colors.darkGreen} />
-                ) : (
-                <ArrowUp size={20} color="#ef4444" />
-                )}
-            </View>
+            <BankLogo
+              bankName={item.bank}
+              logoUrl={logosMap[item.bank?.toLowerCase() || '']}
+              size={44}
+              containerStyle={{ marginRight: 16 }}
+            />
             <View style={styles.transactionInfo}>
               {item.sender && item.sender !== 'Unknown' && item.sender !== '' && (
                 <Text style={[styles.transactionSender, { color: colors.text }]} numberOfLines={1}>
@@ -415,7 +458,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Tab Header */}
       <View style={styles.tabHeader}>
-          <TouchableOpacity
+        <TouchableOpacity
           style={[
             styles.tabButton,
             activeTab === 'verify' && styles.activeTabButton,
@@ -450,10 +493,30 @@ export default function TransactionsScreen({ apiKey }: Props) {
             {t('navigation.history')}
           </Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.tabButton,
+            activeTab === 'cash' && styles.activeTabButton,
+            activeTab === 'cash' && { borderBottomColor: colors.primary }
+          ]}
+          onPress={() => setActiveTab('cash')}
+        >
+          <Coins 
+            size={16} 
+            color={activeTab === 'cash' ? colors.primary : colors.textSecondary}
+            style={{ marginRight: 6 }}
+          />
+          <Text style={[
+            styles.tabButtonText,
+            { color: activeTab === 'cash' ? colors.primary : colors.textSecondary }
+          ]}>
+            Cash
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Tab Content */}
-      {activeTab === 'transactions' ? (
+      {activeTab === 'transactions' && (
         <>
           <View style={styles.header}>
             <View style={styles.headerLeft}>
@@ -463,7 +526,7 @@ export default function TransactionsScreen({ apiKey }: Props) {
             </View>
             {isAuthenticated && unsyncedCount > 0 && (
               <TouchableOpacity
-                onPress={syncUnsyncedTransactions}
+                onPress={() => syncUnsyncedTransactions()}
                 disabled={syncing}
                 style={[styles.syncButton, { backgroundColor: colors.primary + '10' }]}
               >
@@ -479,55 +542,85 @@ export default function TransactionsScreen({ apiKey }: Props) {
             )}
           </View>
 
-          <View style={styles.filtersWrapper}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-              <View style={styles.filterIconWrap}>
-                <Filter size={12} color={colors.textSecondary} />
-              </View>
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'flex-start',
+            gap: 8,
+            paddingHorizontal: 24,
+            paddingVertical: 10,
+          }}>
+            {/* Bank Filter Button */}
+            <TouchableOpacity
+              onPress={() => setShowBankPicker(true)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: bankFilter !== 'all' ? colors.primary : colors.border,
+                backgroundColor: bankFilter !== 'all' ? colors.primary + '0c' : colors.surface,
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={{
+                fontSize: 13,
+                fontWeight: '600',
+                color: bankFilter !== 'all' ? colors.primary : colors.text,
+                marginRight: 6,
+              }}>
+                {bankFilter === 'all' ? 'All Banks' : bankFilter}
+              </Text>
+              <Text style={{ fontSize: 9, color: bankFilter !== 'all' ? colors.primary : colors.textSecondary }}>▼</Text>
+            </TouchableOpacity>
+
+            {/* Business Filter Button */}
+            <TouchableOpacity
+              onPress={() => setShowBusinessPicker(true)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: businessFilter !== 'all' ? colors.primary : colors.border,
+                backgroundColor: businessFilter !== 'all' ? colors.primary + '0c' : colors.surface,
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={{
+                fontSize: 13,
+                fontWeight: '600',
+                color: businessFilter !== 'all' ? colors.primary : colors.text,
+                marginRight: 6,
+              }}>
+                {businessFilter === 'all' ? 'All Businesses' : businessFilter}
+              </Text>
+              <Text style={{ fontSize: 9, color: businessFilter !== 'all' ? colors.primary : colors.textSecondary }}>▼</Text>
+            </TouchableOpacity>
+
+            {/* Clear Button */}
+            {hasActiveFilters && (
               <TouchableOpacity
-                style={[styles.filterChip, bankFilter === 'all' && { borderColor: colors.primary, backgroundColor: colors.primary + '12' }]}
-                onPress={() => setBankFilter('all')}
+                onPress={() => {
+                  setBankFilter('all');
+                  setBusinessFilter('all');
+                }}
+                style={{
+                  padding: 8,
+                  borderRadius: 12,
+                  backgroundColor: colors.border + '33',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+                activeOpacity={0.7}
               >
-                <Text style={[styles.filterChipText, { color: bankFilter === 'all' ? colors.primary : colors.text }]}>{t('transactions.allBanks')}</Text>
+                <X size={14} color={colors.textSecondary} />
               </TouchableOpacity>
-              {availableBanks.map((bank) => (
-                <TouchableOpacity
-                  key={`bank-${bank}`}
-                  style={[styles.filterChip, bankFilter === bank && { borderColor: colors.primary, backgroundColor: colors.primary + '12' }]}
-                  onPress={() => setBankFilter(bank)}
-                >
-                  <Text style={[styles.filterChipText, { color: bankFilter === bank ? colors.primary : colors.text }]}>{bank}</Text>
-                </TouchableOpacity>
-              ))}
-              <View style={styles.filterDivider} />
-              <TouchableOpacity
-                style={[styles.filterChip, businessFilter === 'all' && { borderColor: colors.primary, backgroundColor: colors.primary + '12' }]}
-                onPress={() => setBusinessFilter('all')}
-              >
-                <Text style={[styles.filterChipText, { color: businessFilter === 'all' ? colors.primary : colors.text }]}>{t('transactions.allBusiness')}</Text>
-              </TouchableOpacity>
-              {availableBusinesses.map((business) => (
-                <TouchableOpacity
-                  key={`biz-${business}`}
-                  style={[styles.filterChip, businessFilter === business && { borderColor: colors.primary, backgroundColor: colors.primary + '12' }]}
-                  onPress={() => setBusinessFilter(business)}
-                >
-                  <Text style={[styles.filterChipText, { color: businessFilter === business ? colors.primary : colors.text }]}>{business}</Text>
-                </TouchableOpacity>
-              ))}
-              {hasActiveFilters && (
-                <TouchableOpacity
-                  style={[styles.clearFiltersButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
-                  onPress={() => {
-                    setBankFilter('all');
-                    setBusinessFilter('all');
-                  }}
-                >
-                  <X size={10} color={colors.textSecondary} />
-                  <Text style={[styles.clearFiltersText, { color: colors.textSecondary }]}>{t('transactions.clear')}</Text>
-                </TouchableOpacity>
-              )}
-            </ScrollView>
+            )}
           </View>
 
           {filteredTransactions.length === 0 ? (
@@ -547,8 +640,78 @@ export default function TransactionsScreen({ apiKey }: Props) {
             />
           )}
         </>
-      ) : (
+      )}
+
+      {activeTab === 'verify' && (
         <VerifyPaymentsScreen apiKey={apiKey} />
+      )}
+
+      {activeTab === 'cash' && (
+        <FlatList
+          data={cashPayments}
+          keyExtractor={(item) => item.id || String(Math.random())}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing || cashLoading} onRefresh={onRefresh} tintColor={colors.primary} />
+          }
+          showsVerticalScrollIndicator={false}
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Coins size={36} color={colors.textSecondary} style={{ marginBottom: 12, opacity: 0.5 }} />
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                No cash payments recorded yet.
+              </Text>
+            </View>
+          }
+          renderItem={({ item }) => {
+            const dateStr = item.paymentDate ? new Date(item.paymentDate).toLocaleString() : 'Unknown date';
+            const amountStr = Number(item.amount || 0).toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            });
+            return (
+              <View style={[styles.cashCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View style={styles.cashHeaderRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                    <View style={[styles.cashIconWrap, { backgroundColor: colors.primary + '18' }]}>
+                      <Coins size={18} color={colors.primary} />
+                    </View>
+                    <View>
+                      <Text style={[styles.cashAmount, { color: colors.text }]}>
+                        {amountStr} {item.currency || 'ETB'}
+                      </Text>
+                      <Text style={[styles.cashMeta, { color: colors.textSecondary }]}>
+                        {item.side === 'EMPLOYEE' ? 'Employee Cash' : 'Employer Cash'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={[styles.cashDate, { color: colors.textSecondary }]}>
+                    {dateStr.split(',')[0]}
+                  </Text>
+                </View>
+                {item.note ? (
+                  <Text style={[styles.cashNote, { color: colors.textSecondary }]}>
+                    {item.note}
+                  </Text>
+                ) : null}
+                {(item.business?.name || item.employee?.name) && (
+                  <View style={{ flexDirection: 'row', gap: 12, marginTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingTop: 6 }}>
+                    {item.business?.name ? (
+                      <Text style={[styles.cashSubMeta, { color: colors.textSecondary }]}>
+                        Biz: {item.business.name}
+                      </Text>
+                    ) : null}
+                    {item.employee?.name ? (
+                      <Text style={[styles.cashSubMeta, { color: colors.textSecondary }]}>
+                        Emp: {item.employee.name}
+                      </Text>
+                    ) : null}
+                  </View>
+                )}
+              </View>
+            );
+          }}
+        />
       )}
 
       {/* Transaction Detail Modal */}
@@ -557,6 +720,75 @@ export default function TransactionsScreen({ apiKey }: Props) {
         transaction={selectedTransaction}
         onClose={() => setSelectedTransaction(null)}
       />
+
+      {/* Bank Picker Modal */}
+      <Modal visible={showBankPicker} transparent animationType="fade" onRequestClose={() => setShowBankPicker(false)}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowBankPicker(false)}>
+          <View style={[styles.pickerCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.pickerTitle, { color: colors.text }]}>Select Bank</Text>
+            <ScrollView style={{ maxHeight: 250 }}>
+              <TouchableOpacity
+                style={[styles.pickerItem, bankFilter === 'all' && { backgroundColor: colors.primary + '18' }]}
+                onPress={() => { setBankFilter('all'); setShowBankPicker(false); }}
+              >
+                <Text style={[styles.pickerItemText, { color: bankFilter === 'all' ? colors.primary : colors.text }]}>All Banks</Text>
+              </TouchableOpacity>
+              {availableBanks.map(bank => (
+                <TouchableOpacity
+                  key={`picker-bank-${bank}`}
+                  style={[styles.pickerItem, bankFilter === bank && { backgroundColor: colors.primary + '18' }]}
+                  onPress={() => { setBankFilter(bank); setShowBankPicker(false); }}
+                >
+                  <Text style={[styles.pickerItemText, { color: bankFilter === bank ? colors.primary : colors.text }]}>{bank}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Business Picker Modal */}
+      <Modal visible={showBusinessPicker} transparent animationType="fade" onRequestClose={() => setShowBusinessPicker(false)}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowBusinessPicker(false)}>
+          <View style={[styles.pickerCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.pickerTitle, { color: colors.text }]}>Select Business</Text>
+            <ScrollView style={{ maxHeight: 250 }}>
+              <TouchableOpacity
+                style={[styles.pickerItem, businessFilter === 'all' && { backgroundColor: colors.primary + '18' }]}
+                onPress={() => { setBusinessFilter('all'); setShowBusinessPicker(false); }}
+              >
+                <Text style={[styles.pickerItemText, { color: businessFilter === 'all' ? colors.primary : colors.text }]}>All Businesses</Text>
+              </TouchableOpacity>
+              {availableBusinesses.map(biz => (
+                <TouchableOpacity
+                  key={`picker-biz-${biz}`}
+                  style={[styles.pickerItem, businessFilter === biz && { backgroundColor: colors.primary + '18' }]}
+                  onPress={() => { setBusinessFilter(biz); setShowBusinessPicker(false); }}
+                >
+                  <Text style={[styles.pickerItemText, { color: businessFilter === biz ? colors.primary : colors.text }]}>{biz}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Reports Floating Action Button */}
+      {onNavigateToReports && (
+        <TouchableOpacity
+          style={[
+            styles.fab,
+            {
+              backgroundColor: colors.primary,
+              shadowColor: colors.primary,
+            },
+          ]}
+          onPress={onNavigateToReports}
+          activeOpacity={0.85}
+        >
+          <BarChart3 size={24} color={colors.primaryText || '#fff'} />
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -738,5 +970,100 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '600',
     textTransform: 'capitalize',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pickerCard: {
+    width: '80%',
+    maxWidth: 320,
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 15,
+    elevation: 8,
+  },
+  pickerTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  pickerItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    marginBottom: 4,
+  },
+  pickerItemText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  fab: {
+    position: 'absolute',
+    bottom: 24,
+    right: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 10,
+    zIndex: 999,
+  },
+  cashCard: {
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  cashHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  cashIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cashAmount: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  cashMeta: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  cashDate: {
+    fontSize: 12,
+  },
+  cashNote: {
+    fontSize: 13,
+    marginTop: 8,
+    opacity: 0.85,
+    fontStyle: 'italic',
+  },
+  cashSubMeta: {
+    fontSize: 11,
+    fontWeight: '600',
+    opacity: 0.6,
   },
 });

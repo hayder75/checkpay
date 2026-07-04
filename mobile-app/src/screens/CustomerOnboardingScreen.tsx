@@ -14,8 +14,10 @@ import {
   Modal,
   FlatList,
 } from 'react-native';
+import * as Location from 'expo-location';
 import { useTheme } from '../contexts/ThemeContext';
 import Svg, { Path } from 'react-native-svg';
+import { Building2, MapPin, Globe2, Store, Utensils, Shirt, ShoppingCart, Smartphone, Pill, Scissors, Wrench, GraduationCap, Truck, Package } from 'lucide-react-native';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -56,17 +58,43 @@ const REGION_CITY_MAP: Record<string, string> = {
   'Harari': 'Harar',
 };
 
+const ADDIS_ABABA_SUBCITIES = [
+  'Addis Ketema',
+  'Akaky Kaliti',
+  'Arada',
+  'Bole',
+  'Gullele',
+  'Kirkos',
+  'Kolfe Keranio',
+  'Lideta',
+  'Nifas Silk-Lafto',
+  'Yeka',
+];
+
+const BUSINESS_TYPE_ICONS: Record<string, any> = {
+  restaurant: Utensils,
+  clothing: Shirt,
+  grocery: ShoppingCart,
+  electronics: Smartphone,
+  pharmacy: Pill,
+  salon: Scissors,
+  hardware: Wrench,
+  education: GraduationCap,
+  transport: Truck,
+  other: Package,
+};
+
 const BUSINESS_TYPES = [
-  { id: 'restaurant', label: 'Restaurant / Café', icon: '🍽️' },
-  { id: 'clothing', label: 'Clothing / Fashion', icon: '👗' },
-  { id: 'grocery', label: 'Grocery / Supermarket', icon: '🛒' },
-  { id: 'electronics', label: 'Electronics', icon: '📱' },
-  { id: 'pharmacy', label: 'Pharmacy / Health', icon: '💊' },
-  { id: 'salon', label: 'Salon / Beauty', icon: '💇' },
-  { id: 'hardware', label: 'Hardware / Construction', icon: '🔨' },
-  { id: 'education', label: 'Education / Training', icon: '📚' },
-  { id: 'transport', label: 'Transport / Logistics', icon: '🚛' },
-  { id: 'other', label: 'Other', icon: '📦' },
+  { id: 'restaurant', label: 'Restaurant / Cafe' },
+  { id: 'clothing', label: 'Clothing / Fashion' },
+  { id: 'grocery', label: 'Grocery / Supermarket' },
+  { id: 'electronics', label: 'Electronics' },
+  { id: 'pharmacy', label: 'Pharmacy / Health' },
+  { id: 'salon', label: 'Salon / Beauty' },
+  { id: 'hardware', label: 'Hardware / Construction' },
+  { id: 'education', label: 'Education / Training' },
+  { id: 'transport', label: 'Transport / Logistics' },
+  { id: 'other', label: 'Other' },
 ];
 
 const TOTAL_STEPS = 3;
@@ -80,6 +108,7 @@ export default function CustomerOnboardingScreen({ onComplete }: Props) {
   const [city, setCity] = useState('');
   const [subCity, setSubCity] = useState('');
   const [showRegionPicker, setShowRegionPicker] = useState(false);
+  const [showSubCityPicker, setShowSubCityPicker] = useState(false);
 
   // Step 2 — Geolocation
   const [latitude, setLatitude] = useState<number | undefined>();
@@ -98,6 +127,10 @@ export default function CustomerOnboardingScreen({ onComplete }: Props) {
   useEffect(() => {
     if (region && REGION_CITY_MAP[region]) {
       setCity(REGION_CITY_MAP[region]);
+    }
+
+    if (region !== 'Addis Ababa') {
+      setShowSubCityPicker(false);
     }
   }, [region]);
 
@@ -155,43 +188,20 @@ export default function CustomerOnboardingScreen({ onComplete }: Props) {
     setGeoError('');
 
     try {
-      if (Platform.OS === 'android') {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-          {
-            title: 'Location Permission',
-            message: 'CheckPay needs your location to help set up your business profile.',
-            buttonPositive: 'Allow',
-            buttonNegative: 'Deny',
-          }
-        );
-        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-          setGeoError('Location permission denied');
-          setGeoLoading(false);
-          return;
-        }
+      const permissionResult = await Location.requestForegroundPermissionsAsync();
+      if (permissionResult.status !== 'granted') {
+        setGeoError('Location permission denied');
+        setGeoLoading(false);
+        return;
       }
 
-      // Use the global navigator.geolocation (React Native provides it)
-      const { default: Geolocation } = await import('react-native').then(rn => {
-        // React Native doesn't export Geolocation directly in newer versions
-        // Use navigator.geolocation as fallback
-        return { default: null };
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
       });
 
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setLatitude(position.coords.latitude);
-          setLongitude(position.coords.longitude);
-          setGeoLoading(false);
-        },
-        (error) => {
-          console.error('Geolocation error:', error);
-          setGeoError('Could not get your location. Please try again.');
-          setGeoLoading(false);
-        },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
-      );
+      setLatitude(position.coords.latitude);
+      setLongitude(position.coords.longitude);
+      setGeoLoading(false);
     } catch (error) {
       console.error('Geolocation error:', error);
       setGeoError('Location service unavailable');
@@ -219,10 +229,13 @@ export default function CustomerOnboardingScreen({ onComplete }: Props) {
 
   const renderStepLabel = () => {
     const labels = ['Your Location', 'Pin Your Spot', 'Business Type'];
-    const emojis = ['📍', '🌍', '🏪'];
+    const stepIcons = [MapPin, Globe2, Store];
+    const StepIcon = stepIcons[currentStep];
     return (
       <View style={styles.stepLabelContainer}>
-        <Text style={styles.stepEmoji}>{emojis[currentStep]}</Text>
+        <View style={[styles.stepIconCircle, { backgroundColor: colors.primary + '12' }]}>
+          <StepIcon size={28} color={colors.primary} />
+        </View>
         <Text style={[styles.stepTitle, { color: colors.text }]}>{labels[currentStep]}</Text>
         <Text style={[styles.stepSubtitle, { color: colors.textSecondary }]}>
           {currentStep === 0 && 'Tell us where your business is located'}
@@ -289,22 +302,45 @@ export default function CustomerOnboardingScreen({ onComplete }: Props) {
       {/* Sub City */}
       <View style={styles.inputGroup}>
         <Text style={[styles.label, { color: colors.text }]}>Sub City</Text>
-        <TextInput
-          style={[
-            styles.textInput,
-            {
-              backgroundColor: colors.surface,
-              color: colors.text,
-              borderColor: subCity ? colors.primary : colors.border,
-            },
-          ]}
-          placeholder="Enter your sub city (optional)"
-          placeholderTextColor={colors.textSecondary}
-          value={subCity}
-          onChangeText={setSubCity}
-          autoCapitalize="words"
-          maxLength={50}
-        />
+        {region === 'Addis Ababa' ? (
+          <TouchableOpacity
+            style={[
+              styles.pickerButton,
+              {
+                backgroundColor: colors.surface,
+                borderColor: subCity ? colors.primary : colors.border,
+              },
+            ]}
+            onPress={() => setShowSubCityPicker(true)}
+          >
+            <Text
+              style={[
+                subCity ? styles.pickerSelectedText : styles.pickerPlaceholder,
+                { color: subCity ? colors.text : colors.textSecondary },
+              ]}
+            >
+              {subCity || 'Select your sub city'}
+            </Text>
+            <Text style={[styles.chevron, { color: colors.textSecondary }]}>▼</Text>
+          </TouchableOpacity>
+        ) : (
+          <TextInput
+            style={[
+              styles.textInput,
+              {
+                backgroundColor: colors.surface,
+                color: colors.text,
+                borderColor: subCity ? colors.primary : colors.border,
+              },
+            ]}
+            placeholder="Enter your sub city (optional)"
+            placeholderTextColor={colors.textSecondary}
+            value={subCity}
+            onChangeText={setSubCity}
+            autoCapitalize="words"
+            maxLength={50}
+          />
+        )}
       </View>
     </View>
   );
@@ -394,6 +430,7 @@ export default function CustomerOnboardingScreen({ onComplete }: Props) {
       <View style={styles.businessTypeGrid}>
         {BUSINESS_TYPES.map((type) => {
           const isSelected = businessType === type.id;
+          const BusinessIcon = BUSINESS_TYPE_ICONS[type.id] || Package;
           return (
             <TouchableOpacity
               key={type.id}
@@ -407,7 +444,7 @@ export default function CustomerOnboardingScreen({ onComplete }: Props) {
               onPress={() => setBusinessType(type.id)}
               activeOpacity={0.7}
             >
-              <Text style={styles.businessTypeIcon}>{type.icon}</Text>
+              <BusinessIcon size={26} color={isSelected ? colors.primary : colors.textSecondary} style={styles.businessTypeIconNode} />
               <Text
                 style={[
                   styles.businessTypeLabel,
@@ -495,13 +532,7 @@ export default function CustomerOnboardingScreen({ onComplete }: Props) {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.stepLabelContainer}>
-            <Text style={styles.stepEmoji}>📍</Text>
-            <Text style={[styles.stepTitle, { color: colors.text }]}>Your Location</Text>
-            <Text style={[styles.stepSubtitle, { color: colors.textSecondary }]}>
-              Tell us where your business is located
-            </Text>
-          </View>
+          {renderStepLabel()}
           {renderLocationStep()}
         </ScrollView>
 
@@ -512,13 +543,7 @@ export default function CustomerOnboardingScreen({ onComplete }: Props) {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.stepLabelContainer}>
-            <Text style={styles.stepEmoji}>🌍</Text>
-            <Text style={[styles.stepTitle, { color: colors.text }]}>Pin Your Spot</Text>
-            <Text style={[styles.stepSubtitle, { color: colors.textSecondary }]}>
-              Share your GPS coordinates (optional)
-            </Text>
-          </View>
+          {renderStepLabel()}
           {renderGeolocationStep()}
         </ScrollView>
 
@@ -529,13 +554,7 @@ export default function CustomerOnboardingScreen({ onComplete }: Props) {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.stepLabelContainer}>
-            <Text style={styles.stepEmoji}>🏪</Text>
-            <Text style={[styles.stepTitle, { color: colors.text }]}>Business Type</Text>
-            <Text style={[styles.stepSubtitle, { color: colors.textSecondary }]}>
-              What kind of business do you run?
-            </Text>
-          </View>
+          {renderStepLabel()}
           {renderBusinessTypeStep()}
         </ScrollView>
       </Animated.View>
@@ -619,6 +638,49 @@ export default function CustomerOnboardingScreen({ onComplete }: Props) {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        visible={showSubCityPicker}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowSubCityPicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
+            <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}> 
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Select Sub City</Text>
+              <TouchableOpacity onPress={() => setShowSubCityPicker(false)}>
+                <Text style={[styles.modalClose, { color: colors.primary }]}>Done</Text>
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={ADDIS_ABABA_SUBCITIES}
+              keyExtractor={(item) => item}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.regionItem,
+                    {
+                      borderBottomColor: colors.border,
+                      backgroundColor: item === subCity ? colors.primary + '10' : 'transparent',
+                    },
+                  ]}
+                  onPress={() => {
+                    setSubCity(item);
+                    setShowSubCityPicker(false);
+                  }}
+                >
+                  <Text style={[styles.regionText, { color: item === subCity ? colors.primary : colors.text }]}>
+                    {item}
+                  </Text>
+                  {item === subCity && <Text style={[styles.regionCheck, { color: colors.primary }]}>✓</Text>}
+                </TouchableOpacity>
+              )}
+              showsVerticalScrollIndicator={false}
+            />
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -676,8 +738,12 @@ const styles = StyleSheet.create({
     marginBottom: 28,
     marginTop: 12,
   },
-  stepEmoji: {
-    fontSize: 48,
+  stepIconCircle: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    justifyContent: 'center',
+    alignItems: 'center',
     marginBottom: 12,
   },
   stepTitle: {
@@ -842,8 +908,7 @@ const styles = StyleSheet.create({
     minHeight: 100,
     justifyContent: 'center',
   },
-  businessTypeIcon: {
-    fontSize: 32,
+  businessTypeIconNode: {
     marginBottom: 8,
   },
   businessTypeLabel: {

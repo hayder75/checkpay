@@ -17,6 +17,8 @@ import { LocalTransaction } from '../services/smsService';
 import { dedupeTransactionsByIdentity } from '../utils/transactionDedup';
 import { useTranslation } from 'react-i18next';
 import { getCurrentAppLanguage } from '../i18n';
+import BankLogo from '../components/BankLogo';
+import { getBankLogosMap } from '../utils/bankLogoHelpers';
 
 interface Props {
   employeeId: string;
@@ -31,6 +33,7 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<LocalTransaction | null>(null);
+  const [logosMap, setLogosMap] = useState<Record<string, string>>({});
 
   const loadTransactions = async () => {
     try {
@@ -100,6 +103,15 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
 
   useEffect(() => {
     loadTransactions();
+    const loadLogos = async () => {
+      try {
+        const map = await getBankLogosMap();
+        setLogosMap(map);
+      } catch (err) {
+        console.error('Failed to load bank logos in EmployeeTransactionsScreen', err);
+      }
+    };
+    loadLogos();
   }, [employeeId]);
 
   const onRefresh = () => {
@@ -122,13 +134,12 @@ export default function EmployeeTransactionsScreen({ employeeId, employeeName, o
         activeOpacity={0.7}
       >
         <View style={styles.transactionLeft}>
-          <View style={[styles.transactionIcon, { backgroundColor: isIncome ? colors.darkGreen + '15' : '#ef444415' }]}>
-            {isIncome ? (
-              <ArrowDown size={18} color={colors.darkGreen} />
-            ) : (
-              <ArrowUp size={18} color="#ef4444" />
-            )}
-          </View>
+          <BankLogo
+            bankName={item.bank}
+            logoUrl={logosMap[item.bank?.toLowerCase() || '']}
+            size={40}
+            containerStyle={{ marginRight: 0 }}
+          />
           <View style={styles.transactionInfo}>
             <Text style={[styles.transactionSender, { color: colors.text }]} numberOfLines={1}>
               {item.sender || item.bank || t('transactions.transactionFallback')}

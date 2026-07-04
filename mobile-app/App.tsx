@@ -36,6 +36,7 @@ import { useTranslation } from 'react-i18next';
 import 'react-native-url-polyfill/auto';
 
 const PENDING_TELEGRAM_AUTH_TOKEN_KEY = 'pending_telegram_auth_token';
+const AUTH_VALIDATION_TIMEOUT_MS = 12000;
 
 function AppContent() {
   const { t } = useTranslation();
@@ -439,7 +440,12 @@ function AppContent() {
     );
   };
 
-  const syncCustomerOnboardingState = async (userData: any, context: string): Promise<boolean> => {
+  const syncCustomerOnboardingState = async (
+    userData: any,
+    context: string,
+    options?: { allowPrompt?: boolean }
+  ): Promise<boolean> => {
+    const allowPrompt = options?.allowPrompt === true;
     const backendCompleted = hasBackendCustomerOnboardingProfile(userData);
 
     if (backendCompleted) {
@@ -451,9 +457,17 @@ function AppContent() {
 
     const localCompleted = await storage.getCustomerOnboardingCompleted();
     if (!localCompleted) {
-      console.log(`🔄 [App] Customer onboarding required (${context})`);
-      setShowCustomerOnboarding(true);
-      return false;
+      if (allowPrompt) {
+        console.log(`🔄 [App] Customer onboarding required (${context})`);
+        setShowCustomerOnboarding(true);
+        return false;
+      }
+
+      // Existing users should not be blocked by newly introduced onboarding questions.
+      await storage.setCustomerOnboardingCompleted(true);
+      setShowCustomerOnboarding(false);
+      console.log(`ℹ️ [App] Skipping customer onboarding prompt for existing user (${context})`);
+      return true;
     }
 
     setShowCustomerOnboarding(false);
@@ -693,7 +707,12 @@ function AppContent() {
         // Verify token is still valid with real API
         try {
           console.log('🔄 [App] Validating token with backend...');
-          const response = await authAPI.getMe();
+          const response = await Promise.race([
+            authAPI.getMe(),
+            new Promise<never>((_, reject) => {
+              setTimeout(() => reject(new Error('AUTH_VALIDATION_TIMEOUT')), AUTH_VALIDATION_TIMEOUT_MS);
+            }),
+          ]);
           if (response.success && response.data) {
             // Token valid, load user and patterns in parallel for faster startup
             console.log('✅ [App] Token is valid, loading user data');
@@ -709,7 +728,7 @@ function AppContent() {
             await refreshPackageAccess({ showModal: false });
 
             // Prefer backend onboarding state for returning users.
-            await syncCustomerOnboardingState(response.data, 'startup');
+            await syncCustomerOnboardingState(response.data, 'startup', { allowPrompt: false });
             
             // Load patterns and country patterns in parallel (non-blocking)
             Promise.all([
@@ -785,6 +804,14 @@ function AppContent() {
           // Token invalid or expired
           console.error('❌ [App] Token validation failed:', error.message || error);
           const errorStatus = error.response?.status;
+
+          if (error?.message === 'AUTH_VALIDATION_TIMEOUT') {
+            console.warn('⚠️ [App] Token validation timed out, using cached credentials for startup');
+            setUser(storedUser);
+            setApiKey(storedApiKey);
+            setLoading(false);
+            return;
+          }
           
           if (errorStatus === 401) {
             // Unauthorized - token expired or invalid
@@ -795,6 +822,8 @@ function AppContent() {
           } else {
             // Network error or other issue - don't clear token yet
             console.warn('⚠️ [App] Token validation failed due to network/other error, keeping token');
+            setUser(storedUser);
+            setApiKey(storedApiKey);
           }
           setLoading(false);
         }
@@ -829,7 +858,7 @@ function AppContent() {
     }
 
     // Prefer backend onboarding state and fall back to local storage.
-    await syncCustomerOnboardingState(userData, 'login');
+    await syncCustomerOnboardingState(userData, 'login', { allowPrompt: false });
     const accessState = await refreshPackageAccess({ showModal: true });
     
     // Check if security is enabled (for lock screen) or prompt setup
@@ -1041,11 +1070,11 @@ function AppContent() {
           />
         );
       case 'transactions':
-        return <TransactionsScreen apiKey={apiKey} />;
+        return <TransactionsScreen apiKey={apiKey} onNavigateToReports={() => setCurrentTab('reports')} />;
       case 'ocr':
         return <OCRScreen patterns={patterns} />;
       case 'reports':
-        return <ReportsCashScreen />;
+        return <ReportsCashScreen onBack={() => setCurrentTab('transactions')} />;
       case 'profile':
         return (
           <ProfileScreen 
@@ -1140,7 +1169,7 @@ function AppContent() {
     }
 
     // Prefer backend onboarding state and fall back to local storage.
-    await syncCustomerOnboardingState(userData, 'register');
+    await syncCustomerOnboardingState(userData, 'register', { allowPrompt: true });
     const accessState = await refreshPackageAccess({ showModal: true });
     
     // Check if security is enabled (for lock screen) or prompt setup

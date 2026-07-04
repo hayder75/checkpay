@@ -11,8 +11,6 @@ const allTabs: { id: Tab; label: string; Icon: any }[] = [
   { id: 'banks', label: 'Banks', Icon: Building2 },
   { id: 'transactions', label: 'History', Icon: History },
   { id: 'ocr', label: 'Scan', Icon: ScanLine },
-  { id: 'reports', label: 'Reports', Icon: BarChart3 },
-  { id: 'profile', label: 'Profile', Icon: User },
 ];
 
 interface Props {
@@ -37,11 +35,11 @@ export default function BottomNavigation({ currentTab, onTabChange, isEmployee =
   };
 
   const employeeAllowedTabs = isRestricted
-    ? ['transactions', 'reports', 'profile']
-    : ['ocr', 'transactions', 'reports', 'profile'];
+    ? ['transactions']
+    : ['ocr', 'transactions'];
   const ownerAllowedTabs = isRestricted
-    ? ['transactions', 'reports', 'profile']
-    : ['home', 'banks', 'transactions', 'ocr', 'reports', 'profile'];
+    ? ['transactions']
+    : ['home', 'banks', 'transactions', 'ocr'];
 
   const tabs = isEmployee
     ? allTabs.filter(tab => employeeAllowedTabs.includes(tab.id))
@@ -104,7 +102,8 @@ export default function BottomNavigation({ currentTab, onTabChange, isEmployee =
 const styles = StyleSheet.create({
   wrapper: {
     alignItems: 'center',
-    paddingBottom: Platform.OS === 'ios' ? 20 : 10,
+    // Keep nav bar above Android gesture/3-button system controls.
+    paddingBottom: Platform.OS === 'ios' ? 20 : 24,
     paddingHorizontal: 20,
   },
   container: {

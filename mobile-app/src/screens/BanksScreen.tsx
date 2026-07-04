@@ -10,11 +10,12 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
-import { Building2, X, Plus, RefreshCw } from 'lucide-react-native';
+import { X, Plus, RefreshCw } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { storage } from '../services/storage';
 import { patternsAPI, institutionPatternsAPI } from '../services/api';
 import { useTranslation } from 'react-i18next';
+import BankLogo from '../components/BankLogo';
 
 interface Props {
   apiKey?: string | null;
@@ -25,6 +26,7 @@ const INSTITUTIONS_CACHE_TTL_MS = 10 * 60 * 1000;
 let banksScreenMemoryCache: {
   banks: string[];
   availableInstitutions: string[];
+  institutionLogos: Record<string, string>;
   cachedAt: number;
 } | null = null;
 
@@ -33,6 +35,7 @@ export default function BanksScreen({ apiKey }: Props) {
   const { t } = useTranslation();
   const [banks, setBanks] = useState<string[]>(() => banksScreenMemoryCache?.banks || []);
   const [availableInstitutions, setAvailableInstitutions] = useState<string[]>(() => banksScreenMemoryCache?.availableInstitutions || []);
+  const [institutionLogos, setInstitutionLogos] = useState<Record<string, string>>(() => banksScreenMemoryCache?.institutionLogos || {});
   const [loading, setLoading] = useState(() => !banksScreenMemoryCache || banksScreenMemoryCache.availableInstitutions.length === 0);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -48,6 +51,7 @@ export default function BanksScreen({ apiKey }: Props) {
       banksScreenMemoryCache = {
         banks: selectedBanks,
         availableInstitutions,
+        institutionLogos,
         cachedAt: Date.now(),
       };
     } catch (error) {
@@ -69,6 +73,7 @@ export default function BanksScreen({ apiKey }: Props) {
         banksScreenMemoryCache = {
           banks,
           availableInstitutions: cachedInstitutions,
+          institutionLogos,
           cachedAt: Date.now(),
         };
       }
@@ -88,6 +93,7 @@ export default function BanksScreen({ apiKey }: Props) {
       }
 
       const institutionsSet = new Set<string>();
+      const logosMap: Record<string, string> = {};
       let loadedFromUserPatterns = 0;
       let loadedFromInstitutionPatterns = 0;
 
@@ -102,7 +108,12 @@ export default function BanksScreen({ apiKey }: Props) {
           
           userPatterns.forEach((pattern: any) => {
             if (pattern.bank && pattern.bank.trim()) {
-              institutionsSet.add(pattern.bank.trim());
+              const bankName = pattern.bank.trim();
+              institutionsSet.add(bankName);
+              const logoValue = pattern.logoUrl || pattern.bankLogo || pattern.logo;
+              if (logoValue && !logosMap[bankName]) {
+                logosMap[bankName] = String(logoValue);
+              }
               loadedFromUserPatterns++;
             }
           });
@@ -130,6 +141,10 @@ export default function BanksScreen({ apiKey }: Props) {
               if (pattern.institution && pattern.institution.trim()) {
                 const instName = pattern.institution.trim();
                 institutionsSet.add(instName);
+                const logoValue = pattern.logoUrl || pattern.bankLogo || pattern.logo;
+                if (logoValue && !logosMap[instName]) {
+                  logosMap[instName] = String(logoValue);
+                }
                 loadedFromInstitutionPatterns++;
                 console.log(`  📌 Found institution: ${instName}`);
               }
@@ -140,6 +155,10 @@ export default function BanksScreen({ apiKey }: Props) {
                 // Only add if different (case-insensitive comparison)
                 if (bankName.toLowerCase() !== instName.toLowerCase()) {
                   institutionsSet.add(bankName);
+                  const logoValue = pattern.logoUrl || pattern.bankLogo || pattern.logo;
+                  if (logoValue && !logosMap[bankName]) {
+                    logosMap[bankName] = String(logoValue);
+                  }
                   loadedFromInstitutionPatterns++;
                   console.log(`  📌 Found bank: ${bankName}`);
                 }
@@ -158,10 +177,12 @@ export default function BanksScreen({ apiKey }: Props) {
       // Convert to sorted array
       const institutions = Array.from(institutionsSet).sort();
       setAvailableInstitutions(institutions);
+      setInstitutionLogos(logosMap);
       await storage.setCachedInstitutions(institutions);
       banksScreenMemoryCache = {
         banks,
         availableInstitutions: institutions,
+        institutionLogos: logosMap,
         cachedAt: Date.now(),
       };
       
@@ -181,6 +202,7 @@ export default function BanksScreen({ apiKey }: Props) {
         banksScreenMemoryCache = {
           banks: institutions,
           availableInstitutions: institutions,
+          institutionLogos: logosMap,
           cachedAt: Date.now(),
         };
         console.log(`✅ [BanksScreen] Auto-selected ${institutions.length} institutions`);
@@ -189,7 +211,7 @@ export default function BanksScreen({ apiKey }: Props) {
       console.error('❌ [BanksScreen] Error loading institutions from backend:', error.message || error);
       Alert.alert(
         t('common.error'),
-        t('banks.loadFailed', { error: error.message || 'Unknown error' })
+        `Failed to load institutions from backend: ${error.message || 'Unknown error'}. Please check your connection and try again.`
       );
     } finally {
       setLoading(false);
@@ -219,6 +241,7 @@ export default function BanksScreen({ apiKey }: Props) {
                 banksScreenMemoryCache = {
                   banks: updatedBanks,
                   availableInstitutions,
+                  institutionLogos,
                   cachedAt: Date.now(),
                 };
           },
@@ -230,10 +253,7 @@ export default function BanksScreen({ apiKey }: Props) {
   const renderBankItem = ({ item }: { item: string }) => (
     <View style={[styles.bankItem, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
       <View style={styles.bankInfo}>
-        <View style={[styles.bankIcon, { backgroundColor: colors.surface }]}>
-          <Building2 size={20} color={colors.primary} />
-        </View>
-        <Text style={[styles.bankName, { color: colors.text }]}>{item}</Text>
+        <BankLogo bankName={item} logoUrl={institutionLogos[item]} showLabel size={40} />
       </View>
       <TouchableOpacity
         onPress={() => handleRemoveBank(item)}
@@ -335,14 +355,12 @@ export default function BanksScreen({ apiKey }: Props) {
                       banksScreenMemoryCache = {
                         banks: updatedBanks,
                         availableInstitutions,
+                        institutionLogos,
                         cachedAt: Date.now(),
                       };
                     }}
                   >
-                    <Building2 size={16} color={colors.primary} />
-                    <Text style={[styles.availableItemText, { color: colors.text }]}> 
-                      {institution}
-                    </Text>
+                    <BankLogo bankName={institution} logoUrl={institutionLogos[institution]} showLabel size={28} labelStyle={[styles.availableItemText, { color: colors.text }]} />
                     <Plus size={16} color={colors.primary} />
                   </TouchableOpacity>
                 ))}
@@ -444,19 +462,6 @@ const styles = StyleSheet.create({
   bankInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
-  },
-  bankIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  bankName: {
-    fontSize: 16,
-    fontWeight: '500',
     flex: 1,
   },
   removeButton: {

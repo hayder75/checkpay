@@ -15,7 +15,6 @@ import { findMatchingInstitutionPattern, InstitutionPattern } from '../utils/pat
 import { maskPhone } from '../utils/maskPhone';
 import { installationService } from '../services/installation';
 import { Pattern, ParsedSMS } from '../types';
-import { storage } from '../services/storage';
 
 interface Props {
   apiKey?: string | null;

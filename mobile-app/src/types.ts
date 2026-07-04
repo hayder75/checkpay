@@ -6,6 +6,9 @@ export interface Pattern {
   extraction?: Record<string, any>;
   extractFields?: Record<string, any>; // Backend field name
   bank?: string;
+  logoUrl?: string;
+  bankLogo?: string;
+  logo?: string;
   currency?: string;
   userId?: string;
   businessId?: string;
