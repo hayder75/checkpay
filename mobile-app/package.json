@@ -49,6 +49,7 @@
     "react-native-worklets-core": "^1.6.2"
   },
   "devDependencies": {
+    "@expo/config-plugins": "~54.0.4",
     "@types/react": "~19.1.0",
     "typescript": "~5.9.2"
   },
