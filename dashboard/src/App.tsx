@@ -36,6 +36,9 @@ function App() {
       <Routes>
         {/* Public routes */}
         <Route path="/" element={<LandingPage />} />
+        <Route path="/products" element={<ProductsPage />} />
+        <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/api-docs" element={<ApiDocsPage />} />
         <Route path="/auth/login" element={<LoginPage />} />
         <Route path="/auth/register" element={<RegisterPage />} />
         <Route path="/auth/verify-otp" element={<VerifyOTPPage />} />
