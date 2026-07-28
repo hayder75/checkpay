@@ -113,74 +113,68 @@ export default function ProductsPage() {
         )}
       </header>
 
-      {/* Hero */}
-      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 pt-20 md:pt-28 pb-16 md:pb-20 relative z-10">
-        <div className="max-w-4xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/5 text-primary text-xs font-medium border border-primary/10 mb-6">
-            PRODUCTS
-          </div>
-          <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold leading-[1.1] tracking-tight mb-6">
-            Build payments infrastructure
-            <br />
-            <span className="text-muted-foreground">without being a bank</span>
-          </h1>
-          <p className="text-base sm:text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-            APIs and tools for verifying payments across Africa. 
-            No banking license required.
-          </p>
-        </div>
-      </section>
-
-      {/* Main Product */}
-      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 pb-16 md:pb-20 relative z-10">
+      {/* Products Hero + Card */}
+      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 pt-8 md:pt-10 pb-16 md:pb-20 relative z-10">
         <div className="max-w-6xl mx-auto">
-          <div className="relative bg-card border border-border rounded-3xl overflow-hidden shadow-sm">
+          <div className="mb-8">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-primary/5 text-primary text-xs font-medium border border-primary/10 mb-4">
+              PRODUCTS
+            </div>
+            <h1 className="text-3xl sm:text-4xl md:text-5xl font-heading font-bold leading-[1.1] tracking-tight mb-3">
+              Build payments infrastructure <span className="text-muted-foreground">without being a bank</span>
+            </h1>
+            <p className="text-base md:text-lg text-muted-foreground max-w-2xl leading-relaxed">
+              APIs and tools for verifying payments across Africa. No banking license required.
+            </p>
+          </div>
+
+          <div className="bg-card border border-border rounded-3xl overflow-hidden shadow-sm">
             <div className="grid lg:grid-cols-2">
-              <div className="p-10 md:p-14 lg:p-16">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-xs font-medium mb-8">
+              <div className="p-8 md:p-10 lg:p-12">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-xs font-medium mb-6">
                   <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
                   Live
                 </div>
-                <h2 className="text-4xl md:text-5xl font-bold tracking-tight mb-6">
+                <h2 className="text-3xl md:text-4xl font-heading font-bold tracking-tight mb-4">
                   Verify API
                 </h2>
-                <p className="text-lg text-muted-foreground leading-relaxed mb-10">
+                <p className="text-base md:text-lg text-muted-foreground leading-relaxed mb-8">
                   Turn any SMS bank alert into verified transaction data. 
                   One API call tells you if a customer paid – amount, sender, 
                   timestamp, everything you need.
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-12">
+                <div className="grid grid-cols-3 gap-3 mb-8">
                   {stats.map((stat) => (
-                    <div key={stat.label} className="p-4 rounded-xl bg-muted/30 border border-border">
-                      <div className="text-2xl font-bold text-foreground">{stat.value}</div>
-                      <div className="text-sm text-muted-foreground mt-1">{stat.label}</div>
+                    <div key={stat.label} className="p-3 rounded-xl bg-muted/30 border border-border">
+                      <div className="text-xl font-bold text-foreground">{stat.value}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">{stat.label}</div>
                     </div>
                   ))}
                 </div>
-                <div className="flex flex-wrap gap-4">
+                <div className="flex flex-wrap gap-3">
                   <Link to="/auth/register">
-                    <Button size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm px-8">
+                    <Button className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm px-6">
                       Start building
                       <ArrowRight className="ml-2 w-4 h-4" />
                     </Button>
                   </Link>
                   <Link to="/api-docs">
-                    <Button size="lg" variant="outline" className="border-border hover:bg-muted/50">
+                    <Button variant="outline" className="border-border hover:bg-muted/50">
                       Documentation
                     </Button>
                   </Link>
                 </div>
               </div>
 
-              <div className="bg-[#0D0D0D] p-8 md:p-10 lg:p-12 flex items-center">
+              <div className="bg-[#0D0D0D] p-6 md:p-8 lg:p-10 flex items-center">
                 <div className="w-full">
-                  <div className="flex items-center gap-2 mb-6">
-                    <div className="w-3 h-3 rounded-full bg-[#FF5F57]" />
-                    <div className="w-3 h-3 rounded-full bg-[#FEBC2E]" />
-                    <div className="w-3 h-3 rounded-full bg-[#28C840]" />
-                    <span className="ml-4 text-neutral-500 text-xs font-mono">api/verify</span>
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-2.5 h-2.5 rounded-full bg-[#FF5F57]" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-[#FEBC2E]" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-[#28C840]" />
+                    <span className="ml-3 text-neutral-500 text-[11px] font-mono">api/verify</span>
                   </div>
-                  <pre className="text-sm font-mono leading-relaxed overflow-x-auto">
+                  <pre className="text-xs font-mono leading-relaxed overflow-x-auto">
                     <code>
                       <span className="text-neutral-500">// Verify a payment</span>{'\n'}
                       <span className="text-purple-400">const</span> <span className="text-neutral-300">result</span> <span className="text-neutral-500">=</span> <span className="text-purple-400">await</span> <span className="text-blue-400">fetch</span><span className="text-neutral-500">(</span>{'\n'}
@@ -213,7 +207,7 @@ export default function ProductsPage() {
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/5 text-primary text-xs font-medium border border-primary/10 mb-4">
               HOW IT WORKS
             </div>
-            <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight">
+            <h2 className="text-3xl md:text-4xl lg:text-5xl font-heading font-bold tracking-tight">
               From SMS to verified payment in seconds
             </h2>
           </div>
@@ -248,7 +242,7 @@ export default function ProductsPage() {
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/5 text-primary text-xs font-medium border border-primary/10 mb-4">
               COMING SOON
             </div>
-            <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight">
+            <h2 className="text-3xl md:text-4xl lg:text-5xl font-heading font-bold tracking-tight">
               What we're building next
             </h2>
           </div>
