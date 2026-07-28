@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { ArrowRight, X, Menu } from 'lucide-react';
+import { ArrowRight, X, Menu, ChevronRight } from 'lucide-react';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { useTheme } from '@/contexts/ThemeContext';
 import GeometricBackground from '@/components/GeometricBackground';
@@ -8,44 +8,29 @@ import GeometricBgToggle from '@/components/GeometricBgToggle';
 import { PiShieldCheck, PiCalendar, PiArrowClockwise, PiFileText, PiCheckCircle, PiPulse, PiComputerTower } from 'react-icons/pi';
 import { useState } from 'react';
 
+const stats = [
+  { value: '200ms', label: 'Avg verification' },
+  { value: '30+', label: 'Countries' },
+  { value: '99.9%', label: 'Uptime SLA' },
+];
+
+const steps = [
+  { icon: PiPulse, text: 'Customer pays via bank or mobile money' },
+  { icon: PiComputerTower, text: 'SMS captured by CheckPay app' },
+  { icon: PiShieldCheck, text: 'Your server calls verify API' },
+  { icon: PiCheckCircle, text: 'Instant confirmation returned' },
+];
+
+const comingSoonProducts = [
+  { title: 'Events', icon: PiCalendar, description: 'Ticketing with built-in verification', timeline: 'Q2 2025' },
+  { title: 'Subscriptions', icon: PiArrowClockwise, description: 'Recurring payment management', timeline: 'Q3 2025' },
+  { title: 'Invoices', icon: PiFileText, description: 'Generate, share, auto-match', timeline: 'Q4 2025' },
+];
+
 export default function ProductsPage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { theme } = useTheme();
   const logoPath = theme === 'dark' ? '/dark-theme-logo.png' : '/light-theme-logo.png';
-
-  const stats = [
-    { value: '200ms', label: 'Average verification time' },
-    { value: '30+', label: 'Countries & mobile networks' },
-    { value: '99.9%', label: 'Uptime SLA' },
-  ];
-
-  const steps = [
-    { icon: PiPulse, title: 'Customer pays', description: 'Customer sends bank transfer or mobile money. SMS alert arrives on the connected phone.' },
-    { icon: PiComputerTower, title: 'Transaction captured', description: 'CheckPay Android app reads the SMS and pushes it to your project in real-time.' },
-    { icon: PiShieldCheck, title: 'Your server verifies', description: 'Your backend calls GET /api/verify?txn=... with your project key. No customer-facing API exposure.' },
-    { icon: PiCheckCircle, title: 'Instant result', description: 'Get confirmed amount, sender, bank, and timestamp. Match against your order and deliver value.' },
-  ];
-
-  const comingSoonProducts = [
-    {
-      title: 'Events',
-      icon: PiCalendar,
-      description: 'Ticketing with built-in payment verification. Sell, scan, reconcile.',
-      timeline: 'Q2 2025',
-    },
-    {
-      title: 'Subscriptions',
-      icon: PiArrowClockwise,
-      description: 'Recurring payment management for bank transfers and mobile money.',
-      timeline: 'Q3 2025',
-    },
-    {
-      title: 'Invoices',
-      icon: PiFileText,
-      description: 'Generate invoices, share payment links, auto-match when paid.',
-      timeline: 'Q4 2025',
-    },
-  ];
 
   return (
     <div className="min-h-screen bg-background text-foreground transition-colors">
@@ -55,11 +40,7 @@ export default function ProductsPage() {
       <header className="sticky top-0 z-[100] border-b border-border/50 bg-background/90">
         <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 py-3 md:py-4 flex items-center justify-between">
           <Link to="/">
-            <img
-              src={logoPath}
-              alt="CheckPay Logo"
-              className="h-8 md:h-10 w-auto object-contain flex-shrink-0"
-            />
+            <img src={logoPath} alt="CheckPay Logo" className="h-8 md:h-10 w-auto object-contain flex-shrink-0" />
           </Link>
           <nav className="hidden md:flex items-center gap-6">
             <Link to="/api-docs" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Docs</Link>
@@ -72,17 +53,12 @@ export default function ProductsPage() {
               <Button variant="ghost" size="sm" className="text-sm">Login</Button>
             </Link>
             <Link to="/auth/register">
-              <Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm text-sm px-5">
-                Get Started
-              </Button>
+              <Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm text-sm px-5">Get Started</Button>
             </Link>
           </nav>
           <div className="flex md:hidden items-center gap-3">
             <ThemeToggle />
-            <button
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="p-2 text-muted-foreground hover:text-foreground"
-            >
+            <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="p-2 text-muted-foreground hover:text-foreground">
               {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
           </div>
@@ -104,183 +80,132 @@ export default function ProductsPage() {
                 <div className="px-4 py-3 text-sm text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted/50 transition-colors">Login</div>
               </Link>
               <Link to="/auth/register" onClick={() => setMobileMenuOpen(false)}>
-                <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-sm mt-2">
-                  Get Started
-                </Button>
+                <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-sm mt-2">Get Started</Button>
               </Link>
             </div>
           </div>
         )}
       </header>
 
-      {/* Products Hero + Card */}
-      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 pt-8 md:pt-10 pb-16 md:pb-20 relative z-10">
-        <div className="max-w-6xl mx-auto">
-          <div className="mb-8">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-primary/5 text-primary text-xs font-medium border border-primary/10 mb-4">
-              PRODUCTS
-            </div>
-            <h1 className="text-3xl sm:text-4xl md:text-5xl font-heading font-bold leading-[1.1] tracking-tight mb-3">
-              Build payments infrastructure <span className="text-muted-foreground">without being a bank</span>
+      {/* ─── ONE-PAGE PRODUCTS DASHBOARD ─── */}
+      <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 pt-6 pb-8 relative z-10">
+
+        {/* Hero — compact one-liner */}
+        <div className="max-w-6xl mx-auto mb-6">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <span className="px-2.5 py-1 rounded-md bg-primary/10 text-primary text-[11px] font-semibold border border-primary/20">PRODUCTS</span>
+            <h1 className="text-lg sm:text-xl md:text-2xl font-heading font-bold text-foreground">
+              Build payments infrastructure <span className="text-muted-foreground font-normal">without being a bank</span>
             </h1>
-            <p className="text-base md:text-lg text-muted-foreground max-w-2xl leading-relaxed">
-              APIs and tools for verifying payments across Africa. No banking license required.
-            </p>
           </div>
+        </div>
 
-          <div className="bg-card border border-border rounded-3xl overflow-hidden shadow-sm">
-            <div className="grid lg:grid-cols-2">
-              <div className="p-8 md:p-10 lg:p-12">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-xs font-medium mb-6">
-                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-                  Live
+        {/* Main content grid: Verify API (left) + Coming Soon (right) */}
+        <div className="max-w-6xl mx-auto grid lg:grid-cols-[1fr_320px] gap-5 mb-5">
+
+          {/* ─── Verify API Card ─── */}
+          <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="p-5 md:p-6">
+              <div className="flex items-start justify-between gap-4 mb-4">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-[10px] font-medium mb-2">
+                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                    Live
+                  </div>
+                  <h2 className="text-xl md:text-2xl font-heading font-bold">Verify API</h2>
                 </div>
-                <h2 className="text-3xl md:text-4xl font-heading font-bold tracking-tight mb-4">
-                  Verify API
-                </h2>
-                <p className="text-base md:text-lg text-muted-foreground leading-relaxed mb-8">
-                  Turn any SMS bank alert into verified transaction data. 
-                  One API call tells you if a customer paid – amount, sender, 
-                  timestamp, everything you need.
-                </p>
-                <div className="grid grid-cols-3 gap-3 mb-8">
-                  {stats.map((stat) => (
-                    <div key={stat.label} className="p-3 rounded-xl bg-muted/30 border border-border">
-                      <div className="text-xl font-bold text-foreground">{stat.value}</div>
-                      <div className="text-xs text-muted-foreground mt-0.5">{stat.label}</div>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <Link to="/auth/register">
-                    <Button className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm px-6">
-                      Start building
-                      <ArrowRight className="ml-2 w-4 h-4" />
-                    </Button>
-                  </Link>
-                  <Link to="/api-docs">
-                    <Button variant="outline" className="border-border hover:bg-muted/50">
-                      Documentation
-                    </Button>
-                  </Link>
-                </div>
+                <Link to="/auth/register">
+                  <Button className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm text-xs h-8 px-4">
+                    Start building <ArrowRight className="ml-1.5 w-3 h-3" />
+                  </Button>
+                </Link>
               </div>
 
-              <div className="bg-[#0D0D0D] p-6 md:p-8 lg:p-10 flex items-center">
-                <div className="w-full">
-                  <div className="flex items-center gap-2 mb-4">
-                    <div className="w-2.5 h-2.5 rounded-full bg-[#FF5F57]" />
-                    <div className="w-2.5 h-2.5 rounded-full bg-[#FEBC2E]" />
-                    <div className="w-2.5 h-2.5 rounded-full bg-[#28C840]" />
-                    <span className="ml-3 text-neutral-500 text-[11px] font-mono">api/verify</span>
+              <p className="text-sm text-muted-foreground leading-relaxed mb-5 max-w-xl">
+                Turn any SMS bank alert into verified transaction data — amount, sender, timestamp, everything you need. One API call.
+              </p>
+
+              {/* Stats row */}
+              <div className="flex gap-3 mb-5">
+                {stats.map(s => (
+                  <div key={s.label} className="px-3 py-2 rounded-lg bg-muted/30 border border-border flex-1">
+                    <div className="text-sm font-bold">{s.value}</div>
+                    <div className="text-[10px] text-muted-foreground">{s.label}</div>
                   </div>
-                  <pre className="text-xs font-mono leading-relaxed overflow-x-auto">
-                    <code>
-                      <span className="text-neutral-500">// Verify a payment</span>{'\n'}
-                      <span className="text-purple-400">const</span> <span className="text-neutral-300">result</span> <span className="text-neutral-500">=</span> <span className="text-purple-400">await</span> <span className="text-blue-400">fetch</span><span className="text-neutral-500">(</span>{'\n'}
-                      <span className="text-emerald-400">  'https://checkpay.live/api/verify'</span><span className="text-neutral-500">,</span>{'\n'}
-                      <span className="text-neutral-500">  {'{'}</span>{'\n'}
-                      <span className="text-neutral-300">    method</span><span className="text-neutral-500">:</span> <span className="text-emerald-400">'POST'</span><span className="text-neutral-500">,</span>{'\n'}
-                      <span className="text-neutral-300">    headers</span><span className="text-neutral-500">:</span> <span className="text-neutral-500">{'{'}</span>{'\n'}
-                      <span className="text-emerald-400">      'X-API-Key'</span><span className="text-neutral-500">:</span> <span className="text-neutral-300">apiKey</span>{'\n'}
-                      <span className="text-neutral-500">    {'}'},</span>{'\n'}
-                      <span className="text-neutral-300">    body</span><span className="text-neutral-500">:</span> <span className="text-neutral-300">JSON</span><span className="text-neutral-500">.</span><span className="text-blue-400">stringify</span><span className="text-neutral-500">({'{'}</span>{'\n'}
-                      <span className="text-neutral-300">      transactionId</span><span className="text-neutral-500">:</span> <span className="text-emerald-400">'FT24...'</span>{'\n'}
-                      <span className="text-neutral-500">    {'}'})</span>{'\n'}
-                      <span className="text-neutral-500">  {'}'}</span>{'\n'}
-                      <span className="text-neutral-500">);</span>{'\n'}
-                      {'\n'}
-                      <span className="text-neutral-500">// {'{'} verified: true, amount: 15000 {'}'}</span>
-                    </code>
-                  </pre>
+                ))}
+              </div>
+
+              {/* Inline code preview */}
+              <div className="bg-[#0D0D0D] rounded-xl p-3 border border-border/50">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <div className="w-2 h-2 rounded-full bg-[#FF5F57]" />
+                  <div className="w-2 h-2 rounded-full bg-[#FEBC2E]" />
+                  <div className="w-2 h-2 rounded-full bg-[#28C840]" />
+                  <span className="ml-2 text-neutral-500 text-[10px] font-mono">POST /api/verify</span>
                 </div>
+                <pre className="text-[10px] font-mono leading-relaxed text-neutral-300">
+                  <code>{`fetch('https://checkpay.live/api/verify', {
+  method: 'POST',
+  headers: { 'X-API-Key': apiKey },
+  body: JSON.stringify({ transactionId: 'FT24...' })
+})`}</code>
+                </pre>
+              </div>
+
+              {/* Steps — inline pill row */}
+              <div className="flex flex-wrap gap-2 mt-4">
+                {steps.map((step, i) => {
+                  const Icon = step.icon;
+                  return (
+                    <div key={step.text} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-muted/30 border border-border">
+                      <Icon className="w-3 h-3 text-primary" />
+                      <span className="text-[10px] text-muted-foreground">{step.text}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
-        </div>
-      </section>
 
-      {/* Compact How It Works */}
-      <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 py-8 relative z-10">
-        <div className="max-w-6xl mx-auto">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {steps.map((step, i) => {
-              const Icon = step.icon;
+          {/* ─── Coming Soon Sidebar ─── */}
+          <div className="space-y-3">
+            <h3 className="text-[11px] font-heading font-semibold uppercase tracking-wider text-muted-foreground">Coming Soon</h3>
+            {comingSoonProducts.map(p => {
+              const Icon = p.icon;
               return (
-                <div key={step.title} className="flex items-center gap-3 p-3 rounded-xl bg-muted/30 border border-border">
-                  <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0">
-                    <Icon className="w-4 h-4 text-primary" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center flex-shrink-0">{i + 1}</span>
-                      <span className="text-xs font-heading font-semibold truncate">{step.title}</span>
+                <div key={p.title} className="bg-card border border-border rounded-xl p-4 hover:shadow-sm hover:border-primary/20 transition-all">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
+                      <Icon className="w-4 h-4 text-primary" />
                     </div>
-                    <p className="text-[11px] text-muted-foreground leading-tight mt-0.5 line-clamp-2">{step.description}</p>
+                    <div>
+                      <div className="text-sm font-heading font-semibold">{p.title}</div>
+                      <span className="text-[10px] text-muted-foreground/60">{p.timeline}</span>
+                    </div>
                   </div>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">{p.description}</p>
                 </div>
               );
             })}
           </div>
         </div>
+
+        {/* ─── Bottom CTA bar ─── */}
+        <div className="max-w-6xl mx-auto">
+          <div className="bg-gradient-to-r from-primary/5 via-primary/10 to-primary/5 border border-primary/20 rounded-xl px-6 py-4 flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-heading font-semibold">Ready to start?</p>
+              <p className="text-xs text-muted-foreground">Free tier. No license. 15 minutes to your first verification.</p>
+            </div>
+            <Link to="/auth/register">
+              <Button className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm text-xs h-8 px-5 whitespace-nowrap">
+                Create free account <ChevronRight className="ml-1 w-3 h-3" />
+              </Button>
+            </Link>
+          </div>
+        </div>
+
       </div>
-
-      {/* Coming Soon */}
-      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 pb-24 md:pb-32 relative z-10">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-12 md:mb-16">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/5 text-primary text-xs font-medium border border-primary/10 mb-4">
-              COMING SOON
-            </div>
-            <h2 className="text-3xl md:text-4xl lg:text-5xl font-heading font-bold tracking-tight">
-              What we're building next
-            </h2>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-6">
-            {comingSoonProducts.map((product, i) => {
-              const Icon = product.icon;
-              return (
-                <div 
-                  key={product.title} 
-                  className="bg-card border border-border p-8 md:p-10 rounded-2xl hover:shadow-sm hover:border-primary/20 transition-all"
-                >
-                  <div className="w-12 h-12 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-6">
-                    <Icon className="w-6 h-6 text-primary" />
-                  </div>
-                  <h3 className="text-xl md:text-2xl font-semibold mb-3">{product.title}</h3>
-                  <p className="text-muted-foreground leading-relaxed mb-6">
-                    {product.description}
-                  </p>
-                  <span className="text-sm text-muted-foreground/60">
-                    {product.timeline}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      {/* CTA */}
-      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 pb-32 relative z-10">
-        <div className="max-w-3xl mx-auto text-center">
-          <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-6">
-            Ready to start?
-          </h2>
-          <p className="text-lg text-muted-foreground mb-10">
-            Free tier available. No license required. 
-            <br className="hidden sm:block" />
-            15 minutes to your first verification.
-          </p>
-          <Link to="/auth/register">
-            <Button size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm px-10">
-              Create free account
-              <ArrowRight className="ml-2 w-4 h-4" />
-            </Button>
-          </Link>
-        </div>
-      </section>
 
       {/* Footer */}
       <footer className="border-t border-border pt-10 md:pt-14 pb-10 md:pb-16 relative z-10">
@@ -288,15 +213,9 @@ export default function ProductsPage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-8">
             <div className="col-span-2 md:col-span-1">
               <Link to="/">
-                <img
-                  src={logoPath}
-                  alt="CheckPay Logo"
-                  className="h-8 md:h-10 w-auto object-contain mb-3"
-                />
+                <img src={logoPath} alt="CheckPay Logo" className="h-8 md:h-10 w-auto object-contain mb-3" />
               </Link>
-              <p className="text-sm text-muted-foreground leading-relaxed max-w-[200px]">
-                Universal payment verification for Africa
-              </p>
+              <p className="text-sm text-muted-foreground leading-relaxed max-w-[200px]">Universal payment verification for Africa</p>
             </div>
             <div>
               <h4 className="text-sm font-semibold mb-3">Product</h4>
