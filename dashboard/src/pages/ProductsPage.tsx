@@ -200,45 +200,35 @@ export default function ProductsPage() {
         </div>
       </section>
 
-      {/* How It Works */}
-      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 py-16 md:py-24 relative z-10">
+      {/* Compact How It Works */}
+      <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 py-8 relative z-10">
         <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-14">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/5 text-primary text-xs font-medium border border-primary/10 mb-4">
-              HOW IT WORKS
-            </div>
-            <h2 className="text-3xl md:text-4xl lg:text-5xl font-heading font-bold tracking-tight">
-              From SMS to verified payment in seconds
-            </h2>
-          </div>
-          <div className="grid md:grid-cols-4 gap-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {steps.map((step, i) => {
               const Icon = step.icon;
               return (
-                <div key={step.title} className="text-center">
-                  <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-5">
-                    <Icon className="w-7 h-7 text-primary" />
+                <div key={step.title} className="flex items-center gap-3 p-3 rounded-xl bg-muted/30 border border-border">
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0">
+                    <Icon className="w-4 h-4 text-primary" />
                   </div>
-                  <div className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-primary text-primary-foreground text-xs font-bold mb-3">
-                    {i + 1}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center flex-shrink-0">{i + 1}</span>
+                      <span className="text-xs font-heading font-semibold truncate">{step.title}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-tight mt-0.5 line-clamp-2">{step.description}</p>
                   </div>
-                  <h3 className="text-lg font-semibold mb-2">{step.title}</h3>
-                  <p className="text-sm text-muted-foreground leading-relaxed">{step.description}</p>
                 </div>
               );
             })}
           </div>
         </div>
-      </section>
-
-      <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 relative z-10">
-        <div className="max-w-6xl mx-auto border-t border-border" />
       </div>
 
       {/* Coming Soon */}
-      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 py-24 md:py-32 relative z-10">
+      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 pb-24 md:pb-32 relative z-10">
         <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-16 md:mb-20">
+          <div className="text-center mb-12 md:mb-16">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/5 text-primary text-xs font-medium border border-primary/10 mb-4">
               COMING SOON
             </div>
