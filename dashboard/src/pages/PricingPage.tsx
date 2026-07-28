@@ -4,6 +4,7 @@ import { packageAPI } from '@/lib';
 import { Check, Zap, Plus, X, Menu } from 'lucide-react';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { useTheme } from '@/contexts/ThemeContext';
+import GeometricBackground from '@/components/GeometricBackground';
 import { useState, useEffect } from 'react';
 
 interface Package {
@@ -90,69 +91,62 @@ export default function PricingPage() {
     }, {} as Record<string, Package[]>);
 
   return (
-    <div className="min-h-screen bg-neutral-50 dark:bg-[#0A0A0A] text-neutral-900 dark:text-neutral-100 transition-colors">
+    <div className="min-h-screen bg-background text-foreground transition-colors">
+      <GeometricBackground />
+
       {/* Header */}
-      <header className="sticky top-0 z-[100] border-b border-neutral-200 dark:border-neutral-800/50 bg-neutral-50/80 dark:bg-[#0A0A0A]/80 backdrop-blur-xl">
-        <div className="container mx-auto px-4 py-3 md:py-4 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2">
+      <header className="sticky top-0 z-[100] border-b border-border/50 bg-background/90">
+        <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 py-3 md:py-4 flex items-center justify-between">
+          <Link to="/">
             <img
               src={logoPath}
               alt="CheckPay Logo"
-              className="h-8 md:h-12 w-auto min-w-[100px] md:min-w-[120px] object-contain"
+              className="h-8 md:h-10 w-auto object-contain flex-shrink-0"
             />
           </Link>
-          {/* Desktop Navigation */}
-          <div className="hidden md:flex items-center gap-1">
-            <Link to="/api-docs">
-              <Button variant="ghost" size="sm" className="text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white">Docs</Button>
-            </Link>
-            <Link to="/products">
-              <Button variant="ghost" size="sm" className="text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white">Products</Button>
-            </Link>
-            <Link to="/pricing">
-              <Button variant="ghost" size="sm" className="text-orange-600 dark:text-orange-400">Pricing</Button>
-            </Link>
-            <div className="w-px h-6 bg-neutral-200 dark:bg-neutral-800 mx-2" />
+          <nav className="hidden md:flex items-center gap-6">
+            <Link to="/api-docs" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Docs</Link>
+            <Link to="/products" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Products</Link>
+            <Link to="/pricing" className="text-sm text-primary font-medium">Pricing</Link>
+            <div className="w-px h-5 bg-border mx-2" />
             <ThemeToggle />
             <Link to="/auth/login">
-              <Button variant="ghost" size="sm" className="text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white">Login</Button>
+              <Button variant="ghost" size="sm" className="text-sm">Login</Button>
             </Link>
             <Link to="/auth/register">
-              <Button size="sm" className="bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-100">
+              <Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm text-sm px-5">
                 Get Started
               </Button>
             </Link>
-          </div>
-          {/* Mobile Navigation */}
-          <div className="flex md:hidden items-center gap-2">
+          </nav>
+          <div className="flex md:hidden items-center gap-3">
             <ThemeToggle />
-            <Button
-              variant="ghost"
-              size="icon"
+            <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="p-2 text-muted-foreground hover:text-foreground"
             >
               {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-            </Button>
+            </button>
           </div>
         </div>
-        {/* Mobile Menu */}
         {mobileMenuOpen && (
-          <div className="md:hidden border-t border-neutral-200 dark:border-neutral-800/50 bg-neutral-50/95 dark:bg-[#0A0A0A]/95 backdrop-blur-xl">
-            <div className="container mx-auto px-4 py-4 space-y-2">
+          <div className="md:hidden border-t border-border bg-background">
+            <div className="w-full px-4 sm:px-8 py-5 space-y-3">
               <Link to="/api-docs" onClick={() => setMobileMenuOpen(false)}>
-                <Button variant="ghost" className="w-full justify-start">Docs</Button>
+                <div className="px-4 py-3 text-sm text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted/50 transition-colors">Docs</div>
               </Link>
               <Link to="/products" onClick={() => setMobileMenuOpen(false)}>
-                <Button variant="ghost" className="w-full justify-start">Products</Button>
+                <div className="px-4 py-3 text-sm text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted/50 transition-colors">Products</div>
               </Link>
               <Link to="/pricing" onClick={() => setMobileMenuOpen(false)}>
-                <Button variant="ghost" className="w-full justify-start text-orange-600 dark:text-orange-400">Pricing</Button>
+                <div className="px-4 py-3 text-sm text-primary font-medium rounded-lg hover:bg-muted/50 transition-colors">Pricing</div>
               </Link>
+              <div className="border-t border-border my-3" />
               <Link to="/auth/login" onClick={() => setMobileMenuOpen(false)}>
-                <Button variant="ghost" className="w-full justify-start">Login</Button>
+                <div className="px-4 py-3 text-sm text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted/50 transition-colors">Login</div>
               </Link>
               <Link to="/auth/register" onClick={() => setMobileMenuOpen(false)}>
-                <Button className="w-full bg-neutral-900 dark:bg-white text-white dark:text-neutral-900">
+                <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-sm mt-2">
                   Get Started
                 </Button>
               </Link>
@@ -161,8 +155,8 @@ export default function PricingPage() {
         )}
       </header>
 
-      {/* Main Content - Same structure as PackageManagementPage */}
-      <main className="max-w-7xl mx-auto px-4 py-8 md:py-12 space-y-8">
+      {/* Main Content */}
+      <main className="w-full px-4 sm:px-8 md:px-12 lg:px-16 py-8 md:py-12 space-y-8 relative z-10">
         {/* Header */}
         <div className="flex flex-col md:flex-row items-center justify-between gap-4 pb-4">
           <div className="space-y-1 text-center md:text-left">
@@ -228,7 +222,7 @@ export default function PricingPage() {
                       {categoryPackages.map((pkg) => (
                         <div
                           key={pkg.id}
-                          className={`relative group p-5 flex flex-col rounded-[20px] border transition-all duration-500 hover:-translate-y-1 bg-white dark:bg-neutral-900/50 ${category.glow} border-neutral-200 dark:border-neutral-800`}
+                          className={`relative group p-5 flex flex-col rounded-[20px] border transition-all duration-500 hover:-translate-y-1 bg-card ${category.glow} border-border`}
                         >
                           <div className="mb-4 space-y-1">
                             <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${category.color} brightness-90`}>{pkg.tier}</span>
@@ -337,48 +331,48 @@ export default function PricingPage() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-neutral-200 dark:border-neutral-800/50 pt-6 md:pt-8 pb-8 md:pb-12 bg-white dark:bg-[#0A0A0A] mt-8">
-        <div className="container mx-auto px-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-8 mb-6 md:mb-8">
+      <footer className="border-t border-border pt-10 md:pt-14 pb-10 md:pb-16 relative z-10">
+        <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-8">
             <div className="col-span-2 md:col-span-1">
-              <Link to="/" className="flex items-center gap-2 mb-3 md:mb-4">
+              <Link to="/">
                 <img
                   src={logoPath}
                   alt="CheckPay Logo"
-                  className="h-8 md:h-10 w-auto min-w-[80px] md:min-w-[100px] object-contain"
+                  className="h-8 md:h-10 w-auto object-contain mb-3"
                 />
               </Link>
-              <p className="text-xs md:text-sm text-neutral-500 dark:text-neutral-400 leading-relaxed">
+              <p className="text-sm text-muted-foreground leading-relaxed max-w-[200px]">
                 Universal payment verification for Africa
               </p>
             </div>
             <div>
-              <h4 className="font-semibold mb-2 md:mb-3 text-sm md:text-base text-neutral-900 dark:text-neutral-100">Product</h4>
-              <ul className="space-y-1.5 md:space-y-2 text-xs md:text-sm text-neutral-500 dark:text-neutral-400">
-                <li><Link to="/products" className="hover:text-orange-500 transition-colors">All Products</Link></li>
-                <li><Link to="/api-docs" className="hover:text-orange-500 transition-colors">Documentation</Link></li>
-                <li><Link to="/pricing" className="hover:text-orange-500 transition-colors">Pricing</Link></li>
+              <h4 className="text-sm font-semibold mb-3">Product</h4>
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li><Link to="/products" className="hover:text-foreground transition-colors">All Products</Link></li>
+                <li><Link to="/api-docs" className="hover:text-foreground transition-colors">Documentation</Link></li>
+                <li><Link to="/pricing" className="hover:text-foreground transition-colors">Pricing</Link></li>
               </ul>
             </div>
             <div>
-              <h4 className="font-semibold mb-2 md:mb-3 text-sm md:text-base text-neutral-900 dark:text-neutral-100">Company</h4>
-              <ul className="space-y-1.5 md:space-y-2 text-xs md:text-sm text-neutral-500 dark:text-neutral-400">
-                <li><a href="#" className="hover:text-orange-500 transition-colors">About</a></li>
-                <li><a href="#" className="hover:text-orange-500 transition-colors">Blog</a></li>
-                <li><a href="mailto:hello@checkpay.africa" className="hover:text-orange-500 transition-colors">Contact Us</a></li>
+              <h4 className="text-sm font-semibold mb-3">Company</h4>
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li><a href="#" className="hover:text-foreground transition-colors">About</a></li>
+                <li><a href="#" className="hover:text-foreground transition-colors">Blog</a></li>
+                <li><a href="mailto:hello@checkpay.africa" className="hover:text-foreground transition-colors">Contact Us</a></li>
               </ul>
             </div>
             <div>
-              <h4 className="font-semibold mb-2 md:mb-3 text-sm md:text-base text-neutral-900 dark:text-neutral-100">Legal</h4>
-              <ul className="space-y-1.5 md:space-y-2 text-xs md:text-sm text-neutral-500 dark:text-neutral-400">
-                <li><a href="#" className="hover:text-orange-500 transition-colors">Privacy</a></li>
-                <li><a href="#" className="hover:text-orange-500 transition-colors">Terms</a></li>
-                <li><a href="#" className="hover:text-orange-500 transition-colors">Security</a></li>
+              <h4 className="text-sm font-semibold mb-3">Legal</h4>
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li><a href="#" className="hover:text-foreground transition-colors">Privacy</a></li>
+                <li><a href="#" className="hover:text-foreground transition-colors">Terms</a></li>
+                <li><a href="#" className="hover:text-foreground transition-colors">Security</a></li>
               </ul>
             </div>
           </div>
-          <div className="border-t border-neutral-200 dark:border-neutral-800/50 pt-4 md:pt-8 text-center text-xs md:text-sm text-neutral-500 dark:text-neutral-400">
-            <p>© 2025 CheckPay. All rights reserved. Built for everybody, by developers.</p>
+          <div className="border-t border-border pt-6 text-center text-sm text-muted-foreground">
+            <p>&copy; 2025 CheckPay. All rights reserved. Built for everybody, by developers.</p>
           </div>
         </div>
       </footer>

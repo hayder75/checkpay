@@ -1,11 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
-  Zap,
   Shield,
-  Globe,
-  Sparkles,
   ArrowRight,
   Play,
   X,
@@ -13,12 +9,13 @@ import {
   Smartphone,
   ScanText,
   Database,
-  Download
+  Download,
+  CheckCircle
 } from 'lucide-react';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import GeometricBackground from '@/components/GeometricBackground';
 import { useTheme } from '@/contexts/ThemeContext';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import GlobalPatternMap from '@/components/GlobalPatternMap';
 
 export default function LandingPage() {
@@ -27,92 +24,89 @@ export default function LandingPage() {
   const { theme } = useTheme();
   const logoPath = theme === 'dark' ? '/dark-theme-logo.png' : '/light-theme-logo.png';
 
+  useEffect(() => {
+    let lenis: any;
+    import('lenis').then(({ default: Lenis }) => {
+      lenis = new Lenis({ autoRaf: true });
+    });
+    return () => {
+      if (lenis) lenis.destroy();
+    };
+  }, []);
+
   const scrollToSection = (id: string) => {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   return (
-    <div className="min-h-screen bg-background relative overflow-hidden">
-      {/* Animated Geometric Background */}
+    <div className="min-h-screen bg-background relative">
       <GeometricBackground />
 
       {/* Header */}
-      <header className="sticky top-0 z-[100] border-b border-border/40 bg-background/80 backdrop-blur-md">
-        <div className="container mx-auto px-4 py-3 md:py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <img
-              src={logoPath}
-              alt="CheckPay Logo"
-              className="h-8 md:h-12 w-auto min-w-[100px] md:min-w-[120px] object-contain"
-            />
-          </div>
-          {/* Desktop Navigation */}
-          <div className="hidden md:flex items-center gap-1">
-            <Link to="/api-docs">
-              <Button variant="ghost" size="sm">Docs</Button>
-            </Link>
-            <Link to="/products">
-              <Button variant="ghost" size="sm">Products</Button>
-            </Link>
-            <Link to="/pricing">
-              <Button variant="ghost" size="sm">Pricing</Button>
-            </Link>
-            <Button variant="ghost" size="sm" onClick={() => scrollToSection('mobile-app')}>
-              <Download className="w-4 h-4 mr-1" />
+      <header className="sticky top-0 z-[100] border-b border-border/50 bg-background/90">
+        <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 py-3 md:py-4 flex items-center justify-between">
+          <img
+            src={logoPath}
+            alt="CheckPay Logo"
+            className="h-8 md:h-10 w-auto object-contain flex-shrink-0"
+          />
+          <nav className="hidden md:flex items-center gap-6">
+            <Link to="/api-docs" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Docs</Link>
+            <Link to="/products" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Products</Link>
+            <Link to="/pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Pricing</Link>
+            <button
+              onClick={() => scrollToSection('mobile-app')}
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
+            >
+              <Download className="w-3.5 h-3.5" />
               Download
-            </Button>
-            <div className="w-px h-6 bg-border/60 mx-2" />
+            </button>
+            <div className="w-px h-5 bg-border mx-2" />
             <ThemeToggle />
             <Link to="/auth/login">
-              <Button variant="ghost" size="sm">Login</Button>
+              <Button variant="ghost" size="sm" className="text-sm">Login</Button>
             </Link>
             <Link to="/auth/register">
-              <Button size="sm" className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-lg shadow-orange-500/30">
+              <Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm text-sm px-5">
                 Get Started
               </Button>
             </Link>
-          </div>
-          {/* Mobile Navigation */}
-          <div className="flex md:hidden items-center gap-2">
+          </nav>
+          <div className="flex md:hidden items-center gap-3">
             <ThemeToggle />
-            <Button
-              variant="ghost"
-              size="icon"
+            <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="p-2 text-muted-foreground hover:text-foreground"
             >
               {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-            </Button>
+            </button>
           </div>
         </div>
-        {/* Mobile Menu */}
         {mobileMenuOpen && (
-          <div className="md:hidden border-t border-border/40 bg-background/95 backdrop-blur-md">
-            <div className="container mx-auto px-4 py-4 space-y-2">
-              <Link to="/api-docs" onClick={() => setMobileMenuOpen(false)}>
-                <Button variant="ghost" className="w-full justify-start">Docs</Button>
-              </Link>
-              <Link to="/products" onClick={() => setMobileMenuOpen(false)}>
-                <Button variant="ghost" className="w-full justify-start">Products</Button>
-              </Link>
-              <Link to="/pricing" onClick={() => setMobileMenuOpen(false)}>
-                <Button variant="ghost" className="w-full justify-start">Pricing</Button>
-              </Link>
-              <Button
-                variant="ghost"
-                className="w-full justify-start"
-                onClick={() => {
-                  scrollToSection('mobile-app');
-                  setMobileMenuOpen(false);
-                }}
+          <div className="md:hidden border-t border-border bg-background">
+            <div className="w-full px-4 sm:px-8 py-5 space-y-3">
+              {[
+                { label: 'Docs', to: '/api-docs' },
+                { label: 'Products', to: '/products' },
+                { label: 'Pricing', to: '/pricing' },
+              ].map((item) => (
+                <Link key={item.label} to={item.to} onClick={() => setMobileMenuOpen(false)}>
+                  <div className="px-4 py-3 text-sm text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted/50 transition-colors">{item.label}</div>
+                </Link>
+              ))}
+              <button
+                onClick={() => { scrollToSection('mobile-app'); setMobileMenuOpen(false); }}
+                className="w-full flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted/50 transition-colors"
               >
-                <Download className="w-4 h-4 mr-2" />
+                <Download className="w-4 h-4" />
                 Download
-              </Button>
+              </button>
+              <div className="border-t border-border my-3" />
               <Link to="/auth/login" onClick={() => setMobileMenuOpen(false)}>
-                <Button variant="ghost" className="w-full justify-start">Login</Button>
+                <div className="px-4 py-3 text-sm text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted/50 transition-colors">Login</div>
               </Link>
               <Link to="/auth/register" onClick={() => setMobileMenuOpen(false)}>
-                <Button className="w-full bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white">
+                <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-sm mt-2">
                   Get Started
                 </Button>
               </Link>
@@ -122,187 +116,143 @@ export default function LandingPage() {
       </header>
 
       {/* Hero Section */}
-      <section className="container mx-auto px-4 py-8 md:py-20 lg:py-28 relative z-10 mb-4 md:mb-8 lg:mb-12">
-        <div className="max-w-7xl mx-auto grid gap-6 md:gap-12 md:grid-cols-[minmax(0,0.75fr)_minmax(0,1fr)] items-start">
-          {/* Hero copy */}
-          <div id="hero-content" className="space-y-4 md:space-y-6 text-left relative z-20">
-            <div className="inline-flex items-center gap-2 px-2.5 md:px-3 py-1 md:py-1.5 rounded-full bg-orange-500/10 border border-orange-500/20 text-orange-600 dark:text-orange-400 text-[11px] md:text-xs font-medium">
-              <Sparkles className="w-3 h-3 md:w-3.5 md:h-3.5" />
-              <span className="hidden sm:inline">No License Required • Free API Access • Built for Finance</span>
-              <span className="sm:hidden">Free API • No License</span>
+      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 py-12 md:py-20 lg:py-28 relative z-10">
+        <div className="mx-auto max-w-[1400px] grid gap-8 md:gap-10 xl:gap-14 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)] items-start">
+          <div className="space-y-5 md:space-y-6">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/5 text-primary text-xs font-medium border border-primary/10">
+              <span>No License Required &middot; Free API Access &middot; Built for Finance</span>
             </div>
-
-            <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl xl:text-6xl font-bold leading-[1.2] md:leading-tight">
+            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-bold leading-[1.15] tracking-tight">
               The API to verify payments
-              <br />
-              <span className="bg-gradient-to-r from-orange-500 via-orange-600 to-orange-500 bg-clip-text text-transparent">
-                across every bank and mobile money
-              </span>
+              <span className="text-primary"> across every bank and mobile money</span>
             </h1>
-
-            <p className="text-sm md:text-base lg:text-lg text-muted-foreground max-w-xl leading-relaxed">
+            <p className="text-sm sm:text-base md:text-lg text-muted-foreground max-w-2xl leading-relaxed">
               Turn raw SMS receipts into clean, structured payment data.
               Power dashboards, risk engines and reconciliation with a single,
-              <span className="font-semibold text-foreground"> unified verification API.</span>
+              unified verification API.
             </p>
-
-            <div className="flex flex-col sm:flex-row flex-wrap gap-3">
+            <div className="flex flex-col sm:flex-row gap-3 pt-2">
+              <Link to="/auth/register">
+                <Button size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm text-base px-7 py-5 w-full sm:w-auto">
+                  Start Building Free
+                  <ArrowRight className="ml-2 w-4 h-4" />
+                </Button>
+              </Link>
               <Button
                 size="lg"
                 variant="outline"
-                className="text-sm md:text-base px-5 md:px-6 py-4 md:py-5 border-2 w-full sm:w-auto"
-                onClick={() =>
-                  document.getElementById('product-demo')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                }
+                className="border-border text-sm md:text-base px-6 py-5 w-full sm:w-auto"
+                onClick={() => document.getElementById('product-demo')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
               >
                 <Play className="mr-2 w-4 h-4" />
-                Watch product tour
+                Watch demo
               </Button>
             </div>
-
-            <div className="hidden sm:flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-              <div className="flex items-center gap-2">
-                <Shield className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Bank‑grade security & audit trail</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Zap className="w-3.5 h-3.5 text-orange-400" />
-                <span>Sub‑100ms verification latency</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Globe className="w-3.5 h-3.5 text-sky-400" />
-                <span>30+ countries • cards • wallets • banks</span>
-              </div>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs sm:text-sm text-muted-foreground pt-2">
+              <span className="flex items-center gap-1.5">
+                <Shield className="w-3.5 h-3.5 text-primary" />
+                Bank-grade security
+              </span>
+              <span className="flex items-center gap-1.5">
+                <CheckCircle className="w-3.5 h-3.5 text-primary" />
+                Sub-100ms verification
+              </span>
+              <span className="flex items-center gap-1.5">
+                <Smartphone className="w-3.5 h-3.5 text-primary" />
+                30+ countries covered
+              </span>
             </div>
           </div>
 
-          {/* Right side: API console style card - Hidden on mobile */}
-          <div id="hero-api-card" className="hidden md:block relative w-full z-20">
-            <div className="absolute -inset-0.5 bg-gradient-to-tr from-orange-500/40 via-sky-500/30 to-purple-500/30 rounded-3xl blur-2xl opacity-70 dark:opacity-90 pointer-events-none" />
-            <Card className="relative bg-background/60 backdrop-blur-md border-border/60 shadow-2xl shadow-orange-500/10 w-full overflow-hidden">
-              <CardHeader className="border-b border-border/60 pb-4 px-5 pt-5">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
-                    <span className="truncate">checkpay-api • live</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs flex-shrink-0">
-                    <span className="rounded-full bg-emerald-500/10 text-emerald-400 px-2.5 py-1 border border-emerald-500/30 whitespace-nowrap">
-                      VERIFIED
-                    </span>
-                    <span className="rounded-full bg-orange-500/10 text-orange-400 px-2.5 py-1 border border-orange-500/30 whitespace-nowrap">
-                      PCI‑aware
-                    </span>
-                  </div>
+          {/* API Console Card */}
+          <div className="hidden md:block relative w-full min-w-0">
+            <div className="rounded-2xl border border-border bg-card shadow-lg">
+              <div className="border-b border-border px-4 md:px-5 py-3 md:py-4 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-[10px] md:text-xs text-muted-foreground truncate">
+                  <span className="w-2 h-2 rounded-full bg-primary flex-shrink-0" />
+                  <span className="font-mono truncate">checkpay-api &middot; live</span>
                 </div>
-              </CardHeader>
-              <CardContent className="pt-4 px-5 pb-5 space-y-4">
-                <div className="flex items-center justify-between text-sm text-muted-foreground flex-wrap gap-2">
-                  <div className="inline-flex items-center gap-2 flex-wrap">
-                    <span className="rounded-md bg-orange-500/10 px-2.5 py-1 text-orange-400 border border-orange-500/30 text-xs whitespace-nowrap">
-                      POST
-                    </span>
-                    <span className="font-mono text-xs md:text-sm text-foreground break-all">
-                      /v1/transactions/verify
-                    </span>
-                  </div>
-                  <span className="font-mono text-xs text-emerald-400 whitespace-nowrap">98ms • 200 OK</span>
+                <div className="flex items-center gap-2 text-[9px] md:text-[10px] flex-shrink-0">
+                  <span className="rounded-md bg-primary/5 text-primary px-2 py-0.5 border border-primary/10 font-medium">VERIFIED</span>
+                  <span className="rounded-md bg-muted text-muted-foreground px-2 py-0.5 border border-border">PCI-aware</span>
                 </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs md:text-sm font-mono">
-                  <div className="rounded-lg border border-border/60 bg-muted/60 p-4 space-y-2 min-w-0">
-                    <div className="flex items-center justify-between text-muted-foreground text-xs">
+              </div>
+              <div className="p-4 md:p-5 space-y-3 md:space-y-4">
+                <div className="flex items-center justify-between text-[10px] md:text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="rounded-md bg-primary/5 text-primary px-2 py-0.5 border border-primary/10 font-mono text-[9px] md:text-[10px] flex-shrink-0">POST</span>
+                    <span className="font-mono text-foreground truncate">/v1/transactions/verify</span>
+                  </div>
+                  <span className="font-mono text-primary flex-shrink-0">98ms &middot; 200 OK</span>
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 md:gap-3 font-mono text-[10px] md:text-xs">
+                  <div className="rounded-lg border border-border bg-muted/30 p-3 md:p-3.5 space-y-2 min-w-0">
+                    <div className="flex items-center justify-between text-muted-foreground text-[9px] md:text-[10px]">
                       <span>Request body</span>
-                      <span className="rounded bg-background/60 px-2 py-0.5 border border-border/60 text-[10px] whitespace-nowrap">
-                        JSON
-                      </span>
+                      <span className="bg-background px-1.5 py-0.5 rounded border border-border text-[8px] md:text-[9px]">JSON</span>
                     </div>
-                    <pre className="mt-1 text-xs md:text-sm leading-relaxed overflow-x-auto">
-                      {`{
-  "sms": "Confirmed. ETB 1,500 received from...",
+                    <pre className="whitespace-pre-wrap break-all">{`{
+  "sms": "Confirmed. ETB 1,500...",
   "reference": "FT1234A89",
   "source": "CBE"
-}`}
-                    </pre>
+}`}</pre>
                   </div>
-
-                  <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-4 space-y-2 min-w-0">
-                    <div className="flex items-center justify-between text-muted-foreground text-xs">
+                  <div className="rounded-lg border border-primary/20 bg-primary/[0.02] p-3 md:p-3.5 space-y-2 min-w-0">
+                    <div className="flex items-center justify-between text-muted-foreground text-[9px] md:text-[10px]">
                       <span>Normalized response</span>
-                      <span className="rounded bg-emerald-500/10 text-emerald-300 px-2 py-0.5 border border-emerald-500/40 text-[10px] whitespace-nowrap">
-                        VERIFIED
-                      </span>
+                      <span className="bg-primary/5 text-primary px-1.5 py-0.5 rounded border border-primary/10 text-[8px] md:text-[9px]">VERIFIED</span>
                     </div>
-                    <pre className="mt-1 text-xs md:text-sm leading-relaxed overflow-x-auto">
-                      {`{
+                    <pre className="whitespace-pre-wrap break-all">{`{
   "amount": 1500,
   "currency": "ETB",
   "direction": "IN",
-  "channel": "wallet",
   "sender_name": "John Doe",
   "timestamp": "2025-01-04T12:03:18Z"
-}`}
-                    </pre>
+}`}</pre>
                   </div>
                 </div>
-
-                <div className="flex items-center justify-between text-xs md:text-sm text-muted-foreground flex-wrap gap-2 pt-1">
-                  <span className="text-xs">SDKs for Node, Python, PHP & more</span>
-                  <Link
-                    to="/api-docs"
-                    className="inline-flex items-center gap-1 text-orange-500 hover:text-orange-400 font-medium text-xs md:text-sm whitespace-nowrap"
-                  >
-                    View API docs
-                    <ArrowRight className="w-4 h-4" />
+                <div className="flex items-center justify-between text-[10px] md:text-xs text-muted-foreground pt-1">
+                  <span>SDKs for Node, Python, PHP &amp; more</span>
+                  <Link to="/api-docs" className="text-primary hover:text-primary/80 font-medium inline-flex items-center gap-1 flex-shrink-0">
+                    View API docs <ArrowRight className="w-3 h-3" />
                   </Link>
                 </div>
-
-                {/* Integrated Quick Start Snippet */}
-                <div className="mt-4 pt-4 border-t border-border/40">
+                <div className="pt-3 border-t border-border">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Quick Integration</span>
-                    <span className="text-[10px] font-mono text-orange-500/70">javascript</span>
+                    <span className="text-[8px] md:text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">Quick Integration</span>
+                    <span className="text-[8px] md:text-[9px] font-mono text-primary/60">javascript</span>
                   </div>
-                  <pre className="text-[10px] md:text-xs font-mono bg-muted/40 p-3 rounded-md overflow-x-auto leading-relaxed border border-border/40">
-                    {`const res = await fetch('api.checkpay.africa/v1/verify', {
+                  <pre className="text-[9px] md:text-[10px] font-mono bg-muted/30 p-2.5 md:p-3 rounded-lg border border-border leading-relaxed overflow-x-auto">{`const res = await fetch('api.checkpay.africa/v1/verify', {
   method: 'POST',
   headers: { 'Authorization': 'Bearer KEY' },
   body: JSON.stringify({ sms: "..." })
-});`}
-                  </pre>
+});`}</pre>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* Global Pattern Map (Coverage) - Hidden on mobile */}
-      <div className="hidden md:block mb-8 md:mb-12">
+      {/* Global Pattern Map */}
+      <div className="hidden md:block mb-8 md:mb-16">
         <GlobalPatternMap />
       </div>
 
-      {/* Product demo section (below hero, Postman-style) */}
-      <section
-        id="product-demo"
-        className="container mx-auto px-4 pt-6 md:pt-8 pb-0 relative z-10"
-      >
+      {/* Product Demo */}
+      <section id="product-demo" className="w-full px-4 sm:px-8 md:px-12 lg:px-16 py-16 md:py-24 relative z-10">
         <div className="max-w-7xl mx-auto">
-          {/* Video header */}
-          <div className="mb-6 md:mb-8 text-center px-2">
-            <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold mb-3 md:mb-4 leading-tight">
+          <div className="mb-8 md:mb-12 text-center max-w-3xl mx-auto">
+            <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold mb-3 md:mb-4 leading-tight tracking-tight">
               See CheckPay in action
             </h2>
-            <p className="text-sm md:text-base lg:text-xl text-muted-foreground max-w-3xl mx-auto leading-relaxed">
-              Follow a real‑world flow from SMS receipt to verified transaction.
+            <p className="text-sm md:text-base lg:text-lg text-muted-foreground leading-relaxed">
+              Follow a real-world flow from SMS receipt to verified transaction.
             </p>
           </div>
-
-          {/* Large video section - Postman style */}
-          <div className="relative max-w-6xl mx-auto">
-            <div className="absolute -inset-0.5 bg-gradient-to-tr from-orange-500/40 via-sky-500/30 to-purple-500/30 rounded-3xl blur-2xl opacity-60 dark:opacity-80 pointer-events-none" />
-            <div className="relative rounded-2xl overflow-hidden border border-border/70 bg-background/80 backdrop-blur-md shadow-2xl shadow-orange-500/15">
-              <div className="aspect-[16/10] bg-gradient-to-br from-orange-500/10 via-sky-500/10 to-purple-500/10 relative">
+          <div className="max-w-5xl mx-auto">
+            <div className="rounded-2xl overflow-hidden border border-border bg-card shadow-lg">
+              <div className="aspect-[16/10] bg-muted/20 relative">
                 <video
                   className="w-full h-full object-contain"
                   controls
@@ -313,156 +263,130 @@ export default function LandingPage() {
                   <source src="/videos/product-demo.mp4" type="video/mp4" />
                   <source src="/videos/product-demo.webm" type="video/webm" />
                 </video>
-                {/* Placeholder overlay - hidden when video loads */}
                 {!videoLoaded && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-8 space-y-4 bg-gradient-to-br from-orange-500/5 via-sky-500/5 to-purple-500/5 backdrop-blur-sm z-10">
-                    <div className="w-24 h-24 rounded-full bg-orange-500/20 flex items-center justify-center mb-2">
-                      <Play className="w-12 h-12 text-orange-500" />
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted/10">
+                    <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                      <Play className="w-8 h-8 text-primary" />
                     </div>
                   </div>
                 )}
               </div>
             </div>
           </div>
-
-          {/* Feature bullets below video - Hidden on mobile */}
-          <div className="hidden md:block mt-12 max-w-4xl mx-auto">
-            <ul className="grid md:grid-cols-3 gap-6 text-sm md:text-base text-muted-foreground">
-              <li className="flex gap-3 items-start">
-                <span className="mt-1.5 h-2 w-2 rounded-full bg-orange-500 flex-shrink-0" />
-                <span>Watch raw SMS turn into a normalized, bank‑grade transaction object.</span>
-              </li>
-              <li className="flex gap-3 items-start">
-                <span className="mt-1.5 h-2 w-2 rounded-full bg-sky-500 flex-shrink-0" />
-                <span>See how projects, environments and webhooks fit together.</span>
-              </li>
-              <li className="flex gap-3 items-start">
-                <span className="mt-1.5 h-2 w-2 rounded-full bg-emerald-500 flex-shrink-0" />
-                <span>Walk through a typical integration from sandbox to production.</span>
-              </li>
-            </ul>
+          <div className="hidden md:grid grid-cols-3 gap-6 max-w-4xl mx-auto mt-10 text-sm text-muted-foreground">
+            <div className="flex gap-3 items-start">
+              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />
+              <span>Watch raw SMS turn into a normalized, bank-grade transaction object.</span>
+            </div>
+            <div className="flex gap-3 items-start">
+              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />
+              <span>See how projects, environments and webhooks fit together.</span>
+            </div>
+            <div className="flex gap-3 items-start">
+              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />
+              <span>Walk through a typical integration from sandbox to production.</span>
+            </div>
           </div>
         </div>
       </section>
 
       {/* How It Works */}
-      <section className="container mx-auto px-4 pt-8 md:pt-12 pb-0 relative z-10">
-        <div className="text-center mb-8 md:mb-16">
-          <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold mb-3 md:mb-4">
-            Simple Integration
-          </h2>
-          <p className="text-sm md:text-base lg:text-xl text-muted-foreground max-w-2xl mx-auto">
-            Get started in three easy steps
-          </p>
-        </div>
-
-        <div className="grid md:grid-cols-3 gap-6 md:gap-8 max-w-5xl mx-auto">
-          {[
-            {
-              step: '01',
-              title: 'Sign Up & Get API Key',
-              description: 'Create your free account and get instant API access. No license required.',
-            },
-            {
-              step: '02',
-              title: 'Define Your Patterns',
-              description: 'Use our pattern builder to create custom SMS parsers for any bank or mobile money provider.',
-            },
-            {
-              step: '03',
-              title: 'Verify & Automate',
-              description: 'Send SMS or scan receipts. Get structured data back and automate your workflows.',
-            },
-          ].map((step, i) => (
-            <div key={i} className="relative">
-              <div className="text-5xl md:text-6xl lg:text-7xl font-bold text-orange-500/40 dark:text-orange-500/60 mb-3 md:mb-4">{step.step}</div>
-              <h3 className="text-lg sm:text-xl md:text-2xl font-bold mb-2 md:mb-3">{step.title}</h3>
-              <p className="text-sm md:text-base lg:text-lg text-muted-foreground leading-relaxed">{step.description}</p>
-              {i < 2 && (
-                <ArrowRight className="hidden md:block absolute top-12 -right-8 w-6 h-6 text-orange-500/50" />
-              )}
-            </div>
-          ))}
+      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 py-16 md:py-24 relative z-10">
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center mb-12 md:mb-16">
+            <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold mb-3 tracking-tight">
+              Simple Integration
+            </h2>
+            <p className="text-sm md:text-base lg:text-lg text-muted-foreground">
+              Get started in three easy steps
+            </p>
+          </div>
+          <div className="grid md:grid-cols-3 gap-10 md:gap-12">
+            {[
+              { step: '01', title: 'Sign Up & Get API Key', description: 'Create your free account and get instant API access. No license required.' },
+              { step: '02', title: 'Define Your Patterns', description: 'Use our pattern builder to create custom SMS parsers for any bank or mobile money provider.' },
+              { step: '03', title: 'Verify & Automate', description: 'Send SMS or scan receipts. Get structured data back and automate your workflows.' },
+            ].map((step, i) => (
+              <div key={i} className="relative">
+                <div className="text-5xl md:text-6xl lg:text-7xl font-bold text-primary/20 mb-3 md:mb-4 leading-none">{step.step}</div>
+                <h3 className="text-lg sm:text-xl md:text-2xl font-bold mb-2 md:mb-3">{step.title}</h3>
+                <p className="text-sm md:text-base text-muted-foreground leading-relaxed">{step.description}</p>
+                {i < 2 && (
+                  <ArrowRight className="hidden md:block absolute top-10 -right-8 w-5 h-5 text-muted-foreground/30" />
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
-      {/* Mobile App Section */}
-      <section id="mobile-app" className="container mx-auto px-4 pt-16 md:pt-24 pb-0 relative z-10">
+      {/* Mobile App */}
+      <section id="mobile-app" className="w-full px-4 sm:px-8 md:px-12 lg:px-16 py-16 md:py-24 relative z-10">
         <div className="max-w-7xl mx-auto grid gap-12 md:grid-cols-2 items-center">
           <div className="space-y-6 order-2 md:order-1">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-500/10 border border-orange-500/20 text-orange-600 dark:text-orange-400 text-xs font-medium">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/5 text-primary text-xs font-medium border border-primary/10">
               <Smartphone className="w-3.5 h-3.5" />
               <span>Available on Android</span>
             </div>
-            <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold leading-tight">
-              Verify Payments <br />
-              <span className="bg-gradient-to-r from-orange-500 to-orange-600 bg-clip-text text-transparent">On The Go</span>
+            <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold leading-tight tracking-tight">
+              Verify Payments
+              <br />
+              <span className="text-primary">On The Go</span>
             </h2>
-            <p className="text-lg text-muted-foreground leading-relaxed">
-              Download the CheckPay mobile app to automatically capture SMS transactions 
+            <p className="text-base md:text-lg text-muted-foreground leading-relaxed">
+              Download the CheckPay mobile app to automatically capture SMS transactions
               and scan physical receipts. Perfect for businesses that need real-time verification.
             </p>
-            
-            {/* Agent Types */}
             <div className="space-y-3">
-              <p className="text-sm font-semibold text-foreground">Perfect for:</p>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  "Cashiers & Shop Keepers",
-                  "Retail Store Managers",
-                  "Mobile Money Agents",
-                  "Field Sales Representatives",
-                  "Delivery Personnel",
-                  "Market Vendors"
-                ].map((agent, i) => (
+              <p className="text-sm font-semibold">Perfect for:</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                {["Cashiers & Shop Keepers", "Retail Store Managers", "Mobile Money Agents", "Field Sales Representatives", "Delivery Personnel", "Market Vendors"].map((agent, i) => (
                   <div key={i} className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <span className="w-1.5 h-1.5 rounded-full bg-orange-500 flex-shrink-0" />
+                    <span className="w-1 h-1 rounded-full bg-primary flex-shrink-0" />
                     <span>{agent}</span>
                   </div>
                 ))}
               </div>
             </div>
-
-            <ul className="space-y-4 pt-2">
+            <ul className="space-y-3 pt-2">
               {[
                 { icon: ScanText, text: "OCR scanning for paper receipts & bank slips" },
                 { icon: Database, text: "Auto-sync SMS transactions to your dashboard" },
                 { icon: Shield, text: "Secure & encrypted data transfer" }
               ].map((item, i) => (
-                <li key={i} className="flex items-center gap-3 text-foreground/80">
+                <li key={i} className="flex items-center gap-3 text-sm text-muted-foreground">
                   <div className="p-1.5 rounded-md bg-muted">
-                    <item.icon className="w-4 h-4 text-orange-500" />
+                    <item.icon className="w-4 h-4 text-primary" />
                   </div>
                   <span>{item.text}</span>
                 </li>
               ))}
             </ul>
-            <div className="pt-4">
+            <div className="pt-2">
               <Link to="/auth/register">
-                <Button variant="outline" className="gap-2 border-orange-500/50 hover:bg-orange-500/5">
-                  <Smartphone className="w-4 h-4 text-orange-500" />
+                <Button variant="outline" className="border-border gap-2">
+                  <Smartphone className="w-4 h-4 text-primary" />
                   Download App
                 </Button>
               </Link>
             </div>
           </div>
           <div className="relative order-1 md:order-2">
-            <div className="absolute -inset-4 bg-gradient-to-tr from-orange-500/20 to-purple-500/20 rounded-full blur-3xl opacity-60" />
-            <div className="relative rounded-[2.5rem] border-8 border-muted bg-background/40 backdrop-blur-md p-1 shadow-2xl overflow-hidden aspect-[9/19.5] max-w-[300px] mx-auto">
-              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-6 bg-muted rounded-b-2xl z-20" />
+            <div className="relative rounded-[2.5rem] border-4 border-border bg-card p-1 shadow-lg overflow-hidden aspect-[9/19.5] max-w-[280px] mx-auto">
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-28 h-5 bg-border rounded-b-2xl z-20" />
               <img
                 src="/m.png"
                 alt="CheckPay Merchant App"
                 className="rounded-[2rem] w-full h-full object-cover"
               />
             </div>
-            <div className="absolute -bottom-6 -right-6 md:-right-12 bg-background/80 backdrop-blur-md border border-border/60 p-4 rounded-2xl shadow-xl z-30 hidden sm:block">
+            <div className="absolute -bottom-4 -right-4 md:-right-8 bg-card border border-border p-3.5 rounded-xl shadow-lg z-30 hidden sm:block">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-orange-500/20 flex items-center justify-center">
-                  <ScanText className="w-5 h-5 text-orange-500" />
+                <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center">
+                  <ScanText className="w-4 h-4 text-primary" />
                 </div>
                 <div>
-                  <p className="text-xs font-bold">OCR Active</p>
+                  <p className="text-xs font-semibold">OCR Active</p>
                   <p className="text-[10px] text-muted-foreground">Processing receipt...</p>
                 </div>
               </div>
@@ -471,78 +395,71 @@ export default function LandingPage() {
         </div>
       </section>
 
-
-      {/* CTA / Pricing Section */}
-      <section id="pricing" className="container mx-auto px-4 pt-6 md:pt-8 pb-0 relative z-10">
-        <Card className="max-w-3xl mx-auto bg-gradient-to-br from-orange-500/10 to-blue-500/10 backdrop-blur-sm border-orange-500/20">
-          <CardHeader className="text-center pb-3 md:pb-4 px-4 md:px-6 pt-4 md:pt-6">
-            <CardTitle className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl mb-3 md:mb-4 font-bold">
-              Ready to get started?
-            </CardTitle>
-            <CardDescription className="text-sm md:text-base lg:text-lg xl:text-xl leading-relaxed">
-              Join developers across Africa who trust CheckPay for payment verification.
-              <span className="block mt-2 text-orange-600 dark:text-orange-400 font-semibold">
-                No license fees. No hidden costs. Just simple, powerful verification.
-              </span>
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="text-center px-4 md:px-6 pb-4 md:pb-6">
-            <Link to="/auth/register">
-              <Button size="lg" className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-lg shadow-orange-500/30 text-base md:text-lg px-6 md:px-8 py-5 md:py-6 w-full sm:w-auto">
-                Create Free Account
-                <ArrowRight className="ml-2 w-4 h-4 md:w-5 md:h-5" />
-              </Button>
-            </Link>
-            <p className="mt-3 md:mt-4 text-xs md:text-sm text-muted-foreground">
-              Free forever. Upgrade as you grow.
-            </p>
-          </CardContent>
-        </Card>
+      {/* CTA */}
+      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 py-16 md:py-24 relative z-10">
+        <div className="max-w-3xl mx-auto text-center border border-border rounded-2xl p-8 md:p-12 bg-card shadow-sm">
+          <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold mb-4 tracking-tight">
+            Ready to get started?
+          </h2>
+          <p className="text-sm md:text-base lg:text-lg text-muted-foreground leading-relaxed max-w-2xl mx-auto mb-8">
+            Join developers across Africa who trust CheckPay for payment verification.
+            <span className="block mt-1 font-semibold text-foreground">
+              No license fees. No hidden costs. Just simple, powerful verification.
+            </span>
+          </p>
+          <Link to="/auth/register">
+            <Button size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm text-base px-8 py-5 md:py-6 w-full sm:w-auto">
+              Create Free Account
+              <ArrowRight className="ml-2 w-4 h-4 md:w-5 md:h-5" />
+            </Button>
+          </Link>
+          <p className="mt-3 text-xs md:text-sm text-muted-foreground">
+            Free forever. Upgrade as you grow.
+          </p>
+        </div>
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-border/40 pt-6 md:pt-8 pb-8 md:pb-12 relative z-10 bg-background/60 backdrop-blur-md mt-6 md:mt-8">
-        <div className="container mx-auto px-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-8 mb-6 md:mb-8">
+      <footer className="border-t border-border pt-10 md:pt-14 pb-10 md:pb-16 mt-8 relative z-10">
+        <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-8">
             <div className="col-span-2 md:col-span-1">
-              <div className="flex items-center gap-2 mb-3 md:mb-4">
-                <img
-                  src={logoPath}
-                  alt="CheckPay Logo"
-                  className="h-8 md:h-10 w-auto min-w-[80px] md:min-w-[100px] object-contain"
-                />
-              </div>
-              <p className="text-xs md:text-sm text-muted-foreground leading-relaxed">
+              <img
+                src={logoPath}
+                alt="CheckPay Logo"
+                className="h-8 md:h-10 w-auto min-w-[80px] md:min-w-[100px] object-contain mb-3"
+              />
+              <p className="text-sm text-muted-foreground leading-relaxed max-w-[200px]">
                 Universal payment verification for Africa
               </p>
             </div>
             <div>
-              <h4 className="font-semibold mb-2 md:mb-3 text-sm md:text-base">Product</h4>
-              <ul className="space-y-1.5 md:space-y-2 text-xs md:text-sm text-muted-foreground">
-                <li><Link to="/products" className="hover:text-orange-500 transition-colors">All Products</Link></li>
-                <li><Link to="/api-docs" className="hover:text-orange-500 transition-colors">Documentation</Link></li>
-                <li><Link to="/auth/register" className="hover:text-orange-500 transition-colors">Get Started</Link></li>
+              <h4 className="text-sm font-semibold mb-3">Product</h4>
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li><Link to="/products" className="hover:text-foreground transition-colors">All Products</Link></li>
+                <li><Link to="/api-docs" className="hover:text-foreground transition-colors">Documentation</Link></li>
+                <li><Link to="/auth/register" className="hover:text-foreground transition-colors">Get Started</Link></li>
               </ul>
             </div>
             <div>
-              <h4 className="font-semibold mb-2 md:mb-3 text-sm md:text-base">Company</h4>
-              <ul className="space-y-1.5 md:space-y-2 text-xs md:text-sm text-muted-foreground">
-                <li><a href="#" className="hover:text-orange-500 transition-colors">About</a></li>
-                <li><a href="#" className="hover:text-orange-500 transition-colors">Blog</a></li>
-                <li><a href="mailto:hello@checkpay.africa" className="hover:text-orange-500 transition-colors">Contact Us</a></li>
+              <h4 className="text-sm font-semibold mb-3">Company</h4>
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li><a href="#" className="hover:text-foreground transition-colors">About</a></li>
+                <li><a href="#" className="hover:text-foreground transition-colors">Blog</a></li>
+                <li><a href="mailto:hello@checkpay.africa" className="hover:text-foreground transition-colors">Contact Us</a></li>
               </ul>
             </div>
             <div>
-              <h4 className="font-semibold mb-2 md:mb-3 text-sm md:text-base">Legal</h4>
-              <ul className="space-y-1.5 md:space-y-2 text-xs md:text-sm text-muted-foreground">
-                <li><Link to="/privacy-policy" className="hover:text-orange-500 transition-colors">Privacy</Link></li>
-                <li><a href="#" className="hover:text-orange-500 transition-colors">Terms</a></li>
-                <li><a href="#" className="hover:text-orange-500 transition-colors">Security</a></li>
+              <h4 className="text-sm font-semibold mb-3">Legal</h4>
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li><Link to="/privacy-policy" className="hover:text-foreground transition-colors">Privacy</Link></li>
+                <li><a href="#" className="hover:text-foreground transition-colors">Terms</a></li>
+                <li><a href="#" className="hover:text-foreground transition-colors">Security</a></li>
               </ul>
             </div>
           </div>
-          <div className="border-t border-border/40 pt-4 md:pt-8 text-center text-xs md:text-sm text-muted-foreground">
-            <p>© 2025 CheckPay. All rights reserved. Built for everybody, by developers.</p>
+          <div className="border-t border-border pt-6 text-center text-sm text-muted-foreground">
+            <p>&copy; 2025 CheckPay. All rights reserved. Built for everybody, by developers.</p>
           </div>
         </div>
       </footer>
