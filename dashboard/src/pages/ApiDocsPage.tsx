@@ -245,7 +245,7 @@ function verifyTransaction($txnId) {
         </aside>
 
         <main className="flex-1 min-w-0">
-          <div className="max-w-5xl mx-auto px-4 sm:px-8 lg:px-12 py-12 lg:py-16">
+          <div className="px-4 sm:px-8 lg:px-12 py-12 lg:py-16">
             <section id="overview" className="mb-12">
               <h1 className="text-4xl sm:text-5xl font-heading font-bold tracking-tight text-foreground mb-6">
                 CheckPay API Documentation
