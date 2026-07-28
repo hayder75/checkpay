@@ -223,18 +223,18 @@ function verifyTransaction($txnId) {
   const content = (
     <div className="min-h-screen bg-background text-foreground transition-colors">
       <div className="flex relative">
-        <aside className="hidden lg:block w-56 flex-shrink-0 sticky top-16 self-start h-[calc(100vh-4rem)] border-r border-border bg-muted/30 overflow-y-auto">
+        <aside className="hidden lg:block w-56 flex-shrink-0 sticky top-16 self-start h-[calc(100vh-4rem)] border-r border-border overflow-y-auto">
           <div className="p-5 pt-8">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-4">Documentation</h2>
+            <h2 className="text-xs font-heading font-semibold uppercase tracking-widest text-muted-foreground mb-4">On this page</h2>
             <nav className="space-y-1">
               {navItems.map((item) => (
                 <button
                   key={item.id}
                   onClick={() => scrollToSection(item.id)}
-                  className={`w-full text-left px-3 py-2.5 text-[15px] rounded-md transition-colors ${
+                  className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors ${
                     activeSection === item.id
-                      ? 'bg-primary/10 text-primary font-medium'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                      ? 'bg-primary/10 text-primary font-heading font-medium'
+                      : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
                   {item.label}
@@ -246,21 +246,21 @@ function verifyTransaction($txnId) {
 
         <main className="flex-1 min-w-0">
           <div className="max-w-5xl mx-auto px-4 sm:px-8 lg:px-12 py-12 lg:py-16">
-            <section id="overview" className="mb-16 pb-16 border-b border-border">
-              <h1 className="text-4xl sm:text-5xl font-bold tracking-tight text-foreground mb-8">
+            <section id="overview" className="mb-12">
+              <h1 className="text-4xl sm:text-5xl font-heading font-bold tracking-tight text-foreground mb-6">
                 CheckPay API Documentation
               </h1>
-              <p className="text-xl md:text-2xl text-muted-foreground mb-6 leading-relaxed max-w-4xl">
+              <p className="text-lg md:text-xl text-muted-foreground mb-4 leading-relaxed max-w-4xl">
                 Standard integration documentation for transaction verification, mobile ingestion, and project setup across Standalone, Transferable, and Cluster project types.
               </p>
-              <p className="text-lg md:text-xl text-muted-foreground leading-relaxed max-w-4xl">
+              <p className="text-base md:text-lg text-muted-foreground leading-relaxed max-w-4xl">
                 CheckPay helps you receive transaction data from connected phones, organize it under the right project model, and verify incoming payments through a consistent API. The request format stays simple. What changes by project type is how data reaches the project and who controls that operating relationship.
               </p>
             </section>
 
-            <section id="quickstart" className="mb-16 pb-16 border-b border-border">
-              <h2 className="text-2xl sm:text-3xl font-bold text-foreground mb-4">Quick Start</h2>
-              <p className="text-muted-foreground mb-10 text-lg md:text-xl">
+            <section id="quickstart" className="mb-12">
+              <h2 className="text-2xl sm:text-3xl font-heading font-bold text-foreground mb-3">Quick Start</h2>
+              <p className="text-muted-foreground mb-8 text-base md:text-lg">
                 Follow this flow if you want a standard setup that matches the current product behavior.
               </p>
 
@@ -269,7 +269,7 @@ function verifyTransaction($txnId) {
                   <div className="flex gap-5" key={step.title}>
                     <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary text-primary-foreground text-sm font-bold flex items-center justify-center">{index + 1}</div>
                     <div className="flex-1 pt-1">
-                      <h3 className="font-semibold text-foreground text-lg mb-2">{step.title}</h3>
+                      <h3 className="font-heading font-semibold text-foreground text-lg mb-2">{step.title}</h3>
                       <p className="text-muted-foreground">{step.body}</p>
                     </div>
                   </div>
@@ -277,9 +277,9 @@ function verifyTransaction($txnId) {
               </div>
             </section>
 
-            <section id="project-types" className="mb-16 pb-16 border-b border-border">
-              <h2 className="text-2xl sm:text-3xl font-bold text-foreground mb-4">Project Types</h2>
-              <p className="text-muted-foreground mb-10 text-lg">
+            <section id="project-types" className="mb-12">
+              <h2 className="text-2xl sm:text-3xl font-heading font-bold text-foreground mb-3">Project Types</h2>
+              <p className="text-muted-foreground mb-8 text-base md:text-lg">
                 The verification request shape stays consistent across project types. The main difference is how each project is configured and where its transaction data comes from.
               </p>
 
@@ -342,9 +342,9 @@ function verifyTransaction($txnId) {
               </div>
             </section>
 
-            <section id="authentication" className="mb-16 pb-16 border-b border-border">
-              <h2 className="text-2xl sm:text-3xl font-bold text-foreground mb-3">Authentication</h2>
-              <p className="text-muted-foreground mb-10 text-lg">
+            <section id="authentication" className="mb-12">
+              <h2 className="text-2xl sm:text-3xl font-heading font-bold text-foreground mb-3">Authentication</h2>
+              <p className="text-muted-foreground mb-8 text-base md:text-lg">
                 All project verification requests should be authenticated with your Project API Key. Header-based authentication is the standard and recommended format.
               </p>
 
@@ -387,9 +387,9 @@ function verifyTransaction($txnId) {
               </div>
             </section>
 
-            <section id="verify-endpoint" className="mb-16 pb-16 border-b border-border">
-              <h2 className="text-2xl sm:text-3xl font-bold text-foreground mb-3">Verification API</h2>
-              <p className="text-muted-foreground mb-10 text-lg">
+            <section id="verify-endpoint" className="mb-12">
+              <h2 className="text-2xl sm:text-3xl font-heading font-bold text-foreground mb-3">Verification API</h2>
+              <p className="text-muted-foreground mb-8 text-base md:text-lg">
                 CheckPay currently supports two standard verification request patterns on the same endpoint family: GET to check whether a transaction already exists, and POST to record a manual or scan-based verification attempt.
               </p>
 
@@ -506,9 +506,9 @@ function verifyTransaction($txnId) {
               </div>
             </section>
 
-            <section id="responses" className="mb-16 pb-16 border-b border-border">
-              <h2 className="text-2xl sm:text-3xl font-bold text-foreground mb-3">Responses</h2>
-              <p className="text-muted-foreground mb-10 text-lg">
+            <section id="responses" className="mb-12">
+              <h2 className="text-2xl sm:text-3xl font-heading font-bold text-foreground mb-3">Responses</h2>
+              <p className="text-muted-foreground mb-8 text-base md:text-lg">
                 CheckPay returns JSON responses for both status checks and recorded verification attempts.
               </p>
 
@@ -613,9 +613,9 @@ function verifyTransaction($txnId) {
               </div>
             </section>
 
-            <section id="code-examples" className="mb-16 pb-16 border-b border-border">
-              <h2 className="text-2xl sm:text-3xl font-bold text-foreground mb-3">Code Examples</h2>
-              <p className="text-muted-foreground mb-10 text-lg">
+            <section id="code-examples" className="mb-12">
+              <h2 className="text-2xl sm:text-3xl font-heading font-bold text-foreground mb-3">Code Examples</h2>
+              <p className="text-muted-foreground mb-8 text-base md:text-lg">
                 Use these examples as a starting point for the standard CheckPay verification flow.
               </p>
 
@@ -667,9 +667,9 @@ function verifyTransaction($txnId) {
               </div>
             </section>
 
-            <section id="mobile-app" className="mb-16 pb-16 border-b border-border">
-              <h2 className="text-2xl sm:text-3xl font-bold text-foreground mb-3">Mobile App</h2>
-              <p className="text-muted-foreground mb-10 text-lg">
+            <section id="mobile-app" className="mb-12">
+              <h2 className="text-2xl sm:text-3xl font-heading font-bold text-foreground mb-3">Mobile App</h2>
+              <p className="text-muted-foreground mb-8 text-base md:text-lg">
                 The Android app is the operational bridge between real transaction messages on a device and the project data that your API verifies later.
               </p>
 
@@ -729,9 +729,9 @@ function verifyTransaction($txnId) {
               </div>
             </section>
 
-            <section id="security" className="mb-16 pb-16 border-b border-border">
-              <h2 className="text-2xl sm:text-3xl font-bold text-foreground mb-3">Security</h2>
-              <p className="text-muted-foreground mb-10 text-lg">
+            <section id="security" className="mb-12">
+              <h2 className="text-2xl sm:text-3xl font-heading font-bold text-foreground mb-3">Security</h2>
+              <p className="text-muted-foreground mb-8 text-base md:text-lg">
                 The API and phone ingestion flow should be operated as a backend-to-backend integration, with project keys protected and verification decisions made server-side.
               </p>
 
@@ -768,8 +768,8 @@ function verifyTransaction($txnId) {
             </section>
 
             <section id="rate-limits" className="mb-16">
-              <h2 className="text-2xl sm:text-3xl font-bold text-foreground mb-3">Rate Limits</h2>
-              <p className="text-muted-foreground mb-10 text-lg">
+              <h2 className="text-2xl sm:text-3xl font-heading font-bold text-foreground mb-3">Rate Limits</h2>
+              <p className="text-muted-foreground mb-8 text-base md:text-lg">
                 Limits depend on your plan and available verification credit. Use the dashboard package view to monitor remaining usage.
               </p>
 
