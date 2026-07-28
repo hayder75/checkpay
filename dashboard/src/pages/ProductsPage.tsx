@@ -1,30 +1,62 @@
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { ArrowRight, X, Menu, ChevronRight } from 'lucide-react';
+import { ArrowRight, X, Menu } from 'lucide-react';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { useTheme } from '@/contexts/ThemeContext';
 import GeometricBackground from '@/components/GeometricBackground';
 import GeometricBgToggle from '@/components/GeometricBgToggle';
-import { PiShieldCheck, PiCalendar, PiArrowClockwise, PiFileText, PiCheckCircle, PiPulse, PiComputerTower } from 'react-icons/pi';
+import { PiShieldCheck, PiCalendar, PiArrowClockwise, PiFileText, PiPulse, PiComputerTower, PiCheckCircle } from 'react-icons/pi';
 import { useState } from 'react';
 
-const stats = [
-  { value: '200ms', label: 'Avg verification' },
-  { value: '30+', label: 'Countries' },
-  { value: '99.9%', label: 'Uptime SLA' },
+const products = [
+  {
+    title: 'Verify API',
+    icon: PiShieldCheck,
+    status: 'Live',
+    statusColor: 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+    dotColor: 'bg-emerald-500',
+    description: 'Turn any SMS bank alert into verified transaction data. One API call returns amount, sender, bank, and timestamp.',
+    features: ['200ms avg verification', '30+ countries covered', '99.9% uptime SLA'],
+    cta: { label: 'Start building', href: '/auth/register' },
+    secondaryCta: { label: 'Documentation', href: '/api-docs' },
+  },
+  {
+    title: 'Events',
+    icon: PiCalendar,
+    status: 'Coming Soon',
+    statusColor: 'bg-primary/10 text-primary',
+    dotColor: 'bg-primary',
+    description: 'Ticketing platform with built-in payment verification. Sell tickets, scan at entry, and reconcile automatically.',
+    features: ['QR code check-in', 'Real-time verification', 'Sales analytics'],
+    cta: { label: 'Get notified', href: '/auth/register' },
+  },
+  {
+    title: 'Subscriptions',
+    icon: PiArrowClockwise,
+    status: 'Coming Soon',
+    statusColor: 'bg-primary/10 text-primary',
+    dotColor: 'bg-primary',
+    description: 'Recurring payment management for bank transfers and mobile money. Automate billing without card infrastructure.',
+    features: ['Auto-reconciliation', 'Payment reminders', 'Usage-based billing'],
+    cta: { label: 'Get notified', href: '/auth/register' },
+  },
+  {
+    title: 'Invoices',
+    icon: PiFileText,
+    status: 'Coming Soon',
+    statusColor: 'bg-primary/10 text-primary',
+    dotColor: 'bg-primary',
+    description: 'Generate invoices, share payment links, and auto-match payments when they arrive. No manual reconciliation needed.',
+    features: ['Payment links', 'Auto-matching', 'Multi-currency'],
+    cta: { label: 'Get notified', href: '/auth/register' },
+  },
 ];
 
 const steps = [
-  { icon: PiPulse, text: 'Customer pays via bank or mobile money' },
-  { icon: PiComputerTower, text: 'SMS captured by CheckPay app' },
-  { icon: PiShieldCheck, text: 'Your server calls verify API' },
-  { icon: PiCheckCircle, text: 'Instant confirmation returned' },
-];
-
-const comingSoonProducts = [
-  { title: 'Events', icon: PiCalendar, description: 'Ticketing with built-in verification', timeline: 'Q2 2025' },
-  { title: 'Subscriptions', icon: PiArrowClockwise, description: 'Recurring payment management', timeline: 'Q3 2025' },
-  { title: 'Invoices', icon: PiFileText, description: 'Generate, share, auto-match', timeline: 'Q4 2025' },
+  { icon: PiPulse, text: 'Customer sends payment' },
+  { icon: PiComputerTower, text: 'SMS captured by our app' },
+  { icon: PiShieldCheck, text: 'Your server verifies via API' },
+  { icon: PiCheckCircle, text: 'Instant result returned' },
 ];
 
 export default function ProductsPage() {
@@ -36,7 +68,6 @@ export default function ProductsPage() {
     <div className="min-h-screen bg-background text-foreground transition-colors">
       <GeometricBackground />
 
-      {/* Header */}
       <header className="sticky top-0 z-[100] border-b border-border/50 bg-background/90">
         <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 py-3 md:py-4 flex items-center justify-between">
           <Link to="/">
@@ -87,134 +118,115 @@ export default function ProductsPage() {
         )}
       </header>
 
-      {/* ─── ONE-PAGE PRODUCTS DASHBOARD ─── */}
-      <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 pt-6 pb-8 relative z-10">
-
-        {/* Hero — compact one-liner */}
-        <div className="max-w-6xl mx-auto mb-6">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <span className="px-2.5 py-1 rounded-md bg-primary/10 text-primary text-[11px] font-semibold border border-primary/20">PRODUCTS</span>
-            <h1 className="text-lg sm:text-xl md:text-2xl font-heading font-bold text-foreground">
-              Build payments infrastructure <span className="text-muted-foreground font-normal">without being a bank</span>
-            </h1>
-          </div>
+      {/* Hero */}
+      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 pt-16 md:pt-20 pb-12 md:pb-16 relative z-10">
+        <div className="max-w-4xl mx-auto text-center">
+          <h1 className="text-4xl sm:text-5xl md:text-6xl font-heading font-bold tracking-tight mb-4">
+            Our Products
+          </h1>
+          <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
+            APIs and tools for verifying payments across Africa. 
+            <span className="block sm:inline"> No banking license required.</span>
+          </p>
         </div>
+      </section>
 
-        {/* Main content grid: Verify API (left) + Coming Soon (right) */}
-        <div className="max-w-6xl mx-auto grid lg:grid-cols-[1fr_320px] gap-5 mb-5">
-
-          {/* ─── Verify API Card ─── */}
-          <div className="bg-card border border-border rounded-2xl overflow-hidden">
-            <div className="p-5 md:p-6">
-              <div className="flex items-start justify-between gap-4 mb-4">
-                <div>
-                  <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-[10px] font-medium mb-2">
-                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-                    Live
-                  </div>
-                  <h2 className="text-xl md:text-2xl font-heading font-bold">Verify API</h2>
-                </div>
-                <Link to="/auth/register">
-                  <Button className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm text-xs h-8 px-4">
-                    Start building <ArrowRight className="ml-1.5 w-3 h-3" />
-                  </Button>
-                </Link>
-              </div>
-
-              <p className="text-sm text-muted-foreground leading-relaxed mb-5 max-w-xl">
-                Turn any SMS bank alert into verified transaction data — amount, sender, timestamp, everything you need. One API call.
-              </p>
-
-              {/* Stats row */}
-              <div className="flex gap-3 mb-5">
-                {stats.map(s => (
-                  <div key={s.label} className="px-3 py-2 rounded-lg bg-muted/30 border border-border flex-1">
-                    <div className="text-sm font-bold">{s.value}</div>
-                    <div className="text-[10px] text-muted-foreground">{s.label}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Inline code preview */}
-              <div className="bg-[#0D0D0D] rounded-xl p-3 border border-border/50">
-                <div className="flex items-center gap-1.5 mb-2">
-                  <div className="w-2 h-2 rounded-full bg-[#FF5F57]" />
-                  <div className="w-2 h-2 rounded-full bg-[#FEBC2E]" />
-                  <div className="w-2 h-2 rounded-full bg-[#28C840]" />
-                  <span className="ml-2 text-neutral-500 text-[10px] font-mono">POST /api/verify</span>
-                </div>
-                <pre className="text-[10px] font-mono leading-relaxed text-neutral-300">
-                  <code>{`fetch('https://checkpay.live/api/verify', {
-  method: 'POST',
-  headers: { 'X-API-Key': apiKey },
-  body: JSON.stringify({ transactionId: 'FT24...' })
-})`}</code>
-                </pre>
-              </div>
-
-              {/* Steps — inline pill row */}
-              <div className="flex flex-wrap gap-2 mt-4">
-                {steps.map((step, i) => {
-                  const Icon = step.icon;
-                  return (
-                    <div key={step.text} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-muted/30 border border-border">
-                      <Icon className="w-3 h-3 text-primary" />
-                      <span className="text-[10px] text-muted-foreground">{step.text}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          {/* ─── Coming Soon Sidebar ─── */}
-          <div className="space-y-3">
-            <h3 className="text-[11px] font-heading font-semibold uppercase tracking-wider text-muted-foreground">Coming Soon</h3>
-            {comingSoonProducts.map(p => {
-              const Icon = p.icon;
+      {/* Product Grid */}
+      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 pb-16 md:pb-20 relative z-10">
+        <div className="max-w-6xl mx-auto">
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
+            {products.map((product) => {
+              const Icon = product.icon;
               return (
-                <div key={p.title} className="bg-card border border-border rounded-xl p-4 hover:shadow-sm hover:border-primary/20 transition-all">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
-                      <Icon className="w-4 h-4 text-primary" />
+                <div
+                  key={product.title}
+                  className="bg-card border border-border rounded-2xl p-6 flex flex-col hover:shadow-sm transition-shadow"
+                >
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+                      <Icon className="w-5 h-5 text-primary" />
                     </div>
-                    <div>
-                      <div className="text-sm font-heading font-semibold">{p.title}</div>
-                      <span className="text-[10px] text-muted-foreground/60">{p.timeline}</span>
-                    </div>
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${product.statusColor}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${product.dotColor} ${product.status === 'Live' ? 'animate-pulse' : ''}`} />
+                      {product.status}
+                    </span>
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-relaxed">{p.description}</p>
+
+                  <h3 className="text-lg font-heading font-bold mb-2">{product.title}</h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed mb-4 flex-1">{product.description}</p>
+
+                  <ul className="space-y-1.5 mb-6">
+                    {product.features.map((f) => (
+                      <li key={f} className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <span className="w-1 h-1 rounded-full bg-primary/60" />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+
+                  <div className="space-y-2 mt-auto">
+                    <Link to={product.cta.href} className="block">
+                      <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm text-xs h-9">
+                        {product.cta.label} <ArrowRight className="ml-1.5 w-3 h-3" />
+                      </Button>
+                    </Link>
+                    {product.secondaryCta && (
+                      <Link to={product.secondaryCta.href} className="block">
+                        <Button variant="ghost" className="w-full text-xs h-8 text-muted-foreground hover:text-foreground">
+                          {product.secondaryCta.label}
+                        </Button>
+                      </Link>
+                    )}
+                  </div>
                 </div>
               );
             })}
           </div>
         </div>
+      </section>
 
-        {/* ─── Bottom CTA bar ─── */}
-        <div className="max-w-6xl mx-auto">
-          <div className="bg-gradient-to-r from-primary/5 via-primary/10 to-primary/5 border border-primary/20 rounded-xl px-6 py-4 flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-heading font-semibold">Ready to start?</p>
-              <p className="text-xs text-muted-foreground">Free tier. No license. 15 minutes to your first verification.</p>
-            </div>
-            <Link to="/auth/register">
-              <Button className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm text-xs h-8 px-5 whitespace-nowrap">
-                Create free account <ChevronRight className="ml-1 w-3 h-3" />
-              </Button>
-            </Link>
+      {/* How it works */}
+      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 pb-20 md:pb-28 relative z-10">
+        <div className="max-w-4xl mx-auto">
+          <h2 className="text-center text-xs font-heading font-semibold uppercase tracking-widest text-muted-foreground mb-6">How it works</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {steps.map((step, i) => {
+              const Icon = step.icon;
+              return (
+                <div key={step.text} className="text-center p-4 rounded-xl bg-card border border-border">
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-2">
+                    <Icon className="w-4 h-4 text-primary" />
+                  </div>
+                  <div className="text-xs font-heading font-semibold mb-1">Step {i + 1}</div>
+                  <p className="text-[11px] text-muted-foreground leading-tight">{step.text}</p>
+                </div>
+              );
+            })}
           </div>
         </div>
+      </section>
 
-      </div>
+      {/* CTA */}
+      <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 pb-32 relative z-10">
+        <div className="max-w-3xl mx-auto text-center border border-border rounded-2xl p-8 md:p-12 bg-card shadow-sm">
+          <h2 className="text-3xl md:text-4xl font-heading font-bold mb-4 tracking-tight">Ready to start?</h2>
+          <p className="text-muted-foreground mb-8">
+            Free tier available. No license required. 15 minutes to your first verification.
+          </p>
+          <Link to="/auth/register">
+            <Button size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm px-10">
+              Create free account <ArrowRight className="ml-2 w-4 h-4" />
+            </Button>
+          </Link>
+        </div>
+      </section>
 
       {/* Footer */}
       <footer className="border-t border-border pt-10 md:pt-14 pb-10 md:pb-16 relative z-10">
         <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-8">
             <div className="col-span-2 md:col-span-1">
-              <Link to="/">
-                <img src={logoPath} alt="CheckPay Logo" className="h-8 md:h-10 w-auto object-contain mb-3" />
-              </Link>
+              <Link to="/"><img src={logoPath} alt="CheckPay Logo" className="h-8 md:h-10 w-auto object-contain mb-3" /></Link>
               <p className="text-sm text-muted-foreground leading-relaxed max-w-[200px]">Universal payment verification for Africa</p>
             </div>
             <div>
@@ -243,7 +255,7 @@ export default function ProductsPage() {
             </div>
           </div>
           <div className="border-t border-border pt-6 text-center text-sm text-muted-foreground">
-            <p>&copy; 2025 CheckPay. All rights reserved. Built for everybody, by developers.</p>
+            <p>&copy; 2025 CheckPay. All rights reserved.</p>
           </div>
         </div>
       </footer>
