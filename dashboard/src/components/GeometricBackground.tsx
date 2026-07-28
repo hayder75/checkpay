@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
+import { getGeometricBgEnabled } from './GeometricBgToggle';
 
 interface Particle {
     x: number;
@@ -18,6 +19,16 @@ export default function GeometricBackground() {
     const animationFrameRef = useRef<number | undefined>(undefined);
     const { theme } = useTheme();
     const shouldShowRef = useRef(true);
+    const [visible, setVisible] = useState(getGeometricBgEnabled());
+
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent).detail;
+            setVisible(detail);
+        };
+        window.addEventListener('geometricBgChange', handler);
+        return () => window.removeEventListener('geometricBgChange', handler);
+    }, []);
 
     const maskRectsRef = useRef<DOMRect[]>([]);
 
@@ -264,13 +275,25 @@ export default function GeometricBackground() {
         const checkInitialVisibility = () => {
             const isMobile = window.innerWidth < 768;
             const isResized = window.innerWidth < 1400;
-            shouldShowRef.current = !isMobile && !isResized;
+            shouldShowRef.current = !isMobile && !isResized && visible;
             if (canvasRef.current) {
                 canvasRef.current.style.display = shouldShowRef.current ? 'block' : 'none';
             }
         };
         checkInitialVisibility();
     }, []);
+
+    // Sync visibility when toggle changes
+    useEffect(() => {
+        const isMobile = window.innerWidth < 768;
+        const isResized = window.innerWidth < 1400;
+        shouldShowRef.current = !isMobile && !isResized && visible;
+        if (canvasRef.current) {
+            canvasRef.current.style.display = shouldShowRef.current ? 'block' : 'none';
+        }
+    }, [visible]);
+
+    if (!visible) return null;
 
     return (
         <canvas

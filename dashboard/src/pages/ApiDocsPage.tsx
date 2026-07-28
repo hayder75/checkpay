@@ -9,6 +9,7 @@ import { auth } from '@/lib/auth';
 import { useTheme } from '@/contexts/ThemeContext';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import GeometricBackground from '@/components/GeometricBackground';
+import GeometricBgToggle from '@/components/GeometricBgToggle';
 import DashboardLayout from '@/components/layouts/DashboardLayout';
 
 type NavItem = {
@@ -823,6 +824,7 @@ function verifyTransaction($txnId) {
             <Link to="/products" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Products</Link>
             <Link to="/pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Pricing</Link>
             <div className="w-px h-5 bg-border mx-2" />
+            <GeometricBgToggle />
             <ThemeToggle />
             <Link to="/auth/login">
               <Button variant="ghost" size="sm" className="text-sm">Login</Button>

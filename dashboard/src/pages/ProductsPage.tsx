@@ -1,9 +1,11 @@
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { ArrowRight, X, Menu, ShieldCheck, Calendar, RefreshCw, FileText, CheckCircle, Activity, Server } from 'lucide-react';
+import { ArrowRight, X, Menu } from 'lucide-react';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { useTheme } from '@/contexts/ThemeContext';
 import GeometricBackground from '@/components/GeometricBackground';
+import GeometricBgToggle from '@/components/GeometricBgToggle';
+import { PiShieldCheck, PiCalendar, PiArrowClockwise, PiFileText, PiCheckCircle, PiPulse, PiComputerTower } from 'react-icons/pi';
 import { useState } from 'react';
 
 export default function ProductsPage() {
@@ -18,28 +20,28 @@ export default function ProductsPage() {
   ];
 
   const steps = [
-    { icon: Activity, title: 'Customer pays', description: 'Customer sends bank transfer or mobile money. SMS alert arrives on the connected phone.' },
-    { icon: Server, title: 'Transaction captured', description: 'CheckPay Android app reads the SMS and pushes it to your project in real-time.' },
-    { icon: ShieldCheck, title: 'Your server verifies', description: 'Your backend calls GET /api/verify?txn=... with your project key. No customer-facing API exposure.' },
-    { icon: CheckCircle, title: 'Instant result', description: 'Get confirmed amount, sender, bank, and timestamp. Match against your order and deliver value.' },
+    { icon: PiPulse, title: 'Customer pays', description: 'Customer sends bank transfer or mobile money. SMS alert arrives on the connected phone.' },
+    { icon: PiComputerTower, title: 'Transaction captured', description: 'CheckPay Android app reads the SMS and pushes it to your project in real-time.' },
+    { icon: PiShieldCheck, title: 'Your server verifies', description: 'Your backend calls GET /api/verify?txn=... with your project key. No customer-facing API exposure.' },
+    { icon: PiCheckCircle, title: 'Instant result', description: 'Get confirmed amount, sender, bank, and timestamp. Match against your order and deliver value.' },
   ];
 
   const comingSoonProducts = [
     {
       title: 'Events',
-      icon: Calendar,
+      icon: PiCalendar,
       description: 'Ticketing with built-in payment verification. Sell, scan, reconcile.',
       timeline: 'Q2 2025',
     },
     {
       title: 'Subscriptions',
-      icon: RefreshCw,
+      icon: PiArrowClockwise,
       description: 'Recurring payment management for bank transfers and mobile money.',
       timeline: 'Q3 2025',
     },
     {
       title: 'Invoices',
-      icon: FileText,
+      icon: PiFileText,
       description: 'Generate invoices, share payment links, auto-match when paid.',
       timeline: 'Q4 2025',
     },
@@ -64,6 +66,7 @@ export default function ProductsPage() {
             <Link to="/products" className="text-sm text-primary font-medium">Products</Link>
             <Link to="/pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Pricing</Link>
             <div className="w-px h-5 bg-border mx-2" />
+            <GeometricBgToggle />
             <ThemeToggle />
             <Link to="/auth/login">
               <Button variant="ghost" size="sm" className="text-sm">Login</Button>

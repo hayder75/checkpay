@@ -5,6 +5,7 @@ import { Check, Zap, Plus, X, Menu } from 'lucide-react';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { useTheme } from '@/contexts/ThemeContext';
 import GeometricBackground from '@/components/GeometricBackground';
+import GeometricBgToggle from '@/components/GeometricBgToggle';
 import { useState, useEffect } from 'react';
 
 interface Package {
@@ -109,6 +110,7 @@ export default function PricingPage() {
             <Link to="/products" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Products</Link>
             <Link to="/pricing" className="text-sm text-primary font-medium">Pricing</Link>
             <div className="w-px h-5 bg-border mx-2" />
+            <GeometricBgToggle />
             <ThemeToggle />
             <Link to="/auth/login">
               <Button variant="ghost" size="sm" className="text-sm">Login</Button>

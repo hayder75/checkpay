@@ -8,6 +8,7 @@ import { authAPI, auth } from '@/lib';
 import { useToast } from '@/components/ui/use-toast';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import GeometricBackground from '@/components/GeometricBackground';
+import GeometricBgToggle from '@/components/GeometricBgToggle';
 import { useTheme } from '@/contexts/ThemeContext';
 import { X, Menu, User, Lock } from 'lucide-react';
 
@@ -80,6 +81,7 @@ export default function LoginPage() {
             <Link to="/products" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Products</Link>
             <Link to="/pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Pricing</Link>
             <div className="w-px h-5 bg-border mx-2" />
+            <GeometricBgToggle />
             <ThemeToggle />
             <Link to="/auth/register">
               <Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm text-sm px-5">

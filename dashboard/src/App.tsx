@@ -17,6 +17,8 @@ import PremiumPage from '@/pages/PremiumPage';
 import SettingsPage from '@/pages/SettingsPage';
 import MobileAppPage from '@/pages/MobileAppPage';
 import AnalyticsPage from '@/pages/AnalyticsPage';
+import ProductsPage from '@/pages/ProductsPage';
+import PricingPage from '@/pages/PricingPage';
 import ApiDocsPage from '@/pages/ApiDocsPage';
 import AdminDashboardPage from '@/pages/admin/AdminDashboardPage';
 import UserManagementPage from '@/pages/admin/UserManagementPage';

@@ -1,19 +1,16 @@
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
-  Shield,
   ArrowRight,
   Play,
   X,
   Menu,
-  Smartphone,
-  ScanText,
-  Database,
-  Download,
-  CheckCircle
+  Download
 } from 'lucide-react';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import GeometricBackground from '@/components/GeometricBackground';
+import GeometricBgToggle from '@/components/GeometricBgToggle';
+import { PiShieldCheck, PiCheckCircle, PiDeviceMobile, PiScan, PiDatabase } from 'react-icons/pi';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useEffect, useState } from 'react';
 import GlobalPatternMap from '@/components/GlobalPatternMap';
@@ -62,6 +59,7 @@ export default function LandingPage() {
               Download
             </button>
             <div className="w-px h-5 bg-border mx-2" />
+            <GeometricBgToggle />
             <ThemeToggle />
             <Link to="/auth/login">
               <Button variant="ghost" size="sm" className="text-sm">Login</Button>
@@ -150,15 +148,15 @@ export default function LandingPage() {
             </div>
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs sm:text-sm text-muted-foreground pt-2">
               <span className="flex items-center gap-1.5">
-                <Shield className="w-3.5 h-3.5 text-primary" />
+                <PiShieldCheck className="w-4 h-4 text-primary" />
                 Bank-grade security
               </span>
               <span className="flex items-center gap-1.5">
-                <CheckCircle className="w-3.5 h-3.5 text-primary" />
+                <PiCheckCircle className="w-4 h-4 text-primary" />
                 Sub-100ms verification
               </span>
               <span className="flex items-center gap-1.5">
-                <Smartphone className="w-3.5 h-3.5 text-primary" />
+                <PiDeviceMobile className="w-4 h-4 text-primary" />
                 30+ countries covered
               </span>
             </div>
@@ -325,7 +323,7 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto grid gap-12 md:grid-cols-2 items-center">
           <div className="space-y-6 order-2 md:order-1">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/5 text-primary text-xs font-medium border border-primary/10">
-              <Smartphone className="w-3.5 h-3.5" />
+              <PiDeviceMobile className="w-3.5 h-3.5" />
               <span>Available on Android</span>
             </div>
             <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold leading-tight tracking-tight">
@@ -350,9 +348,9 @@ export default function LandingPage() {
             </div>
             <ul className="space-y-3 pt-2">
               {[
-                { icon: ScanText, text: "OCR scanning for paper receipts & bank slips" },
-                { icon: Database, text: "Auto-sync SMS transactions to your dashboard" },
-                { icon: Shield, text: "Secure & encrypted data transfer" }
+                { icon: PiScan, text: "OCR scanning for paper receipts & bank slips" },
+                { icon: PiDatabase, text: "Auto-sync SMS transactions to your dashboard" },
+                { icon: PiShieldCheck, text: "Secure & encrypted data transfer" }
               ].map((item, i) => (
                 <li key={i} className="flex items-center gap-3 text-sm text-muted-foreground">
                   <div className="p-1.5 rounded-md bg-muted">
@@ -365,7 +363,7 @@ export default function LandingPage() {
             <div className="pt-2">
               <Link to="/auth/register">
                 <Button variant="outline" className="border-border gap-2">
-                  <Smartphone className="w-4 h-4 text-primary" />
+                  <PiDeviceMobile className="w-4 h-4 text-primary" />
                   Download App
                 </Button>
               </Link>
@@ -383,7 +381,7 @@ export default function LandingPage() {
             <div className="absolute -bottom-4 -right-4 md:-right-8 bg-card border border-border p-3.5 rounded-xl shadow-lg z-30 hidden sm:block">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center">
-                  <ScanText className="w-4 h-4 text-primary" />
+                  <PiScan className="w-4 h-4 text-primary" />
                 </div>
                 <div>
                   <p className="text-xs font-semibold">OCR Active</p>
