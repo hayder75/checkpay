@@ -117,14 +117,14 @@ export default function LandingPage() {
       <section className="w-full px-4 sm:px-8 md:px-12 lg:px-16 py-12 md:py-20 lg:py-28 relative z-10">
         <div className="mx-auto max-w-[1400px] grid gap-8 md:gap-10 xl:gap-14 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)] items-start">
           <div className="space-y-5 md:space-y-6">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/5 text-primary text-xs font-medium border border-primary/10">
-              <span>No License Required &middot; Free API Access &middot; Built for Finance</span>
-            </div>
-            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-bold leading-[1.15] tracking-tight">
+            <p className="text-sm font-heading font-medium text-primary/80 tracking-wider">
+              The simplest way to verify payments across Africa
+            </p>
+            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-heading font-bold leading-[1.1] tracking-tight">
               The API to verify payments
               <span className="text-primary"> across every bank and mobile money</span>
             </h1>
-            <p className="text-sm sm:text-base md:text-lg text-muted-foreground max-w-2xl leading-relaxed">
+            <p className="text-sm sm:text-base md:text-lg text-muted-foreground max-w-2xl leading-relaxed font-heading">
               Turn raw SMS receipts into clean, structured payment data.
               Power dashboards, risk engines and reconciliation with a single,
               unified verification API.
